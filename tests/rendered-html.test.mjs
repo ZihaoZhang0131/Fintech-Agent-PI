@@ -41,6 +41,8 @@ test("exposes a local health endpoint without exposing the key", async () => {
   assert.equal(response.status, 200);
   const body = await response.text();
   assert.match(body, /"provider":"DeepSeek"/);
+  assert.match(body, /"models":\[/);
+  assert.match(body, /deepseek-v4-flash/);
   assert.match(body, /"keyConfigured":(true|false)/);
   assert.doesNotMatch(body, /sk-/);
 });

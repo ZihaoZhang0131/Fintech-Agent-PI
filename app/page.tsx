@@ -124,6 +124,7 @@ type HealthInfo = {
   status: "ok";
   provider: string;
   model: string;
+  models: Array<{ id: string; label: string }>;
   keyConfigured: boolean;
 };
 
@@ -156,6 +157,7 @@ const FILE_PANEL_VISIBLE_KEY = "pi-research-agent:file-panel-visible:v1";
 const FILE_BROWSER_RATIO_KEY = "pi-research-agent:file-browser-ratio:v1";
 const FILE_BROWSER_VISIBLE_KEY = "pi-research-agent:file-browser-visible:v1";
 const FILE_PREVIEW_VISIBLE_KEY = "pi-research-agent:file-preview-visible:v1";
+const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
 
 type AppView = "workspace" | CapabilityKind;
 
@@ -338,6 +340,7 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<AgentStatus>("idle");
   const [health, setHealth] = useState<HealthInfo | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState("");
   const [durationMs, setDurationMs] = useState<number | null>(null);
   const [tokenUsage, setTokenUsage] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -515,7 +518,15 @@ export default function Home() {
     void initialize();
     fetch("/api/health")
       .then((response) => responseJson<HealthInfo>(response))
-      .then(setHealth)
+      .then((info) => {
+        setHealth(info);
+        const storedModelId = localStorage.getItem(SELECTED_MODEL_KEY);
+        setSelectedModelId(
+          storedModelId && info.models.some((model) => model.id === storedModelId)
+            ? storedModelId
+            : info.model,
+        );
+      })
       .catch(() => setHealth(null));
   }, [loadProjectFiles]);
 
@@ -797,6 +808,12 @@ export default function Home() {
     }));
   }
 
+  function selectModel(modelId: string) {
+    if (!health?.models.some((model) => model.id === modelId) || isBusy) return;
+    setSelectedModelId(modelId);
+    localStorage.setItem(SELECTED_MODEL_KEY, modelId);
+  }
+
   function confirmFullBashPermission() {
     if (!fullPermissionConversationId) return;
     updateConversation(fullPermissionConversationId, (conversation) => ({
@@ -1000,6 +1017,7 @@ export default function Home() {
           conversationId,
           workspaceId: activeProject.id,
           workspaceName: activeProject.name,
+          modelId: selectedModelId || health?.model,
           enabledSkills,
           enabledTools,
           bashApprovalMode: activeConversation.bashApprovalMode,
@@ -1399,11 +1417,6 @@ export default function Home() {
               </span>
             </div>
           </div>
-          <div className="model-pill">
-            <Cpu size={14} />
-            <span>{health?.model ?? "DeepSeek"}</span>
-            <ChevronDown size={13} />
-          </div>
           <button
             className="mobile-icon-button artifact-trigger"
             type="button"
@@ -1646,27 +1659,51 @@ export default function Home() {
               aria-label="投研任务"
             />
             <div className="composer-footer">
-              <div className="composer-options">
-                <span>Enter 发送 · Shift + Enter 换行</span>
+              <div className="composer-options" aria-label="Agent 运行设置">
+                <label className="composer-control model-control" title="选择本轮使用的模型">
+                  <Cpu size={12} />
+                  <span>模型</span>
+                  <select
+                    aria-label="模型选择"
+                    value={selectedModelId || health?.model || ""}
+                    onChange={(event) => selectModel(event.target.value)}
+                    disabled={!health || isBusy}
+                  >
+                    {(health?.models ?? []).map((model) => (
+                      <option value={model.id} key={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={11} />
+                </label>
                 {activeConversation && (
                   <>
                     <button
+                      className="composer-control"
                       type="button"
                       onClick={toggleBashApprovalMode}
                       disabled={isBusy}
                       title="切换 Bash 命令是否逐条确认"
                     >
-                      {activeConversation.bashApprovalMode === "auto" ? "自动执行" : "每条确认"}
+                      <span>Bash</span>
+                      <strong>
+                        {activeConversation.bashApprovalMode === "auto" ? "自动执行" : "每条确认"}
+                      </strong>
                     </button>
                     <button
+                      className="composer-control"
                       type="button"
                       onClick={toggleBashPermissionMode}
                       disabled={isBusy}
                       title="切换 Bash 文件访问权限"
                     >
-                      {activeConversation.bashPermissionMode === "full"
-                        ? "完整本机权限"
-                        : "项目沙箱"}
+                      <span>Agent</span>
+                      <strong>
+                        {activeConversation.bashPermissionMode === "full"
+                          ? "完整本机权限"
+                          : "项目沙箱"}
+                      </strong>
                     </button>
                   </>
                 )}

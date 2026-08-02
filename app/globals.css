@@ -642,25 +642,6 @@ body.is-resizing-row * {
   background: var(--gold);
 }
 
-.model-pill {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  max-width: 220px;
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #f6f6f6;
-  color: #5f5f5f;
-  font-size: 10px;
-}
-
-.model-pill span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .chat-scroll-area {
   min-height: 0;
   overflow-y: auto;
@@ -1308,40 +1289,96 @@ body.is-resizing-row * {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
 
 .composer-options {
   display: flex;
+  min-width: 0;
   align-items: center;
-  flex-wrap: wrap;
+  flex: 1;
+  flex-wrap: nowrap;
   gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
 }
 
-.composer-options > span {
-  margin-right: 3px;
-  color: #a6a6a6;
-  font-size: 9px;
+.composer-options::-webkit-scrollbar {
+  display: none;
 }
 
-.composer-options > button {
-  padding: 3px 6px;
+.composer-control {
+  display: inline-flex;
+  min-width: max-content;
+  height: 27px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
   border: 1px solid #dedede;
   border-radius: 5px;
   background: #f7f7f7;
   color: #666;
   font-size: 8px;
+  line-height: 1;
+}
+
+button.composer-control {
   cursor: pointer;
 }
 
-.composer-options > button:hover:not(:disabled) {
+button.composer-control:hover:not(:disabled),
+.model-control:focus-within {
   border-color: #bdbdbd;
   background: #eeeeee;
   color: #333;
 }
 
-.composer-options > button:disabled {
+.composer-control:disabled,
+.model-control:has(select:disabled) {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.composer-control > span {
+  color: #979797;
+  font-weight: 500;
+}
+
+.composer-control > strong {
+  color: #4e4e4e;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.model-control {
+  position: relative;
+  padding-left: 6px;
+}
+
+.model-control select {
+  max-width: 122px;
+  padding: 0 13px 0 0;
+  overflow: hidden;
+  border: 0;
+  outline: 0;
+  appearance: none;
+  background: transparent;
+  color: #4e4e4e;
+  font: inherit;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.model-control select:disabled {
+  cursor: not-allowed;
+}
+
+.model-control > svg:last-child {
+  position: absolute;
+  right: 6px;
+  pointer-events: none;
 }
 
 .send-button {
@@ -1354,6 +1391,7 @@ body.is-resizing-row * {
   background: var(--forest);
   color: white;
   cursor: pointer;
+  flex: none;
 }
 
 .send-button:hover:not(:disabled) {
@@ -2811,10 +2849,6 @@ button.workspace-file-row:hover,
     display: grid;
   }
 
-  .model-pill {
-    margin-left: auto;
-    margin-right: 10px;
-  }
 }
 
 @media (max-width: 720px) {
@@ -2932,10 +2966,6 @@ button.workspace-file-row:hover,
 
   .header-title-group h1 {
     max-width: 38vw;
-  }
-
-  .model-pill {
-    display: none;
   }
 
   .welcome-state {

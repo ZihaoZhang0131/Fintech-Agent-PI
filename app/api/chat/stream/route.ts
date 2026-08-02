@@ -1,6 +1,7 @@
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { createModels, type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
+import { resolveModelId } from "@/lib/model-options";
 import { resolveCapabilitySelection } from "@/server/agent/capability-policy";
 import { formatSkillCatalog } from "@/server/agent/skills/catalog";
 import { loadSkillRegistry } from "@/server/agent/skills/loader";
@@ -26,6 +27,7 @@ type ChatRequest = {
   conversationId?: string;
   workspaceId?: string;
   workspaceName?: string;
+  modelId?: unknown;
   enabledSkills?: unknown;
   enabledTools?: unknown;
   bashApprovalMode?: unknown;
@@ -169,7 +171,7 @@ function getToolInput(args: unknown) {
 
 export async function POST(request: Request) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
-  const modelId = process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash";
+  const configuredModelId = process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash";
 
   if (!apiKey) {
     return Response.json({ message: "本地服务尚未配置 DeepSeek API Key。" }, { status: 503 });
@@ -181,6 +183,7 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ message: "请求内容不是有效的 JSON。" }, { status: 400 });
   }
+  const modelId = resolveModelId(payload.modelId, configuredModelId);
 
   const input = payload.input?.trim() ?? "";
   const history = Array.isArray(payload.messages) ? payload.messages : [];
