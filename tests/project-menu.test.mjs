@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const stylesheet = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+
+test("project cards keep secondary actions in a hover menu", () => {
+  assert.match(pageSource, /project-menu-trigger/);
+  assert.match(pageSource, /新建项目下会话/);
+  assert.match(pageSource, /查看项目地址/);
+  assert.match(pageSource, /移除项目/);
+  assert.match(pageSource, /method: "DELETE"/);
+  assert.match(stylesheet, /\.project-group:hover > \.project-menu-trigger/);
+  assert.match(stylesheet, /\.project-context-menu/);
+});
+
+test("project paths and helper copy are removed from the persistent layout", () => {
+  assert.doesNotMatch(pageSource, /<small>\{project\.path\}<\/small>/);
+  assert.doesNotMatch(pageSource, /项目：\{activeProject\.path\}/);
+  assert.doesNotMatch(pageSource, /会话绑定项目，文件权限限制在所选目录/);
+  assert.doesNotMatch(pageSource, /文件访问限制在当前项目目录；AI 内容仅供研究参考。/);
+  assert.doesNotMatch(pageSource, /<small title=\{activeProject\.path\}>/);
+});
+
+test("removing a project explicitly preserves local files", () => {
+  assert.match(pageSource, /不会删除本地文件夹或其中的任何内容/);
+  assert.match(pageSource, /remainingProjects/);
+  assert.match(pageSource, /remainingConversations/);
+});
+
+test("the file browser omits the entry-count information module", () => {
+  assert.doesNotMatch(pageSource, /文件目录 ·/);
+  assert.doesNotMatch(pageSource, /仅显示前 800 项/);
+  assert.doesNotMatch(pageSource, /workspace-file-summary/);
+  assert.doesNotMatch(stylesheet, /\.workspace-file-summary/);
+});
+
+test("each project controls its conversation expansion independently", () => {
+  assert.match(pageSource, /EXPANDED_PROJECTS_KEY/);
+  assert.match(pageSource, /expandedProjectIds\.includes\(project\.id\)/);
+  assert.match(pageSource, /function toggleProjectExpansion/);
+  assert.match(pageSource, /aria-expanded=\{expanded\}/);
+  assert.match(pageSource, /\{expanded && \(\s*<div className="conversation-list">/);
+  assert.doesNotMatch(pageSource, /\{active && \(\s*<div className="conversation-list">/);
+  assert.match(stylesheet, /\.project-group\.expanded/);
+  assert.match(stylesheet, /\.project-toggle/);
+});

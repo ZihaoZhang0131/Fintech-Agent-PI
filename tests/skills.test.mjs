@@ -35,6 +35,12 @@ test("the system prompt catalog exposes metadata but not full Skill instructions
   assert.doesNotMatch(catalog, /秘密执行正文/);
 });
 
+test("the system prompt clearly reports when every Skill is disabled", () => {
+  const catalog = formatSkillCatalog({ list: () => [], get: () => undefined });
+  assert.match(catalog, /没有启用任何 Skill/);
+  assert.match(catalog, /不要调用 load_skill/);
+});
+
 test("the three bundled Skill files have valid metadata and instructions", async () => {
   for (const [name, instructionFragment] of skillCases) {
     const source = await readFile(

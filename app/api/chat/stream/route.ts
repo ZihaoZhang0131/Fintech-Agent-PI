@@ -1,10 +1,15 @@
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { createModels, type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
+import { resolveCapabilitySelection } from "@/server/agent/capability-policy";
 import { formatSkillCatalog } from "@/server/agent/skills/catalog";
 import { loadSkillRegistry } from "@/server/agent/skills/loader";
 import { createLoadSkillTool, type LoadSkillDetails } from "@/server/agent/tools/load-skill";
 import { createWebSearchTool, type WebSearchDetails } from "@/server/agent/tools/web-search";
+import {
+  createWorkspaceTools,
+  type WorkspaceToolDetails,
+} from "@/server/agent/tools/workspace-files";
 
 type InputMessage = {
   role: "user" | "assistant";
@@ -13,6 +18,10 @@ type InputMessage = {
 
 type ChatRequest = {
   conversationId?: string;
+  workspaceId?: string;
+  workspaceName?: string;
+  enabledSkills?: unknown;
+  enabledTools?: unknown;
   messages?: InputMessage[];
   input?: string;
 };
@@ -111,9 +120,19 @@ function getLoadSkillDetails(value: unknown): LoadSkillDetails | undefined {
   return details as LoadSkillDetails;
 }
 
+function getWorkspaceDetails(value: unknown): WorkspaceToolDetails | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const details = value as Partial<WorkspaceToolDetails>;
+  if (details.kind !== "workspace" || typeof details.action !== "string") return undefined;
+  return details as WorkspaceToolDetails;
+}
+
 function getToolLabel(toolName: string) {
   if (toolName === "web_search") return "Tavily 网络搜索";
   if (toolName === "load_skill") return "加载 Skill";
+  if (toolName === "list_project_files") return "查看项目文件";
+  if (toolName === "read_project_file") return "读取项目文件";
+  if (toolName === "write_project_file") return "保存项目产出";
   return toolName;
 }
 
@@ -121,6 +140,7 @@ function getToolInput(args: unknown) {
   if (!args || typeof args !== "object") return undefined;
   if ("query" in args) return String(args.query);
   if ("name" in args) return String(args.name);
+  if ("path" in args) return String(args.path);
   return undefined;
 }
 
@@ -141,11 +161,48 @@ export async function POST(request: Request) {
 
   const input = payload.input?.trim() ?? "";
   const history = Array.isArray(payload.messages) ? payload.messages : [];
-  if (!input || input.length > 20_000 || !history.every(isInputMessage)) {
+  const workspaceId = payload.workspaceId?.trim() ?? "";
+  const workspaceName = payload.workspaceName?.trim().slice(0, 200) || "本地项目";
+  if (
+    !input ||
+    input.length > 20_000 ||
+    !history.every(isInputMessage) ||
+    !/^[a-f0-9-]{20,64}$/i.test(workspaceId)
+  ) {
     return Response.json({ message: "问题为空、过长或历史消息格式不正确。" }, { status: 400 });
   }
 
-  const skillRegistry = loadSkillRegistry();
+  const capabilitySelection = resolveCapabilitySelection({
+    enabledSkills: payload.enabledSkills,
+    enabledTools: payload.enabledTools,
+  });
+  const enabledToolNames = new Set<string>(capabilitySelection.enabledTools);
+  const skillRegistry = loadSkillRegistry(
+    enabledToolNames.has("load_skill") ? capabilitySelection.enabledSkills : [],
+  );
+  const workspaceTools = createWorkspaceTools(workspaceId).filter((tool) =>
+    enabledToolNames.has(tool.name),
+  );
+  const agentTools = [
+    ...(enabledToolNames.has("load_skill") && skillRegistry.list().length > 0
+      ? [createLoadSkillTool(skillRegistry)]
+      : []),
+    ...(enabledToolNames.has("web_search")
+      ? [createWebSearchTool({ apiKey: process.env.TAVILY_API_KEY })]
+      : []),
+    ...workspaceTools,
+  ];
+  const projectCapabilityPrompt = [
+    `当前项目名称：${JSON.stringify(workspaceName)}。`,
+    `本轮已启用工具：${capabilitySelection.enabledTools.join(", ") || "无"}。只能使用这个列表中的工具。`,
+    enabledToolNames.has("list_project_files") || enabledToolNames.has("read_project_file")
+      ? "需要项目资料时，使用已启用的项目文件工具获取，不要猜测文件内容。"
+      : "本轮没有启用项目文件读取能力，不要声称已经查看过项目文件。",
+    enabledToolNames.has("write_project_file")
+      ? "形成完整研究报告、研究框架、表格数据或代码时，在最终回答前使用 write_project_file 保存到 outputs/ 目录，并说明保存路径。"
+      : "本轮没有启用文件写入能力，不要声称已经把产出保存到本地。",
+    "只处理当前项目和用户任务相关的内容，不覆盖不相关文件。",
+  ].join("\n");
 
   const models = createModels();
   models.setProvider(deepseekProvider());
@@ -156,13 +213,10 @@ export async function POST(request: Request) {
 
   const agent = new Agent({
     initialState: {
-      systemPrompt: `${SYSTEM_PROMPT}\n\n${formatSkillCatalog(skillRegistry)}`,
+      systemPrompt: `${SYSTEM_PROMPT}\n\n${projectCapabilityPrompt}\n\n${formatSkillCatalog(skillRegistry)}`,
       model,
       thinkingLevel: "off",
-      tools: [
-        createLoadSkillTool(skillRegistry),
-        createWebSearchTool({ apiKey: process.env.TAVILY_API_KEY }),
-      ],
+      tools: agentTools,
       messages: history.map((message, index) => toAgentMessage(message, modelId, index)),
     },
     streamFn: models.streamSimple.bind(models),
@@ -197,19 +251,26 @@ export async function POST(request: Request) {
           const completedAt = Date.now();
           const searchDetails = getWebSearchDetails(event.result?.details);
           const skillDetails = getLoadSkillDetails(event.result?.details);
+          const workspaceDetails = getWorkspaceDetails(event.result?.details);
           send({
             type: "tool_end",
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             label: getToolLabel(event.toolName),
             isError: event.isError,
-            query: searchDetails?.query ?? skillDetails?.name,
-            summary: skillDetails ? `已加载 ${skillDetails.name}` : undefined,
+            query: searchDetails?.query ?? skillDetails?.name ?? workspaceDetails?.path,
+            summary: skillDetails
+              ? `已加载 ${skillDetails.name}`
+              : workspaceDetails?.action === "write"
+                ? `已保存 ${workspaceDetails.path}`
+                : workspaceDetails?.action === "read"
+                  ? `已读取 ${workspaceDetails.path}`
+                  : undefined,
             completedAt,
             durationMs: toolStartedAt.has(event.toolCallId)
               ? completedAt - toolStartedAt.get(event.toolCallId)!
               : undefined,
-            resultCount: searchDetails?.sources.length,
+            resultCount: searchDetails?.sources.length ?? workspaceDetails?.resultCount,
             sources: searchDetails?.sources.map((source) => ({
               title: source.title,
               url: source.url,

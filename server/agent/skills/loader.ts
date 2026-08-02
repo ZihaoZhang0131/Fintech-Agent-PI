@@ -14,8 +14,11 @@ export type SkillRegistry = {
   get(name: string): SkillDefinition | undefined;
 };
 
-export function loadSkillRegistry(): SkillRegistry {
-  const skills = BUNDLED_SKILL_SOURCES.map(parseSkill);
+export function loadSkillRegistry(enabledNames?: Iterable<string>): SkillRegistry {
+  const enabled = enabledNames ? new Set(enabledNames) : null;
+  const skills = BUNDLED_SKILL_SOURCES.map(parseSkill).filter(
+    (skill) => !enabled || enabled.has(skill.name),
+  );
   const byName = new Map(skills.map((skill) => [skill.name, skill]));
   if (byName.size !== skills.length) throw new Error("Duplicate Skill names are not allowed");
 
