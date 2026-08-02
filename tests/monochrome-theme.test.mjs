@@ -30,3 +30,22 @@ test("the interface does not introduce alternate color functions or colored util
     /(?:text|bg|border|ring|from|to|via)-(?:red|green|blue|yellow|amber|orange|purple|pink|emerald|teal|cyan|lime|indigo|violet|rose|sky)-/i,
   );
 });
+
+test("file previews use a white canvas with dark readable text", () => {
+  assert.match(
+    stylesheet,
+    /\.workspace-preview-content\s*\{[^}]*background: #ffffff;[^}]*color: var\(--ink\);/s,
+  );
+  assert.match(
+    stylesheet,
+    /\.workspace-preview-content:has\(pre code\)\s*\{[^}]*background: #ffffff;[^}]*color: var\(--ink\);/s,
+  );
+  assert.match(
+    stylesheet,
+    /\.workspace-preview-content\.image\s*\{[^}]*background: #ffffff;/s,
+  );
+  assert.match(
+    stylesheet,
+    /\.workspace-preview-content\.pdf\s*\{[^}]*background: #ffffff;/s,
+  );
+});

@@ -59,6 +59,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import { CapabilityLibrary } from "@/components/capability-library";
 import type { CapabilityCatalog, CapabilityKind } from "@/lib/capability-types";
+import { shouldSubmitComposerKey } from "@/lib/composer-keyboard";
 import {
   applyToolEnd,
   applyToolStart,
@@ -354,6 +355,7 @@ export default function Home() {
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerIsComposingRef = useRef(false);
   const workspaceFilesLayoutRef = useRef<HTMLDivElement | null>(null);
 
   const activeProject = useMemo(
@@ -994,10 +996,17 @@ export default function Home() {
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void sendMessage();
-    }
+    const shouldSubmit = shouldSubmitComposerKey({
+      key: event.key,
+      shiftKey: event.shiftKey,
+      compositionActive: composerIsComposingRef.current,
+      nativeIsComposing: event.nativeEvent.isComposing,
+      keyCode: event.nativeEvent.keyCode,
+    });
+    if (!shouldSubmit) return;
+
+    event.preventDefault();
+    void sendMessage();
   }
 
   async function copyPreview() {
@@ -1438,6 +1447,12 @@ export default function Home() {
               ref={textareaRef}
               value={input}
               onChange={(event) => setInput(event.target.value)}
+              onCompositionStart={() => {
+                composerIsComposingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                composerIsComposingRef.current = false;
+              }}
               onKeyDown={handleKeyDown}
               placeholder={activeProject ? "描述任务，Agent 会在当前项目中工作…" : "请先绑定本地项目"}
               rows={1}

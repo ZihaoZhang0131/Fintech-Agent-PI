@@ -1528,6 +1528,8 @@ button.workspace-file-row:hover,
 .workspace-preview-content {
   min-height: 0;
   overflow: auto;
+  background: #ffffff;
+  color: var(--ink);
 }
 
 .workspace-preview-content pre {
@@ -1543,8 +1545,8 @@ button.workspace-file-row:hover,
 }
 
 .workspace-preview-content:has(pre code) {
-  background: #252525;
-  color: #ececec;
+  background: #ffffff;
+  color: var(--ink);
 }
 
 .markdown-preview {
@@ -1583,7 +1585,7 @@ button.workspace-file-row:hover,
   display: grid;
   padding: 12px;
   place-items: center;
-  background: #eaeaea;
+  background: #ffffff;
 }
 
 .workspace-preview-content.image img {
@@ -1596,7 +1598,7 @@ button.workspace-file-row:hover,
 
 .workspace-preview-content.pdf {
   padding: 8px;
-  background: #dbdbdb;
+  background: #ffffff;
 }
 
 .workspace-preview-content.pdf iframe {
