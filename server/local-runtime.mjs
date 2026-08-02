@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -11,6 +11,11 @@ const DEFAULT_PORT = 4318;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_PREVIEW_BYTES = 5 * 1024 * 1024;
 const MAX_FILE_ENTRIES = 800;
+const MAX_COMMAND_BYTES = 20_000;
+const MAX_COMMAND_OUTPUT_BYTES = 200 * 1024;
+const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
+const MAX_COMMAND_TIMEOUT_MS = 120_000;
+const COMMAND_JOB_TTL_MS = 10 * 60_000;
 const EXCLUDED_DIRECTORIES = new Set([
   ".git",
   ".next",
@@ -254,6 +259,328 @@ export async function writeWorkspaceFile(root, relativePath, content) {
   };
 }
 
+function sandboxString(value) {
+  return JSON.stringify(value);
+}
+
+function createSandboxProfile(workspaceRoot, commandHome, commandTemporaryDirectory) {
+  const readableRoots = [
+    "/System",
+    "/Library",
+    "/Applications",
+    "/bin",
+    "/sbin",
+    "/usr",
+    "/opt",
+    "/private/etc",
+    "/dev",
+    workspaceRoot,
+    commandHome,
+    commandTemporaryDirectory,
+  ];
+  const writableRoots = [workspaceRoot, commandHome, commandTemporaryDirectory];
+  const readable = readableRoots.map((root) => `(subpath ${sandboxString(root)})`).join(" ");
+  const writable = writableRoots.map((root) => `(subpath ${sandboxString(root)})`).join(" ");
+  return [
+    "(version 1)",
+    "(deny default)",
+    "(allow process*)",
+    "(allow signal (target same-sandbox))",
+    "(allow sysctl-read)",
+    "(allow mach-lookup)",
+    "(allow network*)",
+    `(allow file-read* (literal "/") ${readable})`,
+    `(allow file-write* ${writable} (literal \"/dev/null\"))`,
+  ].join(" ");
+}
+
+function commandEnvironment(permissionMode, commandHome, commandTemporaryDirectory) {
+  const environment = {
+    PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    LANG: process.env.LANG ?? "en_US.UTF-8",
+    LC_ALL: process.env.LC_ALL ?? "en_US.UTF-8",
+    SHELL: "/bin/bash",
+    TERM: process.env.TERM ?? "xterm-256color",
+    TMPDIR: commandTemporaryDirectory,
+    HOME: permissionMode === "sandbox" ? commandHome : process.env.HOME ?? commandHome,
+    NPM_CONFIG_CACHE: path.join(commandHome, ".npm"),
+    XDG_CACHE_HOME: path.join(commandHome, ".cache"),
+  };
+  if (process.env.USER) environment.USER = process.env.USER;
+  return environment;
+}
+
+function appendCommandOutput(current, chunk, remainingBytes) {
+  if (remainingBytes <= 0) return { value: current, addedBytes: 0, truncated: true };
+  const buffer = Buffer.from(chunk);
+  const accepted = buffer.subarray(0, remainingBytes);
+  return {
+    value: current + accepted.toString("utf8"),
+    addedBytes: accepted.length,
+    truncated: buffer.length > accepted.length,
+  };
+}
+
+function terminateProcessGroup(child, signal = "SIGTERM") {
+  if (!child.pid) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      // The process already exited.
+    }
+  }
+}
+
+export async function executeWorkspaceCommand({
+  root,
+  dataDirectory,
+  command,
+  permissionMode = "sandbox",
+  timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+  signal,
+}) {
+  if (typeof command !== "string" || !command.trim()) throw new Error("Bash 命令不能为空。");
+  if (Buffer.byteLength(command) > MAX_COMMAND_BYTES) throw new Error("Bash 命令过长。");
+  if (permissionMode !== "sandbox" && permissionMode !== "full") {
+    throw new Error("Bash 权限模式无效。");
+  }
+  if (permissionMode === "sandbox" && process.platform !== "darwin") {
+    throw new Error("当前系统不支持项目沙箱，命令未执行。");
+  }
+
+  const canonicalRoot = await realpath(root);
+  const boundedTimeout = Math.max(
+    1_000,
+    Math.min(Number(timeoutMs) || DEFAULT_COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS),
+  );
+  const commandHome = path.join(dataDirectory, "command-home");
+  const commandTemporaryDirectory = path.join(dataDirectory, "command-tmp");
+  await mkdir(commandHome, { recursive: true, mode: 0o700 });
+  await mkdir(commandTemporaryDirectory, { recursive: true, mode: 0o700 });
+
+  const executable = permissionMode === "sandbox" ? "/usr/bin/sandbox-exec" : "/bin/bash";
+  const args =
+    permissionMode === "sandbox"
+      ? [
+          "-p",
+          createSandboxProfile(canonicalRoot, commandHome, commandTemporaryDirectory),
+          "/bin/bash",
+          "-c",
+          command,
+        ]
+      : ["-c", command];
+  const startedAt = Date.now();
+
+  return await new Promise((resolve, reject) => {
+    const child = spawn(executable, args, {
+      cwd: canonicalRoot,
+      env: commandEnvironment(permissionMode, commandHome, commandTemporaryDirectory),
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let outputBytes = 0;
+    let truncated = false;
+    let timedOut = false;
+    let settled = false;
+    let forceKillTimeout;
+
+    const collect = (target, chunk) => {
+      const appended = appendCommandOutput(
+        target === "stdout" ? stdout : stderr,
+        chunk,
+        MAX_COMMAND_OUTPUT_BYTES - outputBytes,
+      );
+      outputBytes += appended.addedBytes;
+      truncated ||= appended.truncated;
+      if (target === "stdout") stdout = appended.value;
+      else stderr = appended.value;
+    };
+    child.stdout.on("data", (chunk) => collect("stdout", chunk));
+    child.stderr.on("data", (chunk) => collect("stderr", chunk));
+
+    const killTimer = () => {
+      if (forceKillTimeout) return;
+      terminateProcessGroup(child, "SIGTERM");
+      forceKillTimeout = setTimeout(() => terminateProcessGroup(child, "SIGKILL"), 1_000);
+      forceKillTimeout.unref();
+    };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      killTimer();
+    }, boundedTimeout);
+    timeout.unref();
+    const abort = () => killTimer();
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (forceKillTimeout) clearTimeout(forceKillTimeout);
+      signal?.removeEventListener("abort", abort);
+      reject(error);
+    });
+    child.once("close", (exitCode, exitSignal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (forceKillTimeout) clearTimeout(forceKillTimeout);
+      signal?.removeEventListener("abort", abort);
+      resolve({
+        stdout,
+        stderr,
+        exitCode,
+        signal: exitSignal,
+        timedOut,
+        cancelled: Boolean(signal?.aborted),
+        truncated,
+        durationMs: Date.now() - startedAt,
+      });
+    });
+  });
+}
+
+export function createCommandManager({ dataDirectory }) {
+  const jobs = new Map();
+
+  function snapshot(job) {
+    return {
+      id: job.id,
+      workspaceId: job.workspaceId,
+      command: job.command,
+      approvalMode: job.approvalMode,
+      permissionMode: job.permissionMode,
+      timeoutMs: job.timeoutMs,
+      status: job.status,
+      createdAt: job.createdAt,
+      startedAt: job.startedAt,
+      completedAt: job.completedAt,
+      result: job.result,
+      error: job.error,
+    };
+  }
+
+  function requireJob(workspaceId, commandId) {
+    const job = jobs.get(commandId);
+    if (!job || job.workspaceId !== workspaceId) {
+      throw Object.assign(new Error("Bash 命令任务不存在。"), { status: 404 });
+    }
+    return job;
+  }
+
+  async function run(job) {
+    if (job.status !== "approved" && job.status !== "created") return;
+    job.status = "running";
+    job.startedAt = Date.now();
+    job.controller = new AbortController();
+    try {
+      job.result = await executeWorkspaceCommand({
+        root: job.workspaceRoot,
+        dataDirectory,
+        command: job.command,
+        permissionMode: job.permissionMode,
+        timeoutMs: job.timeoutMs,
+        signal: job.controller.signal,
+      });
+      job.status = job.result.cancelled ? "cancelled" : "completed";
+    } catch (error) {
+      job.status = "failed";
+      job.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      job.completedAt = Date.now();
+      job.controller = undefined;
+    }
+  }
+
+  function create(workspace, payload) {
+    const command = typeof payload.command === "string" ? payload.command.trim() : "";
+    if (!command || Buffer.byteLength(command) > MAX_COMMAND_BYTES) {
+      throw Object.assign(new Error("Bash 命令为空或过长。"), { status: 400 });
+    }
+    if (
+      payload.approvalMode !== undefined &&
+      payload.approvalMode !== "ask" &&
+      payload.approvalMode !== "auto"
+    ) {
+      throw Object.assign(new Error("Bash 执行模式无效。"), { status: 400 });
+    }
+    if (
+      payload.permissionMode !== undefined &&
+      payload.permissionMode !== "sandbox" &&
+      payload.permissionMode !== "full"
+    ) {
+      throw Object.assign(new Error("Bash 权限模式无效。"), { status: 400 });
+    }
+    const approvalMode = payload.approvalMode ?? "auto";
+    const permissionMode = payload.permissionMode ?? "sandbox";
+    const timeoutMs = Math.max(
+      1_000,
+      Math.min(Number(payload.timeoutMs) || DEFAULT_COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS),
+    );
+    const job = {
+      id: randomUUID(),
+      workspaceId: workspace.id,
+      workspaceRoot: workspace.path,
+      command,
+      approvalMode,
+      permissionMode,
+      timeoutMs,
+      status: approvalMode === "ask" ? "pending_approval" : "created",
+      createdAt: Date.now(),
+    };
+    jobs.set(job.id, job);
+    if (approvalMode === "auto") void run(job);
+    return snapshot(job);
+  }
+
+  function get(workspaceId, commandId) {
+    return snapshot(requireJob(workspaceId, commandId));
+  }
+
+  function decide(workspaceId, commandId, decision) {
+    const job = requireJob(workspaceId, commandId);
+    if (job.status !== "pending_approval") {
+      throw Object.assign(new Error("Bash 命令已经处理，不能重复审批。"), { status: 409 });
+    }
+    if (decision === "reject") {
+      job.status = "rejected";
+      job.completedAt = Date.now();
+    } else if (decision === "approve") {
+      job.status = "approved";
+      void run(job);
+    } else {
+      throw Object.assign(new Error("Bash 审批决定无效。"), { status: 400 });
+    }
+    return snapshot(job);
+  }
+
+  function cancel(workspaceId, commandId) {
+    const job = requireJob(workspaceId, commandId);
+    if (job.status === "running") job.controller?.abort();
+    else if (job.status === "pending_approval" || job.status === "created" || job.status === "approved") {
+      job.status = "cancelled";
+      job.completedAt = Date.now();
+    }
+    return snapshot(job);
+  }
+
+  const cleanupTimer = setInterval(() => {
+    const cutoff = Date.now() - COMMAND_JOB_TTL_MS;
+    for (const [id, job] of jobs) {
+      if ((job.completedAt ?? job.createdAt) < cutoff && job.status !== "running") jobs.delete(id);
+    }
+  }, 60_000);
+  cleanupTimer.unref();
+
+  return { create, get, decide, cancel };
+}
+
 function sendJson(response, status, payload) {
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -275,6 +602,7 @@ async function readJsonBody(request) {
 }
 
 export function createLocalRuntimeHandler({ dataDirectory, token }) {
+  const commandManager = createCommandManager({ dataDirectory });
   return async function handle(request, response) {
     try {
       if (!token || request.headers.authorization !== `Bearer ${token}`) {
@@ -321,6 +649,27 @@ export function createLocalRuntimeHandler({ dataDirectory, token }) {
             201,
             await writeWorkspaceFile(workspace.path, payload.path, payload.content),
           );
+        }
+        if (request.method === "POST" && segments[2] === "commands" && segments.length === 3) {
+          const payload = await readJsonBody(request);
+          const command = commandManager.create(workspace, payload);
+          return sendJson(response, command.status === "pending_approval" ? 202 : 201, command);
+        }
+        if (segments[2] === "commands" && segments[3]) {
+          if (request.method === "GET" && segments.length === 4) {
+            return sendJson(response, 200, commandManager.get(workspace.id, segments[3]));
+          }
+          if (request.method === "POST" && segments[4] === "decision" && segments.length === 5) {
+            const payload = await readJsonBody(request);
+            return sendJson(
+              response,
+              200,
+              commandManager.decide(workspace.id, segments[3], payload.decision),
+            );
+          }
+          if (request.method === "DELETE" && segments.length === 4) {
+            return sendJson(response, 200, commandManager.cancel(workspace.id, segments[3]));
+          }
         }
       }
 

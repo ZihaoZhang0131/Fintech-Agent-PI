@@ -39,6 +39,7 @@ import {
   Search,
   Send,
   Sparkles,
+  Terminal,
   Trash2,
   TrendingUp,
   UserRound,
@@ -61,8 +62,10 @@ import { CapabilityLibrary } from "@/components/capability-library";
 import type { CapabilityCatalog, CapabilityKind } from "@/lib/capability-types";
 import { shouldSubmitComposerKey } from "@/lib/composer-keyboard";
 import {
+  applyToolApproval,
   applyToolEnd,
   applyToolStart,
+  type ToolApprovalEvent,
   type ToolEndEvent,
   type ToolRun,
   type ToolStartEvent,
@@ -84,6 +87,8 @@ type Conversation = {
   title: string;
   messages: ChatMessage[];
   updatedAt: number;
+  bashApprovalMode: "ask" | "auto";
+  bashPermissionMode: "sandbox" | "full";
 };
 
 type LocalProject = {
@@ -128,6 +133,7 @@ type StreamEvent =
   | { type: "start"; requestId: string }
   | ToolStartEvent
   | ToolEndEvent
+  | ToolApprovalEvent
   | { type: "delta"; text: string }
   | {
       type: "done";
@@ -141,7 +147,8 @@ const LEGACY_STORAGE_KEY = "pi-research-agent:conversations:v1";
 const ACTIVE_PROJECT_KEY = "pi-research-agent:active-project:v1";
 const EXPANDED_PROJECTS_KEY = "pi-research-agent:expanded-projects:v1";
 const ENABLED_SKILLS_KEY = "pi-research-agent:enabled-skills:v1";
-const ENABLED_TOOLS_KEY = "pi-research-agent:enabled-tools:v1";
+const ENABLED_TOOLS_KEY = "pi-research-agent:enabled-tools:v2";
+const LEGACY_ENABLED_TOOLS_KEY = "pi-research-agent:enabled-tools:v1";
 const SIDEBAR_WIDTH_KEY = "pi-research-agent:sidebar-width:v1";
 const FILE_PANEL_WIDTH_KEY = "pi-research-agent:file-panel-width:v1";
 const SIDEBAR_VISIBLE_KEY = "pi-research-agent:sidebar-visible:v1";
@@ -213,6 +220,8 @@ function makeConversation(projectId: string): Conversation {
     title: "新对话",
     messages: [],
     updatedAt: timestampNow(),
+    bashApprovalMode: "auto",
+    bashPermissionMode: "sandbox",
   };
 }
 
@@ -323,6 +332,8 @@ export default function Home() {
   const [projectMenuId, setProjectMenuId] = useState("");
   const [pathProject, setPathProject] = useState<LocalProject | null>(null);
   const [removeProjectCandidate, setRemoveProjectCandidate] = useState<LocalProject | null>(null);
+  const [fullPermissionConversationId, setFullPermissionConversationId] = useState("");
+  const [approvalSubmittingIds, setApprovalSubmittingIds] = useState<string[]>([]);
   const [copiedProjectPath, setCopiedProjectPath] = useState(false);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<AgentStatus>("idle");
@@ -457,7 +468,20 @@ export default function Home() {
             conversation.projectId && projectIds.has(conversation.projectId)
               ? conversation.projectId
               : initialProject?.id;
-          return projectId ? [{ ...conversation, projectId }] : [];
+          const bashApprovalMode: Conversation["bashApprovalMode"] =
+            conversation.bashApprovalMode === "ask" ? "ask" : "auto";
+          const bashPermissionMode: Conversation["bashPermissionMode"] =
+            conversation.bashPermissionMode === "full" ? "full" : "sandbox";
+          return projectId
+            ? [
+                {
+                  ...conversation,
+                  projectId,
+                  bashApprovalMode,
+                  bashPermissionMode,
+                },
+              ]
+            : [];
         });
         if (initialProject && !normalized.some((item) => item.projectId === initialProject.id)) {
           normalized = [makeConversation(initialProject.id), ...normalized];
@@ -502,7 +526,10 @@ export default function Home() {
           await fetch("/api/capabilities", { cache: "no-store" }),
         );
         const storedSkills = parseStoredNames(localStorage.getItem(ENABLED_SKILLS_KEY));
-        const storedTools = parseStoredNames(localStorage.getItem(ENABLED_TOOLS_KEY));
+        const storedToolValue = localStorage.getItem(ENABLED_TOOLS_KEY);
+        const storedTools = parseStoredNames(
+          storedToolValue ?? localStorage.getItem(LEGACY_ENABLED_TOOLS_KEY),
+        );
         const knownSkills = new Set(catalog.skills.map((item) => item.name));
         const knownTools = new Set(catalog.tools.map((item) => item.name));
         setCapabilityCatalog(catalog);
@@ -511,11 +538,14 @@ export default function Home() {
             ? storedSkills.filter((name) => knownSkills.has(name))
             : catalog.skills.filter((item) => item.defaultEnabled).map((item) => item.name),
         );
-        setEnabledTools(
-          storedTools
-            ? storedTools.filter((name) => knownTools.has(name))
-            : catalog.tools.filter((item) => item.defaultEnabled).map((item) => item.name),
-        );
+        const initialTools = storedTools
+          ? storedTools.filter((name) => knownTools.has(name))
+          : catalog.tools.filter((item) => item.defaultEnabled).map((item) => item.name);
+        if (storedToolValue === null && knownTools.has("bash") && !initialTools.includes("bash")) {
+          initialTools.push("bash");
+        }
+        setEnabledTools(initialTools);
+        localStorage.setItem(ENABLED_TOOLS_KEY, JSON.stringify(initialTools));
       } catch (error) {
         setProjectError(error instanceof Error ? error.message : "无法加载 Agent 能力目录。");
       } finally {
@@ -745,6 +775,81 @@ export default function Home() {
     }
   }
 
+  function toggleBashApprovalMode() {
+    if (!activeConversation || isBusy) return;
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      bashApprovalMode: conversation.bashApprovalMode === "auto" ? "ask" : "auto",
+      updatedAt: timestampNow(),
+    }));
+  }
+
+  function toggleBashPermissionMode() {
+    if (!activeConversation || isBusy) return;
+    if (activeConversation.bashPermissionMode === "sandbox") {
+      setFullPermissionConversationId(activeConversation.id);
+      return;
+    }
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      bashPermissionMode: "sandbox",
+      updatedAt: timestampNow(),
+    }));
+  }
+
+  function confirmFullBashPermission() {
+    if (!fullPermissionConversationId) return;
+    updateConversation(fullPermissionConversationId, (conversation) => ({
+      ...conversation,
+      bashPermissionMode: "full",
+      updatedAt: timestampNow(),
+    }));
+    setFullPermissionConversationId("");
+  }
+
+  async function decideBashCommand(
+    messageId: string,
+    run: ToolRun,
+    decision: "approve" | "reject",
+  ) {
+    if (!activeProject || !run.commandId || approvalSubmittingIds.includes(run.commandId)) return;
+    setApprovalSubmittingIds((current) => [...current, run.commandId!]);
+    try {
+      await responseJson(
+        await fetch(
+          `/api/local/workspaces/${activeProject.id}/commands/${run.commandId}/decision`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ decision }),
+          },
+        ),
+      );
+      if (activeConversation) {
+        updateConversation(activeConversation.id, (conversation) => ({
+          ...conversation,
+          messages: conversation.messages.map((message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  toolRuns: message.toolRuns?.map((item) =>
+                    item.commandId === run.commandId
+                      ? { ...item, status: decision === "approve" ? "running" : "rejected" }
+                      : item,
+                  ),
+                }
+              : message,
+          ),
+          updatedAt: timestampNow(),
+        }));
+      }
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Bash 审批失败。");
+    } finally {
+      setApprovalSubmittingIds((current) => current.filter((id) => id !== run.commandId));
+    }
+  }
+
   function openCapabilityView(kind: CapabilityKind) {
     setActiveView(kind);
     setSidebarOpen(false);
@@ -897,6 +1002,8 @@ export default function Home() {
           workspaceName: activeProject.name,
           enabledSkills,
           enabledTools,
+          bashApprovalMode: activeConversation.bashApprovalMode,
+          bashPermissionMode: activeConversation.bashPermissionMode,
           messages: history.map(({ role, content: messageContent }) => ({
             role,
             content: messageContent,
@@ -946,6 +1053,17 @@ export default function Home() {
               updatedAt: timestampNow(),
             }));
             if (event.toolName === "write_project_file") void loadProjectFiles(activeProject.id);
+          }
+          if (event.type === "tool_approval_required") {
+            updateConversation(conversationId, (conversation) => ({
+              ...conversation,
+              messages: conversation.messages.map((message) =>
+                message.id === assistantId
+                  ? { ...message, toolRuns: applyToolApproval(message.toolRuns, event) }
+                  : message,
+              ),
+              updatedAt: timestampNow(),
+            }));
           }
           if (event.type === "delta") {
             setStatus("streaming");
@@ -1332,7 +1450,9 @@ export default function Home() {
                             <section className={`tool-run-card ${run.status}`} key={run.toolCallId}>
                               <header>
                                 <span className="tool-run-icon">
-                                  {run.toolName === "load_skill" ? (
+                                  {run.toolName === "bash" ? (
+                                    <Terminal size={14} />
+                                  ) : run.toolName === "load_skill" ? (
                                     <BookOpenCheck size={14} />
                                   ) : run.toolName === "write_project_file" ? (
                                     <Save size={14} />
@@ -1349,19 +1469,40 @@ export default function Home() {
                                   <code>{run.toolName}</code>
                                 </span>
                                 <span className="tool-run-status">
-                                  {run.status === "running"
+                                  {run.status === "awaiting_approval"
+                                    ? "等待确认"
+                                    : run.status === "running"
                                     ? "调用中"
                                     : run.status === "success"
                                       ? "已完成"
-                                      : "失败"}
+                                      : run.status === "rejected"
+                                        ? "已拒绝"
+                                        : "失败"}
                                 </span>
                               </header>
-                              {run.query && <p className="tool-run-query">{run.query}</p>}
+                              {run.query && (
+                                <p
+                                  className={`tool-run-query ${run.toolName === "bash" ? "command" : ""}`}
+                                >
+                                  {run.query}
+                                </p>
+                              )}
                               <div className="tool-run-meta">
-                                {run.status === "running" ? (
+                                {run.status === "awaiting_approval" ? (
+                                  <span>
+                                    {run.permissionMode === "full" ? "完整本机权限" : "项目沙箱"}
+                                  </span>
+                                ) : run.status === "running" ? (
                                   <span>Agent 正在处理…</span>
                                 ) : (
                                   <>
+                                    {run.toolName === "bash" && (
+                                      <span>
+                                        {run.permissionMode === "full"
+                                          ? "完整本机权限"
+                                          : "项目沙箱"}
+                                      </span>
+                                    )}
                                     {run.summary && <span>{run.summary}</span>}
                                     {run.resultCount !== undefined && (
                                       <span>{run.resultCount} 个结果</span>
@@ -1371,9 +1512,54 @@ export default function Home() {
                                         <Clock3 size={11} /> {formatDuration(run.durationMs)}
                                       </span>
                                     )}
+                                    {run.toolName === "bash" && run.exitCode !== undefined && (
+                                      <span>退出码 {run.exitCode ?? "无"}</span>
+                                    )}
+                                    {run.timedOut && <span>已超时</span>}
+                                    {run.truncated && <span>输出已截断</span>}
                                   </>
                                 )}
                               </div>
+                              {run.status === "awaiting_approval" && run.commandId && (
+                                <div className="tool-run-approval-wrap">
+                                  <code>{activeProject?.path}</code>
+                                  <div className="tool-run-approval">
+                                    <button
+                                      type="button"
+                                      className="secondary"
+                                      disabled={approvalSubmittingIds.includes(run.commandId)}
+                                      onClick={() =>
+                                        void decideBashCommand(message.id, run, "reject")
+                                      }
+                                    >
+                                      拒绝
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={approvalSubmittingIds.includes(run.commandId)}
+                                      onClick={() =>
+                                        void decideBashCommand(message.id, run, "approve")
+                                      }
+                                    >
+                                      允许
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                              {run.toolName === "bash" &&
+                                (run.stdout || run.stderr || run.truncated) && (
+                                  <details className="tool-run-output">
+                                    <summary>查看命令输出</summary>
+                                    {run.stdout && <pre>{run.stdout}</pre>}
+                                    {run.stderr && (
+                                      <pre>
+                                        <strong>STDERR</strong>{"\n"}
+                                        {run.stderr}
+                                      </pre>
+                                    )}
+                                    {run.truncated && <p>输出超过 200KB，后续内容已截断。</p>}
+                                  </details>
+                                )}
                               {Boolean(run.sources?.length) && (
                                 <div className="tool-run-sources">
                                   {run.sources?.map((source) => (
@@ -1460,7 +1646,31 @@ export default function Home() {
               aria-label="投研任务"
             />
             <div className="composer-footer">
-              <span>Enter 发送 · Shift + Enter 换行</span>
+              <div className="composer-options">
+                <span>Enter 发送 · Shift + Enter 换行</span>
+                {activeConversation && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={toggleBashApprovalMode}
+                      disabled={isBusy}
+                      title="切换 Bash 命令是否逐条确认"
+                    >
+                      {activeConversation.bashApprovalMode === "auto" ? "自动执行" : "每条确认"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={toggleBashPermissionMode}
+                      disabled={isBusy}
+                      title="切换 Bash 文件访问权限"
+                    >
+                      {activeConversation.bashPermissionMode === "full"
+                        ? "完整本机权限"
+                        : "项目沙箱"}
+                    </button>
+                  </>
+                )}
+              </div>
               {isBusy ? (
                 <button className="send-button stop" type="button" onClick={() => abortRef.current?.abort()}>
                   <CircleStop size={18} />
@@ -1809,6 +2019,53 @@ export default function Home() {
                 onClick={() => void removeProjectBinding(removeProjectCandidate)}
               >
                 移除项目
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+      {fullPermissionConversationId && (
+        <div
+          className="project-dialog-backdrop"
+          role="presentation"
+          onMouseDown={() => setFullPermissionConversationId("")}
+        >
+          <section
+            className="project-dialog confirm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="full-bash-permission-title"
+            aria-describedby="full-bash-permission-description"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header>
+              <div>
+                <span>Bash 权限</span>
+                <h2 id="full-bash-permission-title">开启完整本机权限？</h2>
+              </div>
+              <button
+                type="button"
+                aria-label="关闭"
+                onClick={() => setFullPermissionConversationId("")}
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <div className="project-dialog-body">
+              <p id="full-bash-permission-description">
+                Bash 将能以当前 macOS 用户权限读取和修改项目目录之外的文件，并可访问网络。此设置只影响当前会话，请仅在任务确实需要时开启。
+              </p>
+            </div>
+            <footer>
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setFullPermissionConversationId("")}
+              >
+                取消
+              </button>
+              <button className="danger" type="button" onClick={confirmFullBashPermission}>
+                开启完整权限
               </button>
             </footer>
           </section>

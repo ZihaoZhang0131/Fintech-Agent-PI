@@ -5,6 +5,12 @@ import { resolveCapabilitySelection } from "@/server/agent/capability-policy";
 import { formatSkillCatalog } from "@/server/agent/skills/catalog";
 import { loadSkillRegistry } from "@/server/agent/skills/loader";
 import { createLoadSkillTool, type LoadSkillDetails } from "@/server/agent/tools/load-skill";
+import {
+  createBashTool,
+  type BashApprovalMode,
+  type BashPermissionMode,
+  type BashToolDetails,
+} from "@/server/agent/tools/bash";
 import { createWebSearchTool, type WebSearchDetails } from "@/server/agent/tools/web-search";
 import {
   createWorkspaceTools,
@@ -22,6 +28,8 @@ type ChatRequest = {
   workspaceName?: string;
   enabledSkills?: unknown;
   enabledTools?: unknown;
+  bashApprovalMode?: unknown;
+  bashPermissionMode?: unknown;
   messages?: InputMessage[];
   input?: string;
 };
@@ -127,12 +135,26 @@ function getWorkspaceDetails(value: unknown): WorkspaceToolDetails | undefined {
   return details as WorkspaceToolDetails;
 }
 
+function getBashDetails(value: unknown): BashToolDetails | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const details = value as Partial<BashToolDetails>;
+  if (
+    details.kind !== "bash" ||
+    typeof details.commandId !== "string" ||
+    typeof details.command !== "string"
+  ) {
+    return undefined;
+  }
+  return details as BashToolDetails;
+}
+
 function getToolLabel(toolName: string) {
   if (toolName === "web_search") return "Tavily 网络搜索";
   if (toolName === "load_skill") return "加载 Skill";
   if (toolName === "list_project_files") return "查看项目文件";
   if (toolName === "read_project_file") return "读取项目文件";
   if (toolName === "write_project_file") return "保存项目产出";
+  if (toolName === "bash") return "执行 Bash";
   return toolName;
 }
 
@@ -141,6 +163,7 @@ function getToolInput(args: unknown) {
   if ("query" in args) return String(args.query);
   if ("name" in args) return String(args.name);
   if ("path" in args) return String(args.path);
+  if ("command" in args) return String(args.command);
   return undefined;
 }
 
@@ -163,6 +186,10 @@ export async function POST(request: Request) {
   const history = Array.isArray(payload.messages) ? payload.messages : [];
   const workspaceId = payload.workspaceId?.trim() ?? "";
   const workspaceName = payload.workspaceName?.trim().slice(0, 200) || "本地项目";
+  const bashApprovalMode: BashApprovalMode =
+    payload.bashApprovalMode === "ask" ? "ask" : "auto";
+  const bashPermissionMode: BashPermissionMode =
+    payload.bashPermissionMode === "full" ? "full" : "sandbox";
   if (
     !input ||
     input.length > 20_000 ||
@@ -191,6 +218,9 @@ export async function POST(request: Request) {
       ? [createWebSearchTool({ apiKey: process.env.TAVILY_API_KEY })]
       : []),
     ...workspaceTools,
+    ...(enabledToolNames.has("bash")
+      ? [createBashTool(workspaceId, { approvalMode: bashApprovalMode, permissionMode: bashPermissionMode })]
+      : []),
   ];
   const projectCapabilityPrompt = [
     `当前项目名称：${JSON.stringify(workspaceName)}。`,
@@ -201,6 +231,9 @@ export async function POST(request: Request) {
     enabledToolNames.has("write_project_file")
       ? "形成完整研究报告、研究框架、表格数据或代码时，在最终回答前使用 write_project_file 保存到 outputs/ 目录，并说明保存路径。"
       : "本轮没有启用文件写入能力，不要声称已经把产出保存到本地。",
+    enabledToolNames.has("bash")
+      ? `Bash 已启用，执行模式为 ${bashApprovalMode === "ask" ? "每条确认" : "自动执行"}，权限模式为 ${bashPermissionMode === "full" ? "完整本机权限" : "项目沙箱"}。只有任务确实需要运行脚本、测试、构建或命令行操作时才调用 bash。`
+      : "本轮没有启用 Bash，不要声称执行过脚本、测试、构建或命令。",
     "只处理当前项目和用户任务相关的内容，不覆盖不相关文件。",
   ].join("\n");
 
@@ -252,25 +285,41 @@ export async function POST(request: Request) {
           const searchDetails = getWebSearchDetails(event.result?.details);
           const skillDetails = getLoadSkillDetails(event.result?.details);
           const workspaceDetails = getWorkspaceDetails(event.result?.details);
+          const bashDetails = getBashDetails(event.result?.details);
           send({
             type: "tool_end",
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             label: getToolLabel(event.toolName),
             isError: event.isError,
-            query: searchDetails?.query ?? skillDetails?.name ?? workspaceDetails?.path,
+            query:
+              searchDetails?.query ?? skillDetails?.name ?? workspaceDetails?.path ?? bashDetails?.command,
             summary: skillDetails
               ? `已加载 ${skillDetails.name}`
               : workspaceDetails?.action === "write"
                 ? `已保存 ${workspaceDetails.path}`
                 : workspaceDetails?.action === "read"
                   ? `已读取 ${workspaceDetails.path}`
-                  : undefined,
+                  : bashDetails?.status === "rejected"
+                    ? "用户已拒绝，命令未执行"
+                    : bashDetails
+                      ? `退出码 ${bashDetails.exitCode ?? "无"}`
+                      : undefined,
             completedAt,
-            durationMs: toolStartedAt.has(event.toolCallId)
-              ? completedAt - toolStartedAt.get(event.toolCallId)!
-              : undefined,
+            durationMs:
+              bashDetails?.durationMs ??
+              (toolStartedAt.has(event.toolCallId)
+                ? completedAt - toolStartedAt.get(event.toolCallId)!
+                : undefined),
             resultCount: searchDetails?.sources.length ?? workspaceDetails?.resultCount,
+            commandId: bashDetails?.commandId,
+            permissionMode: bashDetails?.permissionMode,
+            commandStatus: bashDetails?.status,
+            exitCode: bashDetails?.exitCode,
+            stdout: bashDetails?.stdout,
+            stderr: bashDetails?.stderr,
+            truncated: bashDetails?.truncated,
+            timedOut: bashDetails?.timedOut,
             sources: searchDetails?.sources.map((source) => ({
               title: source.title,
               url: source.url,
@@ -278,6 +327,21 @@ export async function POST(request: Request) {
             })),
           });
           toolStartedAt.delete(event.toolCallId);
+        }
+
+        if (event.type === "tool_execution_update") {
+          const bashDetails = getBashDetails(event.partialResult?.details);
+          if (bashDetails?.status === "pending_approval") {
+            send({
+              type: "tool_approval_required",
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              label: getToolLabel(event.toolName),
+              query: bashDetails.command,
+              commandId: bashDetails.commandId,
+              permissionMode: bashDetails.permissionMode,
+            });
+          }
         }
 
         if (

@@ -10,6 +10,7 @@ export const AGENT_TOOL_NAMES = [
   "list_project_files",
   "read_project_file",
   "write_project_file",
+  "bash",
 ] as const;
 
 export type BundledSkillName = (typeof BUNDLED_SKILL_NAMES)[number];

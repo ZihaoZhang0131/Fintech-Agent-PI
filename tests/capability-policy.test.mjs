@@ -16,10 +16,10 @@ test("capability selection enables the complete bundled set by default", () => {
 test("capability selection keeps only explicitly enabled known names", () => {
   const selection = resolveCapabilitySelection({
     enabledSkills: ["equity-research", "unknown-skill"],
-    enabledTools: ["web_search", "write_project_file", "run_arbitrary_shell"],
+    enabledTools: ["web_search", "write_project_file", "bash", "run_arbitrary_shell"],
   });
   assert.deepEqual(selection.enabledSkills, ["equity-research"]);
-  assert.deepEqual(selection.enabledTools, ["web_search", "write_project_file"]);
+  assert.deepEqual(selection.enabledTools, ["web_search", "write_project_file", "bash"]);
 });
 
 test("empty capability selections disable all Agent skills and tools", () => {

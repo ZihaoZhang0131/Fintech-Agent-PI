@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyToolEnd, applyToolStart } from "../lib/tool-runs.ts";
+import { applyToolApproval, applyToolEnd, applyToolStart } from "../lib/tool-runs.ts";
 
 test("tool run reducer preserves parallel calls and completes the matching call", () => {
   const firstStart = {
@@ -44,6 +44,44 @@ test("tool run reducer preserves parallel calls and completes the matching call"
   assert.equal(runs[1].query, "第二条搜索");
 });
 
+test("tool run reducer represents Bash approval, rejection, and command output", () => {
+  let runs = applyToolStart(undefined, {
+    type: "tool_start",
+    toolCallId: "bash-1",
+    toolName: "bash",
+    label: "执行 Bash",
+    query: "npm test",
+    startedAt: 3_000,
+  });
+  runs = applyToolApproval(runs, {
+    type: "tool_approval_required",
+    toolCallId: "bash-1",
+    toolName: "bash",
+    label: "执行 Bash",
+    query: "npm test",
+    commandId: "command-1",
+    permissionMode: "sandbox",
+  });
+  assert.equal(runs[0].status, "awaiting_approval");
+  assert.equal(runs[0].commandId, "command-1");
+
+  runs = applyToolEnd(runs, {
+    type: "tool_end",
+    toolCallId: "bash-1",
+    toolName: "bash",
+    label: "执行 Bash",
+    isError: false,
+    completedAt: 3_050,
+    durationMs: 50,
+    commandId: "command-1",
+    permissionMode: "sandbox",
+    commandStatus: "rejected",
+    stdout: "",
+    stderr: "",
+  });
+  assert.equal(runs[0].status, "rejected");
+});
+
 test("tool run reducer records an end event even if its start event was missed", () => {
   const runs = applyToolEnd(undefined, {
     type: "tool_end",
@@ -59,4 +97,3 @@ test("tool run reducer records an end event even if its start event was missed",
   assert.equal(runs[0].status, "error");
   assert.equal(runs[0].startedAt, 1_700);
 });
-

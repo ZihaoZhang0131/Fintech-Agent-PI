@@ -1,6 +1,7 @@
 import loadSkillSource from "../../../server/agent/tools/load-skill.ts?raw";
 import webSearchSource from "../../../server/agent/tools/web-search.ts?raw";
 import workspaceFilesSource from "../../../server/agent/tools/workspace-files.ts?raw";
+import bashSource from "../../../server/agent/tools/bash.ts?raw";
 import { AGENT_TOOL_NAMES } from "@/server/agent/capability-policy";
 import { loadSkillRegistry } from "@/server/agent/skills/loader";
 
@@ -34,6 +35,12 @@ const toolMetadata = {
     description: "把报告、研究框架和代码写入当前项目，默认建议保存到 outputs 目录。",
     sourcePath: "server/agent/tools/workspace-files.ts",
     code: workspaceFilesSource,
+  },
+  bash: {
+    label: "执行 Bash",
+    description: "在当前项目根目录运行脚本、测试、构建和 Git 命令，并显示结构化执行结果。",
+    sourcePath: "server/agent/tools/bash.ts",
+    code: bashSource,
   },
 } as const;
 

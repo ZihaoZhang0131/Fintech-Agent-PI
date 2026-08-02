@@ -50,7 +50,7 @@ test("exposes the searchable Skill and Tool capability catalog", async () => {
   assert.equal(response.status, 200);
   const catalog = await response.json();
   assert.equal(catalog.skills.length, 3);
-  assert.equal(catalog.tools.length, 5);
+  assert.equal(catalog.tools.length, 6);
   assert.ok(catalog.skills.every((item) => item.detail && item.defaultEnabled));
   assert.ok(catalog.tools.every((item) => item.detail.includes("AgentTool")));
   assert.deepEqual(
@@ -61,6 +61,7 @@ test("exposes the searchable Skill and Tool capability catalog", async () => {
       "list_project_files",
       "read_project_file",
       "write_project_file",
+      "bash",
     ],
   );
 });
