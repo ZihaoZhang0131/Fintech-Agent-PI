@@ -1,16 +1,6 @@
 "use client";
 
-import {
-  ArrowLeft,
-  BookOpenCheck,
-  Check,
-  Code2,
-  Eye,
-  Search,
-  ShieldCheck,
-  Wrench,
-  X,
-} from "lucide-react";
+import { ArrowLeft, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { CapabilityItem, CapabilityKind } from "@/lib/capability-types";
@@ -41,7 +31,6 @@ export function CapabilityLibrary({
     );
   }, [items, query]);
   const isSkill = kind === "skill";
-  const PageIcon = isSkill ? BookOpenCheck : Wrench;
 
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) {
@@ -53,52 +42,31 @@ export function CapabilityLibrary({
 
   return (
     <section className="capability-page">
-      <header className="capability-page-header">
-        <button className="capability-back" type="button" onClick={onClose}>
-          <ArrowLeft size={16} />
-          返回项目
-        </button>
-        <div className="capability-heading">
-          <div className="capability-heading-icon">
-            <PageIcon size={21} />
-          </div>
-          <div>
-            <span>AGENT CAPABILITIES</span>
-            <h1>{isSkill ? "技能" : "工具"}</h1>
-            <p>
-              {isSkill
-                ? "管理 Agent 可加载的投研方法和执行流程。"
-                : "管理 Agent 在对话中可以实际调用的操作能力。"}
-            </p>
-          </div>
-        </div>
-        <div className="capability-enabled-count">
-          <ShieldCheck size={15} />
-          <span>
-            已启用 <b>{enabledNames.length}</b> / {items.length}
-          </span>
-        </div>
-      </header>
-
       <div className="capability-page-body">
-        <label className="capability-search">
-          <Search size={17} />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={`搜索${isSkill ? "技能" : "工具"}名称或简介`}
-            aria-label={`搜索${isSkill ? "技能" : "工具"}`}
-          />
-          {query && (
-            <button type="button" onClick={() => setQuery("")} aria-label="清空搜索">
-              <X size={14} />
-            </button>
-          )}
-        </label>
-
-        <div className="capability-result-meta">
-          <span>{query ? `找到 ${filtered.length} 项` : `共 ${items.length} 项`}</span>
-          <p>开关会决定下一轮对话中 Agent 可以调用的范围</p>
+        <div className="capability-toolbar">
+          <button
+            className="capability-back"
+            type="button"
+            onClick={onClose}
+            aria-label="返回项目"
+            title="返回项目"
+          >
+            <ArrowLeft size={16} />
+          </button>
+          <label className="capability-search">
+            <Search size={17} />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={`搜索${isSkill ? "技能" : "工具"}名称或简介`}
+              aria-label={`搜索${isSkill ? "技能" : "工具"}`}
+            />
+            {query && (
+              <button type="button" onClick={() => setQuery("")} aria-label="清空搜索">
+                <X size={14} />
+              </button>
+            )}
+          </label>
         </div>
 
         {filtered.length > 0 ? (
@@ -107,15 +75,6 @@ export function CapabilityLibrary({
               const itemEnabled = enabled.has(item.name);
               return (
                 <article className={`capability-card ${itemEnabled ? "enabled" : "disabled"}`} key={item.name}>
-                  <div className="capability-card-topline">
-                    <span className="capability-card-icon">
-                      {isSkill ? <BookOpenCheck size={17} /> : <Code2 size={17} />}
-                    </span>
-                    <span className={`capability-state ${itemEnabled ? "enabled" : "disabled"}`}>
-                      {itemEnabled && <Check size={11} />}
-                      {itemEnabled ? "已启用" : "已停用"}
-                    </span>
-                  </div>
                   <div className="capability-card-copy">
                     <h2>{item.label}</h2>
                     {item.label !== item.name && <code>{item.name}</code>}
@@ -128,17 +87,17 @@ export function CapabilityLibrary({
                   )}
                   <footer className="capability-card-actions">
                     <button className="capability-view-button" type="button" onClick={() => setSelected(item)}>
-                      <Eye size={14} />
                       查看详情
                     </button>
-                    <label className="capability-switch">
+                    <label className="capability-toggle">
+                      <span>{itemEnabled ? "已启用" : "已停用"}</span>
                       <input
                         type="checkbox"
                         checked={itemEnabled}
                         onChange={() => onToggle(item.name)}
                         aria-label={`${itemEnabled ? "停用" : "启用"}${item.label}`}
                       />
-                      <span aria-hidden="true" />
+                      <i aria-hidden="true" />
                     </label>
                   </footer>
                 </article>

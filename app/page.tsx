@@ -22,7 +22,6 @@ import {
   FolderOpen,
   FolderPlus,
   Menu,
-  MessageSquareText,
   MoreHorizontal,
   GripHorizontal,
   GripVertical,
@@ -648,28 +647,6 @@ export default function Home() {
     }
   }
 
-  function selectProject(projectId: string) {
-    setExpandedProjectIds((current) =>
-      current.includes(projectId) ? current : [...current, projectId],
-    );
-    if (isBusy || projectId === activeProjectId) {
-      setSidebarOpen(false);
-      setActiveView("workspace");
-      return;
-    }
-    const first = conversations.find((conversation) => conversation.projectId === projectId);
-    setActiveProjectId(projectId);
-    localStorage.setItem(ACTIVE_PROJECT_KEY, projectId);
-    setSelectedFilePath("");
-    setFilePreview(null);
-    void loadProjectFiles(projectId);
-    if (first) setActiveId(first.id);
-    else newConversation(projectId);
-    setStatus("idle");
-    setSidebarOpen(false);
-    setActiveView("workspace");
-  }
-
   function toggleProjectExpansion(projectId: string) {
     setExpandedProjectIds((current) =>
       current.includes(projectId)
@@ -1173,10 +1150,9 @@ export default function Home() {
 
       <aside className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
         <div className="brand">
-          <div className="brand-mark">知</div>
+          <div className="brand-mark">尺</div>
           <div>
-            <strong>知衡</strong>
-            <span>Local Agent Workspace</span>
+            <strong>尺度投资</strong>
           </div>
           <button
             className="desktop-panel-collapse sidebar-collapse"
@@ -1203,8 +1179,8 @@ export default function Home() {
           新建项目会话
         </button>
 
-        <div className="sidebar-section-label">本地项目</div>
-        <nav className="project-list" aria-label="本地项目与会话列表">
+        <div className="sidebar-divider" aria-hidden="true" />
+        <nav className="project-list" aria-label="项目与会话列表">
           {projects.map((project) => {
             const projectConversations = conversations.filter(
               (conversation) => conversation.projectId === project.id,
@@ -1216,27 +1192,18 @@ export default function Home() {
                 className={`project-group ${active ? "active" : ""} ${expanded ? "expanded" : ""} ${projectMenuId === project.id ? "menu-open" : ""}`}
                 key={project.id}
               >
-                <div className="project-heading">
-                  <button
-                    className="project-toggle"
-                    type="button"
-                    aria-label={`${expanded ? "收起" : "展开"}${project.name}的会话`}
-                    aria-expanded={expanded}
-                    onClick={() => toggleProjectExpansion(project.id)}
-                  >
-                    {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                  </button>
-                  <button
-                    className="project-select"
-                    type="button"
-                    onClick={() => selectProject(project.id)}
-                  >
-                    <FolderOpen size={15} />
-                    <span>
-                      <strong>{project.name}</strong>
-                    </span>
-                  </button>
-                </div>
+                <button
+                  className="project-heading"
+                  type="button"
+                  aria-label={`${expanded ? "收起" : "展开"}${project.name}的会话`}
+                  aria-expanded={expanded}
+                  onClick={() => toggleProjectExpansion(project.id)}
+                >
+                  <FolderOpen size={15} />
+                  <span>
+                    <strong>{project.name}</strong>
+                  </span>
+                </button>
                 <button
                   className="project-menu-trigger"
                   type="button"
@@ -1308,14 +1275,8 @@ export default function Home() {
                           type="button"
                           onClick={() => selectConversation(conversation.id, project.id)}
                         >
-                          <MessageSquareText size={14} />
                           <span>
                             <strong>{conversation.title}</strong>
-                            <small>
-                              {conversation.messages.length > 0
-                                ? `${Math.ceil(conversation.messages.length / 2)} 轮对话`
-                                : "尚未开始"}
-                            </small>
                           </span>
                         </button>
                         <button

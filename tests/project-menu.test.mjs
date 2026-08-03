@@ -41,8 +41,28 @@ test("each project controls its conversation expansion independently", () => {
   assert.match(pageSource, /expandedProjectIds\.includes\(project\.id\)/);
   assert.match(pageSource, /function toggleProjectExpansion/);
   assert.match(pageSource, /aria-expanded=\{expanded\}/);
+  assert.match(
+    pageSource,
+    /className="project-heading"[\s\S]*onClick=\{\(\) => toggleProjectExpansion\(project\.id\)\}/,
+  );
   assert.match(pageSource, /\{expanded && \(\s*<div className="conversation-list">/);
   assert.doesNotMatch(pageSource, /\{active && \(\s*<div className="conversation-list">/);
   assert.match(stylesheet, /\.project-group\.expanded/);
-  assert.match(stylesheet, /\.project-toggle/);
+  assert.doesNotMatch(pageSource, /className="project-toggle"/);
+  assert.doesNotMatch(stylesheet, /\.project-toggle/);
+});
+
+test("sidebar uses a simplified one-line card hierarchy", () => {
+  assert.match(pageSource, /<strong>尺度投资<\/strong>/);
+  assert.doesNotMatch(pageSource, /Local Agent Workspace|<strong>知衡<\/strong>/);
+  assert.match(pageSource, /className="sidebar-divider"/);
+  assert.doesNotMatch(pageSource, /className="sidebar-section-label">本地项目/);
+  assert.doesNotMatch(pageSource, /MessageSquareText|轮对话|尚未开始/);
+  assert.match(
+    stylesheet,
+    /\.new-project-button,\s*\.new-chat-button\s*\{[^}]*justify-content:\s*flex-start;[^}]*background:\s*transparent;/s,
+  );
+  assert.match(stylesheet, /\.project-heading\s*\{[^}]*background:\s*transparent;/s);
+  assert.match(stylesheet, /\.conversation-row\s*\{[^}]*background:\s*transparent;/s);
+  assert.doesNotMatch(pageSource, /selectProject\(project\.id\)/);
 });

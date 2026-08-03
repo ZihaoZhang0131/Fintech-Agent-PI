@@ -40,7 +40,12 @@ test("Outfit and Geist Mono are loaded through the existing framework font suppo
 });
 
 test("primary controls, cards, and focus states consume semantic theme tokens", () => {
-  assert.match(stylesheet, /\.new-chat-button[\s\S]*background: var\(--primary\);/);
+  assert.match(stylesheet, /\.workspace-onboarding button,[\s\S]*background: var\(--primary\);/);
+  assert.match(
+    stylesheet,
+    /\.new-project-button,\s*\.new-chat-button,\s*\.project-heading,\s*\.conversation-row,[\s\S]*background: transparent;/,
+  );
+  assert.match(stylesheet, /\.project-heading:hover,[\s\S]*background: var\(--sidebar-accent\);/);
   assert.match(stylesheet, /\.suggestion-card,[\s\S]*background: var\(--card\);/);
   assert.match(stylesheet, /\.composer:focus-within\s*\{[^}]*border-color: var\(--ring\);/s);
   assert.match(stylesheet, /:where\(button, input, select, textarea, a\):focus-visible/);
