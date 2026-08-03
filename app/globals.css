@@ -1,20 +1,56 @@
 @import "tailwindcss";
 
 :root {
-  --ink: #1e1e1e;
-  --ink-muted: #6f6f6f;
-  --canvas: #f8f8f8;
-  --paper: #fdfdfd;
-  --panel: #f2f2f2;
-  --panel-deep: #ebebeb;
-  --line: #e3e3e3;
-  --line-strong: #d2d2d2;
-  --forest: #3f3f3f;
-  --forest-bright: #575757;
-  --mint: #e5e5e5;
-  --gold: #8d8d8d;
-  --danger: #505050;
-  --shadow: 0 16px 50px rgba(39, 39, 39, 0.1);
+  --background: #faf9f5;
+  --foreground: #3d3929;
+  --card: #f5f4ef;
+  --card-foreground: #141413;
+  --popover: #ffffff;
+  --popover-foreground: #28261b;
+  --primary: #c96442;
+  --primary-hover: #b05730;
+  --primary-foreground: #ffffff;
+  --secondary: #e9e6dc;
+  --secondary-foreground: #535146;
+  --muted: #ede9de;
+  --muted-foreground: #6e6d68;
+  --accent: #e9e6dc;
+  --accent-foreground: #28261b;
+  --destructive: #141413;
+  --destructive-foreground: #ffffff;
+  --border: #dad9d4;
+  --input: #b4b2a7;
+  --ring: #c96442;
+  --sidebar: #f5f4ee;
+  --sidebar-foreground: #3d3d3a;
+  --sidebar-primary: #c96442;
+  --sidebar-primary-foreground: #fbfbfb;
+  --sidebar-accent: #e9e6dc;
+  --sidebar-accent-foreground: #343434;
+  --sidebar-border: #ebebeb;
+  --radius: 1rem;
+  --font-sans: var(--font-outfit), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    sans-serif;
+  --font-mono: var(--font-geist-mono), "SFMono-Regular", Consolas, monospace;
+  --shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
+
+  /* Compatibility aliases keep the existing component selectors stable. */
+  --ink: var(--foreground);
+  --ink-muted: var(--muted-foreground);
+  --canvas: var(--background);
+  --paper: var(--background);
+  --panel: var(--sidebar);
+  --panel-deep: var(--secondary);
+  --line: var(--border);
+  --line-strong: var(--input);
+  --forest: var(--primary);
+  --forest-bright: var(--primary-hover);
+  --mint: var(--accent);
+  --gold: var(--primary);
+  --danger: var(--destructive);
+  --shadow: var(--shadow-md);
 }
 
 * {
@@ -26,11 +62,9 @@ body {
   width: 100%;
   min-height: 100%;
   margin: 0;
-  background: var(--canvas);
-  color: var(--ink);
-  font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
 }
 
 button,
@@ -40,6 +74,23 @@ textarea {
 
 button {
   color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+:where(button, input, select, textarea, a):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .app-shell {
@@ -2797,6 +2848,516 @@ button.workspace-file-row:hover,
   background: #fbfbfb;
   color: #7f7f7f;
   font-size: 8px;
+}
+
+/* Claude+ theme refinement ------------------------------------------------- */
+
+.app-shell,
+.chat-column,
+.capability-page {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.sidebar,
+.artifact-panel,
+.workspace-file-browser {
+  background: var(--sidebar);
+  color: var(--sidebar-foreground);
+}
+
+.sidebar {
+  border-color: var(--sidebar-border);
+}
+
+.brand strong,
+.header-title-group h1,
+.workspace-onboarding h2,
+.welcome-state h2,
+.artifact-panel-header h2,
+.capability-heading h1,
+.capability-card-copy h2,
+.capability-modal-header h2,
+.project-dialog header h2,
+.artifact-empty-state h3,
+.message-content h1,
+.message-content h2,
+.message-content h3,
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.artifact-content.report h1,
+.artifact-content.report h2,
+.artifact-content.report h3 {
+  font-family: var(--font-sans);
+}
+
+.message-content code,
+.message-content pre,
+.tool-run-query,
+.workspace-preview-content pre,
+.plain-text-preview,
+.capability-modal-content.tool pre,
+.project-dialog-body code,
+.artifact-content.code pre {
+  font-family: var(--font-mono);
+}
+
+.brand-mark {
+  border-radius: 12px;
+  background: var(--sidebar-primary);
+  color: var(--sidebar-primary-foreground);
+  font-family: var(--font-sans);
+  font-weight: 650;
+  box-shadow: var(--shadow-sm);
+}
+
+.brand span,
+.sidebar-section-label,
+.artifact-panel-header > div:first-child > span,
+.capability-modal-header span,
+.project-dialog header span {
+  color: var(--muted-foreground);
+}
+
+.desktop-panel-collapse,
+.panel-restore,
+.mobile-icon-button,
+.artifact-panel-close,
+.workspace-preview-collapse,
+.workspace-section-restore {
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--secondary-foreground);
+  box-shadow: var(--shadow-xs);
+}
+
+.desktop-panel-collapse:hover,
+.panel-restore:hover,
+.mobile-icon-button:hover,
+.artifact-panel-close:hover,
+.workspace-preview-collapse:hover,
+.workspace-section-restore:hover {
+  border-color: var(--ring);
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.new-chat-button,
+.workspace-onboarding button,
+.send-button,
+.capability-modal-footer > button,
+.project-dialog footer button {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: var(--shadow-xs);
+}
+
+.new-chat-button:hover,
+.workspace-onboarding button:hover:not(:disabled),
+.send-button:hover:not(:disabled),
+.capability-modal-footer > button:hover,
+.project-dialog footer button:hover {
+  border-color: var(--primary-hover);
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+.new-chat-button:disabled,
+.workspace-onboarding button:disabled,
+.send-button:disabled {
+  border-color: var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  box-shadow: none;
+}
+
+.new-project-button,
+.capability-back,
+.capability-view-button,
+.refresh-files,
+.artifact-viewer-toolbar button,
+.project-dialog footer button.secondary {
+  border-color: var(--border);
+  background: var(--popover);
+  color: var(--secondary-foreground);
+  box-shadow: var(--shadow-xs);
+}
+
+.new-project-button:hover,
+.capability-back:hover,
+.capability-view-button:hover,
+.refresh-files:hover:not(:disabled),
+.artifact-viewer-toolbar button:hover,
+.project-dialog footer button.secondary:hover {
+  border-color: var(--ring);
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.project-group.active,
+.conversation-row.active,
+.sidebar-capability-nav button:hover,
+.sidebar-capability-nav button.active,
+.workspace-file-row.active,
+.artifact-list-item.active {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+.conversation-row.active::before {
+  background: var(--primary);
+}
+
+.project-select,
+.conversation-select,
+.project-toggle,
+.project-menu-trigger,
+.delete-chat,
+.sidebar-capability-nav button {
+  color: var(--sidebar-foreground);
+}
+
+.project-toggle:hover,
+.project-menu-trigger:hover,
+.delete-chat:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.project-context-menu {
+  border-color: var(--border);
+  border-radius: 12px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: var(--shadow-md);
+}
+
+.project-context-menu button:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.chat-header,
+.artifact-panel-header,
+.workspace-preview-toolbar,
+.artifact-viewer-toolbar,
+.capability-page-header {
+  border-color: var(--border);
+  background: rgba(250, 249, 245, 0.94);
+  backdrop-filter: blur(12px);
+}
+
+.header-subtitle,
+.welcome-state > p,
+.workspace-onboarding p,
+.message-meta time,
+.tool-run-meta,
+.artifact-meta,
+.capability-heading p,
+.capability-card-copy p,
+.project-dialog-body p {
+  color: var(--muted-foreground);
+}
+
+.status-dot.online,
+.compact-run-status.connecting i,
+.compact-run-status.streaming i {
+  background: var(--primary);
+  box-shadow: 0 0 0 3px rgba(201, 100, 66, 0.16);
+}
+
+.status-dot.offline,
+.compact-run-status i {
+  background: var(--input);
+}
+
+.welcome-eyebrow,
+.workspace-onboarding-icon,
+.artifact-empty-state > div:first-child,
+.capability-heading-icon,
+.capability-card-icon,
+.artifact-type-icon {
+  border-color: var(--border);
+  background: var(--accent);
+  color: var(--primary);
+  box-shadow: var(--shadow-xs);
+}
+
+.welcome-eyebrow span {
+  background: var(--primary);
+}
+
+.suggestion-card,
+.tool-run-card,
+.capability-card,
+.artifact-list-item {
+  border-color: var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--card-foreground);
+  box-shadow: var(--shadow-xs);
+}
+
+.suggestion-card:hover,
+.capability-card.enabled:hover,
+.artifact-list-item:hover {
+  border-color: var(--ring);
+  background: var(--popover);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.suggestion-card svg,
+.suggestion-card strong,
+.capability-card.enabled .capability-card-icon {
+  color: var(--primary);
+}
+
+.suggestion-card span,
+.capability-card.disabled,
+.capability-dependencies,
+.capability-result-meta {
+  color: var(--muted-foreground);
+}
+
+.message-avatar {
+  border-color: var(--border);
+  background: var(--popover);
+  color: var(--secondary-foreground);
+  box-shadow: var(--shadow-xs);
+}
+
+.message.assistant .message-avatar {
+  border-color: var(--primary);
+  background: var(--accent);
+  color: var(--primary);
+}
+
+.message-content code {
+  border-radius: 6px;
+  background: var(--muted);
+  color: var(--accent-foreground);
+}
+
+.message-content pre,
+.tool-run-output pre,
+.tool-run-query.command,
+.capability-modal-content.tool,
+.artifact-content.code {
+  background: var(--card-foreground);
+  color: var(--primary-foreground);
+}
+
+.message-content blockquote,
+.artifact-content.report blockquote {
+  border-color: var(--primary);
+  color: var(--muted-foreground);
+}
+
+.tool-run-card.running,
+.tool-run-card.awaiting_approval {
+  border-color: var(--primary);
+}
+
+.tool-run-card.error,
+.tool-run-card.rejected {
+  border-color: var(--destructive);
+}
+
+.tool-run-icon {
+  background: var(--accent);
+  color: var(--primary);
+}
+
+.tool-run-card.error .tool-run-icon,
+.tool-run-card.rejected .tool-run-icon {
+  background: var(--destructive);
+  color: var(--destructive-foreground);
+}
+
+.tool-run-card.running .tool-run-status,
+.tool-run-card.awaiting_approval .tool-run-status,
+.tool-run-sources a {
+  color: var(--primary);
+}
+
+.tool-run-card.error .tool-run-status,
+.tool-run-card.rejected .tool-run-status {
+  color: var(--destructive);
+}
+
+.tool-run-query,
+.tool-run-output,
+.tool-run-approval,
+.compact-run-status,
+.composer-control {
+  border-color: var(--border);
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+}
+
+.composer-wrap {
+  background: linear-gradient(to top, var(--background) 78%, rgba(250, 249, 245, 0));
+}
+
+.composer {
+  border-color: var(--input);
+  border-radius: var(--radius);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: var(--shadow-sm);
+}
+
+.composer:focus-within {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px rgba(201, 100, 66, 0.14), var(--shadow-sm);
+}
+
+.composer textarea,
+.model-control select {
+  color: var(--foreground);
+}
+
+.composer textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+.composer-control:hover:not(:disabled),
+.model-control:focus-within {
+  border-color: var(--ring);
+  background: var(--accent);
+}
+
+.send-button.stop,
+.project-dialog footer button.danger {
+  border-color: var(--destructive);
+  background: var(--destructive);
+  color: var(--destructive-foreground);
+}
+
+.artifact-panel,
+.workspace-file-browser,
+.workspace-preview,
+.workspace-files-layout,
+.workspace-section-resizer,
+.artifact-viewer {
+  border-color: var(--border);
+}
+
+.workspace-file-row,
+.artifact-list-item,
+.workspace-preview-toolbar button {
+  color: var(--secondary-foreground);
+}
+
+.workspace-file-row:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.workspace-preview-content,
+.workspace-preview-content:has(pre code),
+.workspace-preview-content.image,
+.workspace-preview-content.pdf {
+  background: #ffffff;
+  color: var(--foreground);
+}
+
+.capability-page-body {
+  background: var(--background);
+}
+
+.capability-search {
+  border-color: var(--input);
+  border-radius: 12px;
+  background: var(--popover);
+  box-shadow: var(--shadow-xs);
+}
+
+.capability-search:focus-within {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px rgba(201, 100, 66, 0.14);
+}
+
+.capability-card.disabled {
+  background: var(--muted);
+  box-shadow: none;
+}
+
+.capability-state.enabled,
+.capability-enabled-count {
+  border-color: var(--primary);
+  background: var(--accent);
+  color: var(--primary);
+}
+
+.capability-state.disabled {
+  border-color: var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.capability-switch input:checked + span {
+  background: var(--primary);
+}
+
+.capability-switch input:focus-visible + span {
+  box-shadow: 0 0 0 3px rgba(201, 100, 66, 0.18);
+}
+
+.capability-modal-backdrop,
+.project-dialog-backdrop,
+.mobile-backdrop {
+  background: rgba(40, 38, 27, 0.3);
+}
+
+.capability-modal,
+.project-dialog {
+  border-color: var(--border);
+  border-radius: var(--radius);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: var(--shadow-md);
+}
+
+.capability-modal-header,
+.capability-modal-footer,
+.project-dialog header,
+.project-dialog footer {
+  border-color: var(--border);
+  background: var(--card);
+}
+
+.capability-modal-header button,
+.project-dialog header > button {
+  border-color: var(--border);
+  background: var(--popover);
+  color: var(--secondary-foreground);
+}
+
+.project-dialog-body code {
+  border-color: var(--border);
+  background: var(--muted);
+  color: var(--accent-foreground);
+}
+
+.column-resizer:hover,
+.column-resizer:active,
+.workspace-section-resizer:hover,
+.workspace-section-resizer:active {
+  background: rgba(201, 100, 66, 0.1);
+  color: var(--primary);
+}
+
+.column-resizer:hover::before,
+.column-resizer:active::before {
+  background: var(--primary);
+}
+
+* {
+  scrollbar-color: var(--input) transparent;
 }
 
 .mobile-icon-button,
