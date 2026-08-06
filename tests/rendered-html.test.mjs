@@ -33,6 +33,7 @@ test("renders the Pi research agent workspace", async () => {
   assert.match(html, /Agent 能力管理/);
   assert.match(html, />技能</);
   assert.match(html, />工具</);
+  assert.match(html, />MCP</);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/);
 });
 
@@ -47,12 +48,15 @@ test("exposes a local health endpoint without exposing the key", async () => {
   assert.doesNotMatch(body, /sk-/);
 });
 
-test("exposes the searchable Skill and Tool capability catalog", async () => {
+test("exposes the searchable Skill, Tool, and MCP capability catalog", async () => {
   const response = await render("/api/capabilities");
   assert.equal(response.status, 200);
   const catalog = await response.json();
   assert.equal(catalog.skills.length, 3);
   assert.equal(catalog.tools.length, 6);
+  assert.equal(catalog.mcps.length, 1);
+  assert.equal(catalog.mcps[0].name, "akshare-one");
+  assert.equal(catalog.mcps[0].requiresApiKey, false);
   assert.ok(catalog.skills.every((item) => item.detail && item.defaultEnabled));
   assert.ok(catalog.tools.every((item) => item.detail.includes("AgentTool")));
   assert.deepEqual(

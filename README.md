@@ -1,6 +1,6 @@
 # 知衡 · 本地投研 Agent
 
-一个基于 PI Agent Core、DeepSeek、Tavily 和 React 的本地投研工作台。界面采用三栏布局：左侧按本地项目组织会话，中间执行流式 Agent 任务，右侧浏览和预览项目文件。
+一个基于 PI Agent Core、DeepSeek、Tavily、AKShare One MCP 和 React 的本地投研工作台。界面采用三栏布局：左侧按本地项目组织会话，中间执行流式 Agent 任务，右侧浏览和预览项目文件。
 
 ## 当前能力
 
@@ -10,8 +10,8 @@
 - 本机 Agent Runtime 负责受控地列出、读取和写入项目文件
 - 右侧实时浏览项目目录，预览 Markdown、代码、文本、图片和 PDF
 - Agent 将可复用的报告、代码和数据保存到项目 `outputs/` 目录
-- 左侧能力入口提供独立的技能与工具管理页面，支持搜索和详情查看
-- 技能与工具开关保存在浏览器本地，并真实限制下一轮 Agent 可加载和调用的能力
+- 左侧能力入口提供独立的技能、工具与 MCP 管理页面，支持搜索、连接状态和详情查看
+- 技能、工具与 MCP 开关保存在浏览器本地，并真实限制下一轮 Agent 可加载和调用的能力
 - 左右侧栏支持拖动调宽、单独隐藏和恢复，布局状态会在本机保留
 - 右侧文件目录与文件预览支持上下拖动调整比例，也可以分别隐藏和展开
 - Agent 根据问题自主调用 Tavily 网络搜索，并在回答中引用来源
@@ -35,6 +35,18 @@
 
 Skill 文件位于 `.agents/skills/*/SKILL.md`。系统提示词只包含名称和描述；模型判断任务匹配后，通过白名单工具 `load_skill` 获取完整执行说明。Skill 负责工作流程，`web_search` 负责获取网络信息。
 
+## MCP
+
+项目内置免费的 `AKShare One MCP 0.3.9`，提供 A 股历史与实时行情、新闻、三张财务报表、财务指标、内部交易和交易日时间信息。MCP 通过本机 stdio 运行，不进入 Cloudflare Worker，也不需要 API Key。
+
+首次使用前需要安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)，然后执行一次：
+
+```bash
+npm run mcp:setup
+```
+
+该命令会安装受锁定的 Python 3.12 环境。之后使用 `npm run dev` 启动完整应用，在左侧“MCP”页面查看连接状态和九个可用工具。
+
 ## 启动
 
 需要 Node.js 22 或更高版本。
@@ -47,10 +59,11 @@ Skill 文件位于 `.agents/skills/*/SKILL.md`。系统提示词只包含名称�
 
 2. 在 `.env` 中填写 DeepSeek API Key 和 Tavily API Key。Tavily SDK 可在未配置 Key 时使用受限的 keyless 模式，但稳定使用建议配置自己的 Key。
 
-3. 安装依赖并启动完整的本地应用：
+3. 安装依赖、安装 MCP 并启动完整的本地应用：
 
    ```bash
    npm install
+   npm run mcp:setup
    npm run dev
    ```
 
@@ -86,6 +99,6 @@ npm test
 
 - API Key：仅保存在本地 `.env`，该文件已被 Git 忽略。
 - 对话记录：保存在当前浏览器的 `localStorage` 中。
-- 技能与工具开关：保存在当前浏览器的 `localStorage` 中，默认全部启用。
+- 技能、工具与 MCP 开关：保存在当前浏览器的 `localStorage` 中；MCP 首次连接成功后默认启用。
 - 项目绑定关系：保存在应用目录下的 `.local-data/workspaces.json`，该目录已被 Git 忽略。
 - 项目文件：保存在用户选择的本地文件夹中，解除绑定不会删除文件。

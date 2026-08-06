@@ -28,6 +28,7 @@ import {
   PanelRight,
   PanelRightClose,
   PanelRightOpen,
+  Plug,
   Plus,
   RefreshCw,
   Save,
@@ -155,6 +156,7 @@ const ACTIVE_PROJECT_KEY = "pi-research-agent:active-project:v1";
 const EXPANDED_PROJECTS_KEY = "pi-research-agent:expanded-projects:v1";
 const ENABLED_SKILLS_KEY = "pi-research-agent:enabled-skills:v1";
 const ENABLED_TOOLS_KEY = "pi-research-agent:enabled-tools:v2";
+const ENABLED_MCPS_KEY = "pi-research-agent:enabled-mcps:v1";
 const LEGACY_ENABLED_TOOLS_KEY = "pi-research-agent:enabled-tools:v1";
 const SIDEBAR_WIDTH_KEY = "pi-research-agent:sidebar-width:v1";
 const FILE_PANEL_WIDTH_KEY = "pi-research-agent:file-panel-width:v1";
@@ -367,9 +369,12 @@ export default function Home() {
   const [capabilityCatalog, setCapabilityCatalog] = useState<CapabilityCatalog>({
     skills: [],
     tools: [],
+    mcps: [],
   });
   const [enabledSkills, setEnabledSkills] = useState<string[]>([]);
   const [enabledTools, setEnabledTools] = useState<string[]>([]);
+  const [enabledMcps, setEnabledMcps] = useState<string[]>([]);
+  const [capabilityRefreshVersion, setCapabilityRefreshVersion] = useState(0);
   const [capabilitiesReady, setCapabilitiesReady] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(246);
   const [filePanelWidth, setFilePanelWidth] = useState(380);
@@ -591,8 +596,10 @@ export default function Home() {
         const storedTools = parseStoredNames(
           storedToolValue ?? localStorage.getItem(LEGACY_ENABLED_TOOLS_KEY),
         );
+        const storedMcps = parseStoredNames(localStorage.getItem(ENABLED_MCPS_KEY));
         const knownSkills = new Set(catalog.skills.map((item) => item.name));
         const knownTools = new Set(catalog.tools.map((item) => item.name));
+        const knownMcps = new Set(catalog.mcps.map((item) => item.name));
         setCapabilityCatalog(catalog);
         setEnabledSkills(
           storedSkills
@@ -607,6 +614,13 @@ export default function Home() {
         }
         setEnabledTools(initialTools);
         localStorage.setItem(ENABLED_TOOLS_KEY, JSON.stringify(initialTools));
+        const initialMcps = storedMcps
+          ? storedMcps.filter((name) => knownMcps.has(name))
+          : catalog.mcps
+              .filter((item) => item.defaultEnabled && item.status === "connected")
+              .map((item) => item.name);
+        setEnabledMcps(initialMcps);
+        localStorage.setItem(ENABLED_MCPS_KEY, JSON.stringify(initialMcps));
       } catch (error) {
         setProjectError(error instanceof Error ? error.message : "无法加载 Agent 能力目录。");
       } finally {
@@ -615,7 +629,7 @@ export default function Home() {
     }
 
     void loadCapabilities();
-  }, []);
+  }, [capabilityRefreshVersion]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -841,8 +855,10 @@ export default function Home() {
     };
     if (kind === "skill") {
       setEnabledSkills((current) => update(current, ENABLED_SKILLS_KEY));
-    } else {
+    } else if (kind === "tool") {
       setEnabledTools((current) => update(current, ENABLED_TOOLS_KEY));
+    } else {
+      setEnabledMcps((current) => update(current, ENABLED_MCPS_KEY));
     }
   }
 
@@ -1092,6 +1108,7 @@ export default function Home() {
           modelId: selectedModelId || health?.model,
           enabledSkills,
           enabledTools,
+          enabledMcps,
           bashApprovalMode: activeConversation.bashApprovalMode,
           bashPermissionMode: activeConversation.bashPermissionMode,
           messages: history.map(({ role, content: messageContent }) => ({
@@ -1417,6 +1434,15 @@ export default function Home() {
             <span>工具</span>
             <small>{enabledTools.length}/{capabilityCatalog.tools.length}</small>
           </button>
+          <button
+            className={activeView === "mcp" ? "active" : ""}
+            type="button"
+            onClick={() => openCapabilityView("mcp")}
+          >
+            <Plug size={15} />
+            <span>MCP</span>
+            <small>{enabledMcps.length}/{capabilityCatalog.mcps.length}</small>
+          </button>
         </nav>
       </aside>
 
@@ -1509,6 +1535,8 @@ export default function Home() {
                                 <span className="tool-run-icon">
                                   {run.toolName === "bash" ? (
                                     <Terminal size={14} />
+                                  ) : run.toolName.startsWith("mcp__") ? (
+                                    <Plug size={14} />
                                   ) : run.toolName === "load_skill" ? (
                                     <BookOpenCheck size={14} />
                                   ) : run.toolName === "write_project_file" ? (
@@ -2040,9 +2068,22 @@ export default function Home() {
         <CapabilityLibrary
           key={activeView}
           kind={activeView}
-          items={activeView === "skill" ? capabilityCatalog.skills : capabilityCatalog.tools}
-          enabledNames={activeView === "skill" ? enabledSkills : enabledTools}
+          items={
+            activeView === "skill"
+              ? capabilityCatalog.skills
+              : activeView === "tool"
+                ? capabilityCatalog.tools
+                : capabilityCatalog.mcps
+          }
+          enabledNames={
+            activeView === "skill"
+              ? enabledSkills
+              : activeView === "tool"
+                ? enabledTools
+                : enabledMcps
+          }
           onToggle={(name) => toggleCapability(activeView, name)}
+          onRefresh={() => setCapabilityRefreshVersion((current) => current + 1)}
           onClose={() => setActiveView("workspace")}
         />
       )}

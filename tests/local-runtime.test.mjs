@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createServer } from "node:http";
 import path from "node:path";
 import test from "node:test";
 
 import {
   listWorkspaceFiles,
   createCommandManager,
+  createLocalRuntimeHandler,
   executeWorkspaceCommand,
   readWorkspaceFile,
   readWorkspaceRegistry,
@@ -14,6 +16,41 @@ import {
   resolveWorkspacePath,
   writeWorkspaceFile,
 } from "../server/local-runtime.mjs";
+
+test("local runtime protects MCP discovery and tool-call routes", async (t) => {
+  const mcpManager = {
+    async listServers() {
+      return [{ id: "akshare-one", status: "connected", tools: [{ name: "get_hist_data" }] }];
+    },
+    async callTool(serverId, toolName, args) {
+      return { result: { serverId, toolName, args }, truncated: false };
+    },
+  };
+  const server = createServer(
+    createLocalRuntimeHandler({ dataDirectory: tmpdir(), token: "test-token", mcpManager }),
+  );
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  const unauthorized = await fetch(`${baseUrl}/mcp/servers`);
+  assert.equal(unauthorized.status, 401);
+
+  const listing = await fetch(`${baseUrl}/mcp/servers`, {
+    headers: { Authorization: "Bearer test-token" },
+  });
+  assert.equal(listing.status, 200);
+  assert.equal((await listing.json()).servers[0].status, "connected");
+
+  const called = await fetch(`${baseUrl}/mcp/servers/akshare-one/tools/get_hist_data/call`, {
+    method: "POST",
+    headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ arguments: { symbol: "600519" } }),
+  });
+  assert.equal(called.status, 200);
+  assert.equal((await called.json()).result.args.symbol, "600519");
+});
 
 test("local runtime binds a folder and keeps file access inside it", async (t) => {
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "pi-local-runtime-"));

@@ -1,3 +1,5 @@
+import { MCP_SERVER_IDS } from "./mcp/registry.ts";
+
 export const BUNDLED_SKILL_NAMES = [
   "equity-research",
   "earnings-review",
@@ -26,9 +28,11 @@ function selectKnownNames<T extends string>(requested: unknown, known: readonly 
 export function resolveCapabilitySelection(input: {
   enabledSkills?: unknown;
   enabledTools?: unknown;
+  enabledMcps?: unknown;
 }) {
   return {
     enabledSkills: selectKnownNames(input.enabledSkills, BUNDLED_SKILL_NAMES),
     enabledTools: selectKnownNames(input.enabledTools, AGENT_TOOL_NAMES),
+    enabledMcps: selectKnownNames(input.enabledMcps, MCP_SERVER_IDS),
   };
 }

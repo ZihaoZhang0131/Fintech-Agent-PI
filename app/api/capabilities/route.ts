@@ -4,6 +4,31 @@ import workspaceFilesSource from "../../../server/agent/tools/workspace-files.ts
 import bashSource from "../../../server/agent/tools/bash.ts?raw";
 import { AGENT_TOOL_NAMES } from "@/server/agent/capability-policy";
 import { loadSkillRegistry } from "@/server/agent/skills/loader";
+import { MCP_SERVERS, type McpServerStatus, type McpToolDefinition } from "@/server/agent/mcp/registry";
+
+type RuntimeMcpServer = {
+  id: string;
+  status: McpServerStatus;
+  error?: string;
+  tools: McpToolDefinition[];
+};
+
+async function loadRuntimeMcps() {
+  const runtimeUrl = process.env.LOCAL_RUNTIME_URL;
+  const runtimeToken = process.env.LOCAL_RUNTIME_TOKEN;
+  if (!runtimeUrl || !runtimeToken) return new Map<string, RuntimeMcpServer>();
+  try {
+    const response = await fetch(`${runtimeUrl}/mcp/servers?connect=1`, {
+      headers: { Authorization: `Bearer ${runtimeToken}` },
+      cache: "no-store",
+    });
+    if (!response.ok) return new Map<string, RuntimeMcpServer>();
+    const payload = (await response.json()) as { servers?: RuntimeMcpServer[] };
+    return new Map((payload.servers ?? []).map((server) => [server.id, server]));
+  } catch {
+    return new Map<string, RuntimeMcpServer>();
+  }
+}
 
 const toolMetadata = {
   load_skill: {
@@ -45,6 +70,7 @@ const toolMetadata = {
 } as const;
 
 export async function GET() {
+  const runtimeMcps = await loadRuntimeMcps();
   const registry = loadSkillRegistry();
   const skills = registry.list().map((metadata) => ({
     kind: "skill" as const,
@@ -63,9 +89,29 @@ export async function GET() {
     detail: toolMetadata[name].code,
     defaultEnabled: true,
   }));
+  const mcps = MCP_SERVERS.map((server) => {
+    const runtime = runtimeMcps.get(server.id);
+    return {
+      kind: "mcp" as const,
+      name: server.id,
+      label: server.label,
+      description: server.description,
+      detail: server.description,
+      sourcePath: server.homepage,
+      version: server.version,
+      homepage: server.homepage,
+      transport: server.transport,
+      free: server.free,
+      requiresApiKey: server.requiresApiKey,
+      status: runtime?.status ?? "stopped",
+      error: runtime ? runtime.error : "本机 Runtime 未启动，请使用 npm run dev 启动完整应用。",
+      mcpTools: runtime?.tools ?? [],
+      defaultEnabled: server.defaultEnabled,
+    };
+  });
 
   return Response.json(
-    { skills, tools },
+    { skills, tools, mcps },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

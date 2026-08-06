@@ -1,0 +1,15 @@
+[
+  {
+    "id": "akshare-one",
+    "label": "AKShare One",
+    "description": "免费获取 A 股历史行情、实时行情、新闻、财务报表与财务指标。",
+    "version": "0.3.9",
+    "homepage": "https://github.com/zwldarren/akshare-one-mcp",
+    "transport": "stdio",
+    "free": true,
+    "requiresApiKey": false,
+    "defaultEnabled": true,
+    "command": "mcp/akshare-one/.venv/bin/akshare-one-mcp",
+    "args": []
+  }
+]
