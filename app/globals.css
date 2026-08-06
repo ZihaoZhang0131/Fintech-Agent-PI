@@ -238,12 +238,6 @@ body.is-resizing-column * {
   user-select: none !important;
 }
 
-body.is-resizing-row,
-body.is-resizing-row * {
-  cursor: row-resize !important;
-  user-select: none !important;
-}
-
 .brand-mark {
   display: grid;
   width: 34px;
@@ -1369,19 +1363,199 @@ button.composer-control:hover:not(:disabled),
   background: #f6f6f6;
 }
 
-.workspace-panel-header {
-  min-height: 64px;
+.workspace-tabs-bar {
+  display: flex;
+  align-items: flex-end;
+  min-height: 32px;
+  flex: 0 0 32px;
+  margin: 4px 6px 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
 }
 
-.workspace-panel-header > div:first-child {
+.workspace-tabs-list {
+  display: grid;
   min-width: 0;
+  width: 100%;
+  max-width: calc(var(--workspace-tab-count, 1) * 96px);
+  flex: 1;
+  align-items: flex-end;
+  grid-template-columns: repeat(var(--workspace-tab-count, 1), minmax(0, 1fr));
+  overflow: visible;
 }
 
-.workspace-panel-header h2 {
-  max-width: 220px;
+.workspace-directory-tab,
+.workspace-tabs-placeholder,
+.workspace-file-tab {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: 28px;
+  border-radius: 8px 8px 0 0;
+}
+
+.workspace-directory-tab,
+.workspace-tabs-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--secondary-foreground);
+  font-size: 9px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.workspace-directory-tab {
+  position: relative;
+  z-index: 1;
+  overflow: visible;
+  cursor: pointer;
+}
+
+.workspace-directory-tab > svg,
+.workspace-tabs-placeholder > svg {
+  flex: none;
+}
+
+.workspace-directory-tab > span,
+.workspace-tabs-placeholder > span,
+.workspace-file-tab-select > span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workspace-directory-tab:hover {
+  color: var(--foreground);
+}
+
+.workspace-directory-tab.active {
+  z-index: 3;
+  background: var(--popover);
+  color: var(--primary);
+}
+
+.workspace-file-tabs-scroll {
+  display: contents;
+}
+
+.workspace-file-tab {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.workspace-file-tab:hover {
+  color: var(--foreground);
+}
+
+.workspace-file-tab.active {
+  z-index: 3;
+  background: var(--popover);
+  color: var(--foreground);
+}
+
+.workspace-directory-tab.active::before,
+.workspace-directory-tab.active::after,
+.workspace-file-tab.active::before,
+.workspace-file-tab.active::after {
+  position: absolute;
+  bottom: 0;
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+  content: "";
+}
+
+.workspace-directory-tab.active::before,
+.workspace-file-tab.active::before {
+  left: -8px;
+  background: radial-gradient(circle at 0 0, transparent 7.5px, var(--popover) 8px);
+}
+
+.workspace-directory-tab.active::after,
+.workspace-file-tab.active::after {
+  right: -8px;
+  background: radial-gradient(circle at 100% 0, transparent 7.5px, var(--popover) 8px);
+}
+
+.workspace-file-tab-select {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  padding: 0 2px 0 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-file-tab-select > svg {
+  flex: none;
+}
+
+.workspace-file-tab-close {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  margin-right: 2px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.workspace-file-tab.active .workspace-file-tab-close {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.workspace-file-tab-close:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: var(--foreground);
+}
+
+.workspace-tabs-bar .artifact-header-actions {
+  flex: none;
+  align-self: center;
+  margin-left: auto;
+  gap: 2px;
+  padding: 0 3px;
+  border-left: 0;
+}
+
+.workspace-tabs-bar .desktop-panel-collapse,
+.workspace-tabs-bar .refresh-files,
+.workspace-tabs-bar .artifact-panel-close {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .refresh-files {
@@ -1410,42 +1584,19 @@ button.composer-control:hover:not(:disabled),
   }
 }
 
-.workspace-files-layout {
+.workspace-tab-content,
+.workspace-file-browser {
   display: flex;
   flex: 1;
   min-height: 0;
   flex-direction: column;
-}
-
-.workspace-file-browser {
-  display: flex;
-  flex: 0 0 var(--file-browser-ratio, 38%);
-  min-height: 0;
-  flex-direction: column;
-  border-bottom: 1px solid var(--line);
   background: #f9f9f9;
 }
 
-.workspace-files-layout.preview-hidden .workspace-file-browser {
-  flex: 1;
-}
-
-.workspace-preview-collapse {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  flex: none;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #fbfbfb;
-  color: #7b7b7b;
-  cursor: pointer;
-}
-
-.workspace-preview-collapse:hover {
-  border-color: #b8b8b8;
-  color: var(--forest);
+.workspace-tab-content.workspace-file-browser,
+.workspace-preview,
+.workspace-preview .workspace-preview-toolbar {
+  background: var(--popover);
 }
 
 .workspace-file-list {
@@ -1539,68 +1690,34 @@ button.workspace-file-row:hover,
   background: #fdfdfd;
 }
 
-.workspace-preview-toolbar {
-  padding-right: 42px;
+.workspace-preview > .workspace-preview-empty {
+  grid-row: 1 / -1;
 }
 
-.workspace-preview-collapse {
-  position: absolute;
-  z-index: 3;
-  top: 7px;
-  right: 8px;
+.workspace-preview-error {
+  padding: 24px;
 }
 
-.workspace-section-resizer {
-  position: relative;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 8px;
-  flex: 0 0 8px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  background: #efefef;
-  color: #949494;
-  cursor: row-resize;
-  touch-action: none;
+.workspace-preview-error > span {
+  max-width: 280px;
+  line-height: 1.5;
 }
 
-.workspace-section-resizer:hover,
-.workspace-section-resizer:active {
-  background: #e6e6e6;
-  color: var(--forest);
-}
-
-.workspace-section-restore {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 34px;
-  flex: 0 0 34px;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  background: #f3f3f3;
-  color: #717171;
-  font-size: 9px;
+.workspace-preview-error > button {
+  margin-top: 3px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--popover);
+  color: var(--secondary-foreground);
+  font-size: 8px;
   cursor: pointer;
 }
 
-.workspace-section-restore.preview {
-  margin-top: auto;
-  border-top: 1px solid var(--line);
-  border-bottom: 0;
-}
-
-.workspace-section-restore:hover {
-  background: #eaeaea;
-  color: var(--forest);
-}
-
-.workspace-preview > .workspace-preview-empty {
-  grid-row: 1 / -1;
+.workspace-preview-error > button:hover {
+  border-color: var(--ring);
+  background: var(--accent);
+  color: var(--accent-foreground);
 }
 
 .workspace-preview-toolbar {
@@ -2747,9 +2864,7 @@ button.workspace-file-row:hover,
 .desktop-panel-collapse,
 .panel-restore,
 .mobile-icon-button,
-.artifact-panel-close,
-.workspace-preview-collapse,
-.workspace-section-restore {
+.artifact-panel-close {
   border-color: var(--border);
   background: var(--card);
   color: var(--secondary-foreground);
@@ -2759,9 +2874,7 @@ button.workspace-file-row:hover,
 .desktop-panel-collapse:hover,
 .panel-restore:hover,
 .mobile-icon-button:hover,
-.artifact-panel-close:hover,
-.workspace-preview-collapse:hover,
-.workspace-section-restore:hover {
+.artifact-panel-close:hover {
   border-color: var(--ring);
   background: var(--accent);
   color: var(--accent-foreground);
@@ -3084,8 +3197,6 @@ button.workspace-file-row:hover,
 .artifact-panel,
 .workspace-file-browser,
 .workspace-preview,
-.workspace-files-layout,
-.workspace-section-resizer,
 .artifact-viewer {
   border-color: var(--border);
 }
@@ -3187,9 +3298,7 @@ button.workspace-file-row:hover,
 }
 
 .column-resizer:hover,
-.column-resizer:active,
-.workspace-section-resizer:hover,
-.workspace-section-resizer:active {
+.column-resizer:active {
   background: rgba(201, 100, 66, 0.1);
   color: var(--primary);
 }

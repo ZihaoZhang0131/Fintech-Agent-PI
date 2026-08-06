@@ -5,7 +5,6 @@ import {
   BookOpenCheck,
   Braces,
   ChevronDown,
-  ChevronRight,
   CircleCheck,
   CircleStop,
   CircleX,
@@ -23,15 +22,12 @@ import {
   FolderPlus,
   Menu,
   MoreHorizontal,
-  GripHorizontal,
   GripVertical,
-  PanelBottomClose,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRight,
   PanelRightClose,
   PanelRightOpen,
-  PanelTopClose,
   Plus,
   RefreshCw,
   Save,
@@ -60,6 +56,17 @@ import ReactMarkdown from "react-markdown";
 import { CapabilityLibrary } from "@/components/capability-library";
 import type { CapabilityCatalog, CapabilityKind } from "@/lib/capability-types";
 import { shouldSubmitComposerKey } from "@/lib/composer-keyboard";
+import {
+  MAX_OPEN_FILE_TABS,
+  activateFileTab,
+  closeFileTab,
+  getProjectFileTabs,
+  openFileTab,
+  parseProjectFileTabs,
+  reconcileFileTabs,
+  removeProjectFileTabs,
+  type ProjectFileTabsState,
+} from "@/lib/file-tabs";
 import {
   applyToolApproval,
   applyToolEnd,
@@ -153,9 +160,7 @@ const SIDEBAR_WIDTH_KEY = "pi-research-agent:sidebar-width:v1";
 const FILE_PANEL_WIDTH_KEY = "pi-research-agent:file-panel-width:v1";
 const SIDEBAR_VISIBLE_KEY = "pi-research-agent:sidebar-visible:v1";
 const FILE_PANEL_VISIBLE_KEY = "pi-research-agent:file-panel-visible:v1";
-const FILE_BROWSER_RATIO_KEY = "pi-research-agent:file-browser-ratio:v1";
-const FILE_BROWSER_VISIBLE_KEY = "pi-research-agent:file-browser-visible:v1";
-const FILE_PREVIEW_VISIBLE_KEY = "pi-research-agent:file-preview-visible:v1";
+const FILE_TABS_KEY = "pi-research-agent:file-tabs:v1";
 const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
 
 type AppView = "workspace" | CapabilityKind;
@@ -312,6 +317,24 @@ function fileIcon(file: ProjectFile) {
   return File;
 }
 
+function previewCacheKey(projectId: string, path: string) {
+  return `${projectId}\u0000${path}`;
+}
+
+function fileNameFromPath(path: string) {
+  return path.split("/").pop() || path;
+}
+
+function fileTabId(projectId: string, path: string | null) {
+  const tab = path === null ? "directory" : encodeURIComponent(path);
+  return `workspace-file-tab-${encodeURIComponent(projectId)}-${tab}`;
+}
+
+type PreviewCacheEntry =
+  | { status: "loading" }
+  | { status: "ready"; preview: FilePreview }
+  | { status: "error"; message: string };
+
 export default function Home() {
   const [projects, setProjects] = useState<LocalProject[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -337,10 +360,9 @@ export default function Home() {
   const [filePanelOpen, setFilePanelOpen] = useState(false);
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
-  const [selectedFilePath, setSelectedFilePath] = useState("");
-  const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [fileTabsByProject, setFileTabsByProject] = useState<ProjectFileTabsState>({});
+  const [previewCache, setPreviewCache] = useState<Record<string, PreviewCacheEntry>>({});
+  const [copiedPreviewPath, setCopiedPreviewPath] = useState("");
   const [activeView, setActiveView] = useState<AppView>("workspace");
   const [capabilityCatalog, setCapabilityCatalog] = useState<CapabilityCatalog>({
     skills: [],
@@ -353,14 +375,12 @@ export default function Home() {
   const [filePanelWidth, setFilePanelWidth] = useState(380);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [filePanelVisible, setFilePanelVisible] = useState(true);
-  const [fileBrowserRatio, setFileBrowserRatio] = useState(38);
-  const [fileBrowserVisible, setFileBrowserVisible] = useState(true);
-  const [filePreviewVisible, setFilePreviewVisible] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerIsComposingRef = useRef(false);
-  const workspaceFilesLayoutRef = useRef<HTMLDivElement | null>(null);
+  const filesRequestRef = useRef(0);
+  const previewRequestRef = useRef<Record<string, number>>({});
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId),
@@ -374,6 +394,13 @@ export default function Home() {
     [activeId, activeProjectId, conversations],
   );
   const isBusy = status === "connecting" || status === "streaming";
+  const activeFileTabs = getProjectFileTabs(fileTabsByProject, activeProjectId);
+  const activeFilePath = activeFileTabs.activePath;
+  const activePreviewEntry =
+    activeProjectId && activeFilePath
+      ? previewCache[previewCacheKey(activeProjectId, activeFilePath)]
+      : undefined;
+  const filePreview = activePreviewEntry?.status === "ready" ? activePreviewEntry.preview : null;
   const previewDataUrl =
     filePreview?.data && filePreview.mimeType
       ? `data:${filePreview.mimeType};base64,${filePreview.data}`
@@ -381,39 +408,86 @@ export default function Home() {
 
   const loadProjectFiles = useCallback(async (projectId: string) => {
     if (!projectId) return;
+    const requestId = ++filesRequestRef.current;
     setFilesLoading(true);
     try {
       const payload = await responseJson<{ entries: ProjectFile[] }>(
         await fetch(`/api/local/workspaces/${projectId}/files`, { cache: "no-store" }),
       );
+      if (requestId !== filesRequestRef.current) return;
+      const availablePaths = payload.entries
+        .filter((entry) => entry.kind === "file")
+        .map((entry) => entry.path);
+      const availablePathSet = new Set(availablePaths);
+      const projectPrefix = `${projectId}\u0000`;
       setFiles(payload.entries);
+      setFileTabsByProject((current) =>
+        reconcileFileTabs(current, projectId, availablePaths),
+      );
+      setPreviewCache((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(
+            ([key]) =>
+              !key.startsWith(projectPrefix) || availablePathSet.has(key.slice(projectPrefix.length)),
+          ),
+        ),
+      );
     } catch (error) {
+      if (requestId !== filesRequestRef.current) return;
       setProjectError(error instanceof Error ? error.message : "无法读取项目文件。");
       setFiles([]);
     } finally {
-      setFilesLoading(false);
+      if (requestId === filesRequestRef.current) setFilesLoading(false);
     }
   }, []);
 
-  const selectFile = useCallback(async (projectId: string, file: ProjectFile) => {
-    if (file.kind !== "file") return;
-    setSelectedFilePath(file.path);
-    setPreviewLoading(true);
-    setFilePreview(null);
+  const loadFilePreview = useCallback(async (projectId: string, path: string) => {
+    const key = previewCacheKey(projectId, path);
+    const requestId = (previewRequestRef.current[key] ?? 0) + 1;
+    previewRequestRef.current[key] = requestId;
+    setPreviewCache((current) => ({ ...current, [key]: { status: "loading" } }));
     try {
       const payload = await responseJson<FilePreview>(
         await fetch(
-          `/api/local/workspaces/${projectId}/files/content?path=${encodeURIComponent(file.path)}`,
+          `/api/local/workspaces/${projectId}/files/content?path=${encodeURIComponent(path)}`,
           { cache: "no-store" },
         ),
       );
-      setFilePreview(payload);
+      if (previewRequestRef.current[key] !== requestId) return;
+      setPreviewCache((current) => ({
+        ...current,
+        [key]: { status: "ready", preview: payload },
+      }));
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : "无法预览文件。");
-    } finally {
-      setPreviewLoading(false);
+      if (previewRequestRef.current[key] !== requestId) return;
+      setPreviewCache((current) => ({
+        ...current,
+        [key]: {
+          status: "error",
+          message: error instanceof Error ? error.message : "无法预览文件。",
+        },
+      }));
     }
   }, []);
+
+  const refreshProjectFiles = useCallback(
+    (projectId: string) => {
+      if (!projectId) return;
+      const projectPrefix = `${projectId}\u0000`;
+      for (const key of Object.keys(previewRequestRef.current)) {
+        if (key.startsWith(projectPrefix)) {
+          previewRequestRef.current[key] += 1;
+        }
+      }
+      setPreviewCache((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([key]) => !key.startsWith(projectPrefix)),
+        ),
+      );
+      void loadProjectFiles(projectId);
+    },
+    [loadProjectFiles],
+  );
 
   useEffect(() => {
     async function initialize() {
@@ -421,15 +495,6 @@ export default function Home() {
       setFilePanelWidth(storedNumber(localStorage.getItem(FILE_PANEL_WIDTH_KEY), 380, 300, 680));
       setSidebarVisible(storedBoolean(localStorage.getItem(SIDEBAR_VISIBLE_KEY), true));
       setFilePanelVisible(storedBoolean(localStorage.getItem(FILE_PANEL_VISIBLE_KEY), true));
-      setFileBrowserRatio(
-        storedNumber(localStorage.getItem(FILE_BROWSER_RATIO_KEY), 38, 18, 78),
-      );
-      setFileBrowserVisible(
-        storedBoolean(localStorage.getItem(FILE_BROWSER_VISIBLE_KEY), true),
-      );
-      setFilePreviewVisible(
-        storedBoolean(localStorage.getItem(FILE_PREVIEW_VISIBLE_KEY), true),
-      );
       const stored = parseStoredConversations(
         localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY),
       );
@@ -446,6 +511,10 @@ export default function Home() {
           parseStoredNames(localStorage.getItem(EXPANDED_PROJECTS_KEY)) ?? [];
         const availableExpandedProjectIds = storedExpandedProjectIds.filter((projectId) =>
           projectIds.has(projectId),
+        );
+        const storedFileTabs = parseProjectFileTabs(localStorage.getItem(FILE_TABS_KEY));
+        const availableFileTabs = Object.fromEntries(
+          Object.entries(storedFileTabs).filter(([projectId]) => projectIds.has(projectId)),
         );
         let normalized = stored.flatMap((conversation) => {
           const projectId =
@@ -477,6 +546,7 @@ export default function Home() {
         setConversations(normalized);
         setActiveProjectId(initialProject?.id ?? "");
         setActiveId(firstConversation?.id ?? "");
+        setFileTabsByProject(availableFileTabs);
         setExpandedProjectIds(
           availableExpandedProjectIds.length > 0
             ? availableExpandedProjectIds
@@ -486,7 +556,6 @@ export default function Home() {
         );
         if (initialProject) {
           localStorage.setItem(ACTIVE_PROJECT_KEY, initialProject.id);
-          void loadProjectFiles(initialProject.id);
         }
       } catch (error) {
         setProjectError(error instanceof Error ? error.message : "本机项目 Runtime 不可用。");
@@ -509,7 +578,7 @@ export default function Home() {
         );
       })
       .catch(() => setHealth(null));
-  }, [loadProjectFiles]);
+  }, []);
 
   useEffect(() => {
     async function loadCapabilities() {
@@ -559,6 +628,37 @@ export default function Home() {
   }, [expandedProjectIds, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(FILE_TABS_KEY, JSON.stringify(fileTabsByProject));
+  }, [fileTabsByProject, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!activeProjectId) {
+      filesRequestRef.current += 1;
+      setFiles([]);
+      setFilesLoading(false);
+      return;
+    }
+    setFiles([]);
+    void loadProjectFiles(activeProjectId);
+  }, [activeProjectId, hydrated, loadProjectFiles]);
+
+  useEffect(() => {
+    if (!hydrated || !activeProjectId || !activeFilePath || activePreviewEntry) return;
+    void loadFilePreview(activeProjectId, activeFilePath);
+  }, [activeFilePath, activePreviewEntry, activeProjectId, hydrated, loadFilePreview]);
+
+  useEffect(() => {
+    if (!activeProjectId) return;
+    requestAnimationFrame(() => {
+      document
+        .getElementById(fileTabId(activeProjectId, activeFilePath))
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    });
+  }, [activeFilePath, activeProjectId]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [activeConversation?.messages, status]);
 
@@ -580,11 +680,6 @@ export default function Home() {
     );
     setActiveProjectId(projectId);
     localStorage.setItem(ACTIVE_PROJECT_KEY, projectId);
-    if (projectId !== activeProjectId) {
-      setSelectedFilePath("");
-      setFilePreview(null);
-      void loadProjectFiles(projectId);
-    }
     setActiveId(next.id);
     setInput("");
     setStatus("idle");
@@ -615,9 +710,6 @@ export default function Home() {
         setActiveProjectId(project.id);
         setActiveId(existing.id);
         localStorage.setItem(ACTIVE_PROJECT_KEY, project.id);
-        setSelectedFilePath("");
-        setFilePreview(null);
-        void loadProjectFiles(project.id);
       } else {
         newConversation(project.id);
       }
@@ -664,20 +756,29 @@ export default function Home() {
           setActiveProjectId(nextProject.id);
           setActiveId(nextConversation.id);
           localStorage.setItem(ACTIVE_PROJECT_KEY, nextProject.id);
-          void loadProjectFiles(nextProject.id);
         } else {
           setActiveProjectId("");
           setActiveId("");
           localStorage.removeItem(ACTIVE_PROJECT_KEY);
           setFiles([]);
         }
-        setSelectedFilePath("");
-        setFilePreview(null);
         setStatus("idle");
       }
 
       setProjects(remainingProjects);
       setConversations(remainingConversations);
+      setFileTabsByProject((current) => removeProjectFileTabs(current, project.id));
+      const projectPrefix = `${project.id}\u0000`;
+      for (const key of Object.keys(previewRequestRef.current)) {
+        if (key.startsWith(projectPrefix)) {
+          previewRequestRef.current[key] += 1;
+        }
+      }
+      setPreviewCache((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([key]) => !key.startsWith(projectPrefix)),
+        ),
+      );
       setExpandedProjectIds((current) => {
         const remainingExpanded = current.filter((projectId) => projectId !== project.id);
         const nextProject = project.id === activeProjectId ? remainingProjects[0] : null;
@@ -848,30 +949,6 @@ export default function Home() {
     });
   }
 
-  function toggleFileBrowserVisibility() {
-    setFileBrowserVisible((current) => {
-      const next = !current;
-      if (!next && !filePreviewVisible) {
-        setFilePreviewVisible(true);
-        localStorage.setItem(FILE_PREVIEW_VISIBLE_KEY, "true");
-      }
-      localStorage.setItem(FILE_BROWSER_VISIBLE_KEY, String(next));
-      return next;
-    });
-  }
-
-  function toggleFilePreviewVisibility() {
-    setFilePreviewVisible((current) => {
-      const next = !current;
-      if (!next && !fileBrowserVisible) {
-        setFileBrowserVisible(true);
-        localStorage.setItem(FILE_BROWSER_VISIBLE_KEY, "true");
-      }
-      localStorage.setItem(FILE_PREVIEW_VISIBLE_KEY, String(next));
-      return next;
-    });
-  }
-
   function beginColumnResize(
     side: "left" | "right",
     event: ReactPointerEvent<HTMLDivElement>,
@@ -910,27 +987,63 @@ export default function Home() {
     window.addEventListener("pointercancel", finish);
   }
 
-  function beginFileRegionResize(event: ReactPointerEvent<HTMLDivElement>) {
-    const container = workspaceFilesLayoutRef.current;
-    if (!container) return;
+  function selectProjectFile(file: ProjectFile) {
+    if (!activeProject || file.kind !== "file") return;
+    const replacedPath =
+      !activeFileTabs.openPaths.includes(file.path) &&
+      activeFileTabs.openPaths.length >= MAX_OPEN_FILE_TABS
+        ? activeFileTabs.openPaths[MAX_OPEN_FILE_TABS - 1]
+        : undefined;
+    if (replacedPath) {
+      const replacedKey = previewCacheKey(activeProject.id, replacedPath);
+      previewRequestRef.current[replacedKey] =
+        (previewRequestRef.current[replacedKey] ?? 0) + 1;
+      setPreviewCache((current) => {
+        if (!(replacedKey in current)) return current;
+        const next = { ...current };
+        delete next[replacedKey];
+        return next;
+      });
+    }
+    setFileTabsByProject((current) => openFileTab(current, activeProject.id, file.path));
+  }
+
+  function activateProjectFile(path: string | null) {
+    if (!activeProject) return;
+    setFileTabsByProject((current) => activateFileTab(current, activeProject.id, path));
+  }
+
+  function closeProjectFile(path: string) {
+    if (!activeProject) return;
+    const key = previewCacheKey(activeProject.id, path);
+    previewRequestRef.current[key] = (previewRequestRef.current[key] ?? 0) + 1;
+    setPreviewCache((current) => {
+      if (!(key in current)) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    setFileTabsByProject((current) => closeFileTab(current, activeProject.id, path));
+  }
+
+  function handleFileTabKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    currentPath: string | null,
+  ) {
+    if (!activeProject || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      return;
+    }
     event.preventDefault();
-    let latest = fileBrowserRatio;
-    document.body.classList.add("is-resizing-row");
-    const move = (pointerEvent: PointerEvent) => {
-      const bounds = container.getBoundingClientRect();
-      latest = clamp(((pointerEvent.clientY - bounds.top) / bounds.height) * 100, 18, 78);
-      setFileBrowserRatio(latest);
-    };
-    const finish = () => {
-      document.body.classList.remove("is-resizing-row");
-      localStorage.setItem(FILE_BROWSER_RATIO_KEY, String(Math.round(latest)));
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", finish);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", finish);
+    const paths: Array<string | null> = [null, ...activeFileTabs.openPaths];
+    const currentIndex = paths.indexOf(currentPath);
+    let nextIndex = currentIndex;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = paths.length - 1;
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + paths.length) % paths.length;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % paths.length;
+    const nextPath = paths[nextIndex] ?? null;
+    activateProjectFile(nextPath);
+    requestAnimationFrame(() => document.getElementById(fileTabId(activeProject.id, nextPath))?.focus());
   }
 
   async function sendMessage(rawInput = input) {
@@ -1029,7 +1142,7 @@ export default function Home() {
               ),
               updatedAt: timestampNow(),
             }));
-            if (event.toolName === "write_project_file") void loadProjectFiles(activeProject.id);
+            if (event.toolName === "write_project_file") refreshProjectFiles(activeProject.id);
           }
           if (event.type === "tool_approval_required") {
             updateConversation(conversationId, (conversation) => ({
@@ -1105,10 +1218,10 @@ export default function Home() {
   }
 
   async function copyPreview() {
-    if (!filePreview?.content) return;
+    if (!filePreview?.content || !activeFilePath) return;
     await navigator.clipboard.writeText(filePreview.content);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1_500);
+    setCopiedPreviewPath(activeFilePath);
+    window.setTimeout(() => setCopiedPreviewPath(""), 1_500);
   }
 
   return (
@@ -1648,11 +1761,80 @@ export default function Home() {
       </section>
 
       <aside className={`artifact-panel workspace-panel ${filePanelOpen ? "mobile-open" : ""}`}>
-        <div className="artifact-panel-header workspace-panel-header">
-          <div>
-            <span>PROJECT FILES</span>
-            <h2>{activeProject?.name ?? "项目文件"}</h2>
+        <div className="workspace-tabs-bar">
+          <div
+            className="workspace-tabs-list"
+            role="tablist"
+            aria-label="项目文件标签页"
+            style={
+              {
+                "--workspace-tab-count": activeProject
+                  ? activeFileTabs.openPaths.length + 1
+                  : 1,
+              } as CSSProperties
+            }
+          >
+            {activeProject ? (
+              <button
+                id={fileTabId(activeProject.id, null)}
+                className={`workspace-directory-tab ${activeFilePath === null ? "active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={activeFilePath === null}
+                aria-controls="workspace-file-tabpanel"
+                tabIndex={activeFilePath === null ? 0 : -1}
+                title={`文件目录 · ${activeProject.name}`}
+                onClick={() => activateProjectFile(null)}
+                onKeyDown={(event) => handleFileTabKeyDown(event, null)}
+              >
+                <FolderOpen size={14} />
+                <span>{activeProject.name}</span>
+              </button>
+            ) : (
+              <div className="workspace-tabs-placeholder">
+                <FolderOpen size={14} />
+                <span>项目文件</span>
+              </div>
+            )}
+
+            <div className="workspace-file-tabs-scroll">
+              {activeProject &&
+                activeFileTabs.openPaths.map((path) => {
+                  const file = files.find((entry) => entry.kind === "file" && entry.path === path);
+                  const Icon = file ? fileIcon(file) : FileText;
+                  const active = activeFilePath === path;
+                  return (
+                    <div className={`workspace-file-tab ${active ? "active" : ""}`} key={path}>
+                      <button
+                        id={fileTabId(activeProject.id, path)}
+                        className="workspace-file-tab-select"
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        aria-controls="workspace-file-tabpanel"
+                        tabIndex={active ? 0 : -1}
+                        title={path}
+                        onClick={() => activateProjectFile(path)}
+                        onKeyDown={(event) => handleFileTabKeyDown(event, path)}
+                      >
+                        <Icon size={13} />
+                        <span>{file?.name ?? fileNameFromPath(path)}</span>
+                      </button>
+                      <button
+                        className="workspace-file-tab-close"
+                        type="button"
+                        aria-label={`关闭 ${path}`}
+                        title="关闭标签"
+                        onClick={() => closeProjectFile(path)}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
           </div>
+
           <div className="artifact-header-actions">
             <button
               className="desktop-panel-collapse"
@@ -1666,24 +1848,13 @@ export default function Home() {
             <button
               className="refresh-files"
               type="button"
-              onClick={() => activeProject && void loadProjectFiles(activeProject.id)}
+              onClick={() => activeProject && refreshProjectFiles(activeProject.id)}
               disabled={!activeProject || filesLoading}
               aria-label="刷新项目文件"
               title="刷新"
             >
               <RefreshCw size={14} className={filesLoading ? "spinning" : ""} />
             </button>
-            {activeProject && fileBrowserVisible && (
-              <button
-                className="refresh-files"
-                type="button"
-                onClick={toggleFileBrowserVisibility}
-                aria-label="隐藏文件目录"
-                title="隐藏文件目录"
-              >
-                <PanelTopClose size={14} />
-              </button>
-            )}
             <button
               className="artifact-panel-close"
               type="button"
@@ -1703,15 +1874,19 @@ export default function Home() {
             <h3>尚未绑定项目</h3>
             <p>选择本地文件夹后，这里会显示 Agent 可访问和产出的文件。</p>
           </div>
-        ) : (
-          <div
-            ref={workspaceFilesLayoutRef}
-            className={`workspace-files-layout ${fileBrowserVisible ? "" : "browser-hidden"} ${filePreviewVisible ? "" : "preview-hidden"}`}
-            style={{ "--file-browser-ratio": `${fileBrowserRatio}%` } as CSSProperties}
+        ) : activeFilePath === null ? (
+          <section
+            id="workspace-file-tabpanel"
+            className="workspace-tab-content workspace-file-browser"
+            role="tabpanel"
+            aria-labelledby={fileTabId(activeProject.id, null)}
           >
-            {fileBrowserVisible ? (
-            <div className="workspace-file-browser">
-              {files.length > 0 ? (
+              {filesLoading && files.length === 0 ? (
+                <div className="workspace-files-empty">
+                  <RefreshCw size={20} className="spinning" />
+                  <span>正在读取项目文件…</span>
+                </div>
+              ) : files.length > 0 ? (
                 <nav className="workspace-file-list" aria-label="项目文件列表">
                   {files.map((file) => {
                     const Icon = fileIcon(file);
@@ -1727,10 +1902,10 @@ export default function Home() {
                       </div>
                     ) : (
                       <button
-                        className={`workspace-file-row ${selectedFilePath === file.path ? "active" : ""}`}
+                        className="workspace-file-row"
                         style={{ paddingLeft: `${10 + depth * 14}px` }}
                         type="button"
-                        onClick={() => void selectFile(activeProject.id, file)}
+                        onClick={() => selectProjectFile(file)}
                         title={file.path}
                         key={file.path}
                       >
@@ -1748,44 +1923,30 @@ export default function Home() {
                   <span>Agent 保存产出后会自动刷新</span>
                 </div>
               )}
-            </div>
-            ) : (
-              <button
-                className="workspace-section-restore browser"
-                type="button"
-                onClick={toggleFileBrowserVisibility}
-              >
-                <ChevronDown size={13} /> 展开文件目录
-              </button>
-            )}
-
-            {fileBrowserVisible && filePreviewVisible && (
-              <div
-                className="workspace-section-resizer"
-                role="separator"
-                aria-label="调整文件目录和预览区域高度"
-                aria-orientation="horizontal"
-                onPointerDown={beginFileRegionResize}
-              >
-                <GripHorizontal size={15} />
-              </div>
-            )}
-
-            {filePreviewVisible ? (
-            <section className="workspace-preview">
-              <button
-                className="workspace-preview-collapse"
-                type="button"
-                onClick={toggleFilePreviewVisibility}
-                aria-label="隐藏文件预览"
-                title="隐藏文件预览"
-              >
-                <PanelBottomClose size={13} />
-              </button>
-              {previewLoading ? (
+          </section>
+        ) : (
+          <section
+            id="workspace-file-tabpanel"
+            className="workspace-tab-content workspace-preview"
+            role="tabpanel"
+            aria-labelledby={fileTabId(activeProject.id, activeFilePath)}
+          >
+              {activePreviewEntry?.status === "loading" ? (
                 <div className="workspace-preview-empty">
                   <RefreshCw size={20} className="spinning" />
                   <span>正在读取文件…</span>
+                </div>
+              ) : activePreviewEntry?.status === "error" ? (
+                <div className="workspace-preview-empty workspace-preview-error">
+                  <CircleX size={22} />
+                  <strong>无法预览文件</strong>
+                  <span>{activePreviewEntry.message}</span>
+                  <button
+                    type="button"
+                    onClick={() => void loadFilePreview(activeProject.id, activeFilePath)}
+                  >
+                    重新加载
+                  </button>
                 </div>
               ) : filePreview ? (
                 <>
@@ -1796,7 +1957,8 @@ export default function Home() {
                     </div>
                     {filePreview.content && (
                       <button type="button" onClick={() => void copyPreview()}>
-                        <Copy size={13} /> {copied ? "已复制" : "复制"}
+                        <Copy size={13} />
+                        {copiedPreviewPath === activeFilePath ? "已复制" : "复制"}
                       </button>
                     )}
                   </header>
@@ -1843,21 +2005,11 @@ export default function Home() {
               ) : (
                 <div className="workspace-preview-empty">
                   <Braces size={24} />
-                  <strong>选择文件进行预览</strong>
-                  <span>支持 Markdown、代码、文本、图片和 PDF</span>
+                  <strong>正在准备预览</strong>
+                  <span>{activeFilePath}</span>
                 </div>
               )}
-            </section>
-            ) : (
-              <button
-                className="workspace-section-restore preview"
-                type="button"
-                onClick={toggleFilePreviewVisibility}
-              >
-                <ChevronRight size={13} /> 展开文件预览
-              </button>
-            )}
-          </div>
+          </section>
         )}
       </aside>
       {filePanelVisible && (
