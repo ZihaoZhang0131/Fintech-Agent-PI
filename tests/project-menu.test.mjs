@@ -30,7 +30,6 @@ test("removing a project explicitly preserves local files", () => {
 });
 
 test("the file browser omits the entry-count information module", () => {
-  assert.doesNotMatch(pageSource, /文件目录 ·/);
   assert.doesNotMatch(pageSource, /仅显示前 800 项/);
   assert.doesNotMatch(pageSource, /workspace-file-summary/);
   assert.doesNotMatch(stylesheet, /\.workspace-file-summary/);

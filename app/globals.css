@@ -1924,6 +1924,10 @@ button.workspace-file-row:hover,
   content: "";
 }
 
+.capability-toolbar:has(.capability-refresh)::after {
+  display: none;
+}
+
 .capability-back {
   display: grid;
   width: 36px;
@@ -1938,6 +1942,23 @@ button.workspace-file-row:hover,
 }
 
 .capability-back:hover {
+  color: var(--forest);
+}
+
+.capability-refresh {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: white;
+  color: #7d7d7d;
+  cursor: pointer;
+}
+
+.capability-refresh:hover {
   color: var(--forest);
 }
 
@@ -2088,6 +2109,32 @@ button.workspace-file-row:hover,
   white-space: nowrap;
 }
 
+.mcp-connection-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f2f2f2;
+  color: #777777;
+  font-size: 9px;
+}
+
+.mcp-connection-state.connected span {
+  color: var(--forest);
+  font-weight: 700;
+}
+
+.mcp-connection-state.error span,
+.mcp-connection-state.not_installed span {
+  color: #a14e36;
+}
+
+.mcp-connection-state code {
+  font-size: 8px;
+}
+
 .capability-card-actions {
   margin-top: auto;
   gap: 14px;
@@ -2170,6 +2217,11 @@ button.workspace-file-row:hover,
 .capability-toggle input:focus-visible + i {
   outline: 2px solid #8b8b8b;
   outline-offset: 2px;
+}
+
+.capability-toggle:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .capability-no-results {
@@ -2292,6 +2344,97 @@ button.workspace-file-row:hover,
   white-space: pre;
 }
 
+.capability-modal-content.mcp {
+  padding: 22px 24px 30px;
+}
+
+.mcp-detail > p {
+  margin: 0 0 18px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.75;
+}
+
+.mcp-detail dl {
+  display: grid;
+  margin: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mcp-detail dl > div {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--muted);
+}
+
+.mcp-detail dt {
+  color: var(--ink-muted);
+  font-size: 8px;
+}
+
+.mcp-detail dd {
+  margin: 4px 0 0;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.mcp-detail-error,
+.mcp-setup-command {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff2ed;
+  color: #8c4934;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.mcp-setup-command {
+  display: flex;
+  justify-content: space-between;
+  background: var(--muted);
+  color: var(--ink-muted);
+}
+
+.mcp-tool-list {
+  margin-top: 20px;
+}
+
+.mcp-tool-list h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+}
+
+.mcp-tool-list article {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.mcp-tool-list article code {
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.mcp-tool-list article p {
+  margin: 5px 0 0;
+  color: var(--ink-muted);
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.mcp-detail > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 16px;
+  color: var(--primary);
+  font-size: 9px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
 .capability-modal-footer {
   display: flex;
   align-items: center;
@@ -2310,6 +2453,11 @@ button.workspace-file-row:hover,
   font-size: 9px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.capability-modal-footer > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .project-dialog-backdrop {

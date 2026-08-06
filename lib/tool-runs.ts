@@ -25,6 +25,9 @@ export type ToolRun = {
   stderr?: string;
   truncated?: boolean;
   timedOut?: boolean;
+  mcpServerId?: string;
+  mcpServerLabel?: string;
+  externalToolName?: string;
 };
 
 export type ToolStartEvent = {
@@ -56,6 +59,9 @@ export type ToolEndEvent = {
   stderr?: string;
   truncated?: boolean;
   timedOut?: boolean;
+  mcpServerId?: string;
+  mcpServerLabel?: string;
+  externalToolName?: string;
 };
 
 export type ToolApprovalEvent = {
@@ -110,6 +116,9 @@ export function applyToolEnd(runs: ToolRun[] | undefined, event: ToolEndEvent): 
     stderr: event.stderr,
     truncated: event.truncated,
     timedOut: event.timedOut,
+    mcpServerId: event.mcpServerId,
+    mcpServerLabel: event.mcpServerLabel,
+    externalToolName: event.externalToolName,
   };
 
   if (!existing) return [...current, completed];

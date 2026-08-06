@@ -5,6 +5,7 @@ import { mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "nod
 import path from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
+import { createMcpManager } from "./mcp-manager.mjs";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_PORT = 4318;
@@ -24,6 +25,7 @@ const EXCLUDED_DIRECTORIES = new Set([
   "node_modules",
   "dist",
   "coverage",
+  ".venv",
 ]);
 const TEXT_EXTENSIONS = new Set([
   ".c",
@@ -601,7 +603,7 @@ async function readJsonBody(request) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-export function createLocalRuntimeHandler({ dataDirectory, token }) {
+export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = createMcpManager() }) {
   const commandManager = createCommandManager({ dataDirectory });
   return async function handle(request, response) {
     try {
@@ -616,6 +618,28 @@ export function createLocalRuntimeHandler({ dataDirectory, token }) {
       }
       if (request.method === "GET" && url.pathname === "/workspaces") {
         return sendJson(response, 200, { workspaces: await readWorkspaceRegistry(dataDirectory) });
+      }
+      if (request.method === "GET" && url.pathname === "/mcp/servers") {
+        return sendJson(response, 200, {
+          servers: await mcpManager.listServers({ connect: url.searchParams.get("connect") !== "0" }),
+        });
+      }
+      if (
+        request.method === "POST" &&
+        segments[0] === "mcp" &&
+        segments[1] === "servers" &&
+        segments[2] &&
+        segments[3] === "tools" &&
+        segments[4] &&
+        segments[5] === "call" &&
+        segments.length === 6
+      ) {
+        const payload = await readJsonBody(request);
+        return sendJson(
+          response,
+          200,
+          await mcpManager.callTool(segments[2], segments[4], payload.arguments),
+        );
       }
       if (request.method === "POST" && url.pathname === "/workspaces/select") {
         const selectedPath = await chooseFolder();
@@ -690,10 +714,22 @@ async function start() {
   const token = process.env.LOCAL_RUNTIME_TOKEN;
   const dataDirectory = process.env.PI_LOCAL_DATA_DIR ?? path.join(process.cwd(), ".local-data");
   if (!token) throw new Error("缺少 LOCAL_RUNTIME_TOKEN，必须通过 npm run dev 启动。");
-  const server = createServer(createLocalRuntimeHandler({ dataDirectory, token }));
+  const mcpManager = createMcpManager();
+  const server = createServer(createLocalRuntimeHandler({ dataDirectory, token, mcpManager }));
   server.listen(port, "127.0.0.1", () => {
     console.log(`Local Agent Runtime ready on http://127.0.0.1:${port}`);
   });
+  let stopping = false;
+  const stop = async () => {
+    if (stopping) return;
+    stopping = true;
+    await mcpManager.close();
+    server.close(() => {
+      process.exitCode = 0;
+    });
+  };
+  process.on("SIGINT", () => void stop());
+  process.on("SIGTERM", () => void stop());
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

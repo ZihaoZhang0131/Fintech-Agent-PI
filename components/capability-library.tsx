@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Search, X } from "lucide-react";
+import { ArrowLeft, ExternalLink, RefreshCw, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { CapabilityItem, CapabilityKind } from "@/lib/capability-types";
@@ -10,6 +10,7 @@ type CapabilityLibraryProps = {
   items: CapabilityItem[];
   enabledNames: string[];
   onToggle: (name: string) => void;
+  onRefresh?: () => void;
   onClose: () => void;
 };
 
@@ -18,10 +19,11 @@ export function CapabilityLibrary({
   items,
   enabledNames,
   onToggle,
+  onRefresh,
   onClose,
 }: CapabilityLibraryProps) {
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<CapabilityItem | null>(null);
+  const [selectedName, setSelectedName] = useState<string | null>(null);
   const enabled = useMemo(() => new Set(enabledNames), [enabledNames]);
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase("zh-CN");
@@ -31,10 +33,16 @@ export function CapabilityLibrary({
     );
   }, [items, query]);
   const isSkill = kind === "skill";
+  const isMcp = kind === "mcp";
+  const kindLabel = isSkill ? "技能" : isMcp ? "MCP" : "工具";
+  const selected = useMemo(
+    () => items.find((item) => item.name === selectedName) ?? null,
+    [items, selectedName],
+  );
 
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setSelected(null);
+      if (event.key === "Escape") setSelectedName(null);
     }
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
@@ -58,8 +66,8 @@ export function CapabilityLibrary({
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder={`搜索${isSkill ? "技能" : "工具"}名称或简介`}
-              aria-label={`搜索${isSkill ? "技能" : "工具"}`}
+              placeholder={`搜索${kindLabel}名称或简介`}
+              aria-label={`搜索${kindLabel}`}
             />
             {query && (
               <button type="button" onClick={() => setQuery("")} aria-label="清空搜索">
@@ -67,12 +75,24 @@ export function CapabilityLibrary({
               </button>
             )}
           </label>
+          {isMcp && (
+            <button
+              className="capability-refresh"
+              type="button"
+              onClick={onRefresh}
+              aria-label="刷新 MCP 连接状态"
+              title="刷新 MCP 连接状态"
+            >
+              <RefreshCw size={15} />
+            </button>
+          )}
         </div>
 
         {filtered.length > 0 ? (
           <div className="capability-grid">
             {filtered.map((item) => {
               const itemEnabled = enabled.has(item.name);
+              const toggleAvailable = !isMcp || item.status === "connected";
               return (
                 <article className={`capability-card ${itemEnabled ? "enabled" : "disabled"}`} key={item.name}>
                   <div className="capability-card-copy">
@@ -85,8 +105,14 @@ export function CapabilityLibrary({
                       依赖工具：{item.allowedTools?.join("、")}
                     </div>
                   )}
+                  {isMcp && (
+                    <div className={`mcp-connection-state ${item.status ?? "stopped"}`}>
+                      <span>{mcpStatusLabel(item.status)}</span>
+                      <code>{item.mcpTools?.length ?? 0} 个工具</code>
+                    </div>
+                  )}
                   <footer className="capability-card-actions">
-                    <button className="capability-view-button" type="button" onClick={() => setSelected(item)}>
+                    <button className="capability-view-button" type="button" onClick={() => setSelectedName(item.name)}>
                       查看详情
                     </button>
                     <label className="capability-toggle">
@@ -95,6 +121,7 @@ export function CapabilityLibrary({
                         type="checkbox"
                         checked={itemEnabled}
                         onChange={() => onToggle(item.name)}
+                        disabled={!toggleAvailable}
                         aria-label={`${itemEnabled ? "停用" : "启用"}${item.label}`}
                       />
                       <i aria-hidden="true" />
@@ -107,14 +134,14 @@ export function CapabilityLibrary({
         ) : (
           <div className="capability-no-results">
             <Search size={24} />
-            <strong>没有匹配的{isSkill ? "技能" : "工具"}</strong>
+            <strong>没有匹配的{kindLabel}</strong>
             <span>换一个关键词试试</span>
           </div>
         )}
       </div>
 
       {selected && (
-        <div className="capability-modal-backdrop" role="presentation" onMouseDown={() => setSelected(null)}>
+        <div className="capability-modal-backdrop" role="presentation" onMouseDown={() => setSelectedName(null)}>
           <section
             className="capability-modal"
             role="dialog"
@@ -124,17 +151,54 @@ export function CapabilityLibrary({
           >
             <header className="capability-modal-header">
               <div>
-                <span>{selected.kind === "skill" ? "SKILL DETAIL" : "TOOL SOURCE"}</span>
+                <span>
+                  {selected.kind === "skill"
+                    ? "SKILL DETAIL"
+                    : selected.kind === "mcp"
+                      ? "MCP SERVER"
+                      : "TOOL SOURCE"}
+                </span>
                 <h2 id="capability-modal-title">{selected.label}</h2>
                 <code>{selected.sourcePath}</code>
               </div>
-              <button type="button" onClick={() => setSelected(null)} aria-label="关闭详情">
+              <button type="button" onClick={() => setSelectedName(null)} aria-label="关闭详情">
                 <X size={18} />
               </button>
             </header>
             <div className={`capability-modal-content ${selected.kind}`}>
               {selected.kind === "skill" ? (
                 <ReactMarkdown>{selected.detail}</ReactMarkdown>
+              ) : selected.kind === "mcp" ? (
+                <div className="mcp-detail">
+                  <p>{selected.description}</p>
+                  <dl>
+                    <div><dt>连接状态</dt><dd>{mcpStatusLabel(selected.status)}</dd></div>
+                    <div><dt>版本</dt><dd>{selected.version}</dd></div>
+                    <div><dt>传输方式</dt><dd>本地 stdio</dd></div>
+                    <div><dt>认证</dt><dd>{selected.requiresApiKey ? "需要 API Key" : "免费，无需 API Key"}</dd></div>
+                  </dl>
+                  {selected.error && <div className="mcp-detail-error">{selected.error}</div>}
+                  {selected.status === "not_installed" && (
+                    <div className="mcp-setup-command">
+                      <span>安装命令</span>
+                      <code>npm run mcp:setup</code>
+                    </div>
+                  )}
+                  <div className="mcp-tool-list">
+                    <h3>可调用工具（{selected.mcpTools?.length ?? 0}）</h3>
+                    {selected.mcpTools?.length ? selected.mcpTools.map((tool) => (
+                      <article key={tool.name}>
+                        <code>{tool.name}</code>
+                        <p>{tool.description || "服务未提供工具说明。"}</p>
+                      </article>
+                    )) : <p>连接成功后会自动发现并展示工具。</p>}
+                  </div>
+                  {selected.homepage && (
+                    <a href={selected.homepage} target="_blank" rel="noreferrer">
+                      查看项目主页 <ExternalLink size={12} />
+                    </a>
+                  )}
+                </div>
               ) : (
                 <pre>
                   <code>{selected.detail}</code>
@@ -145,7 +209,11 @@ export function CapabilityLibrary({
               <span className={`capability-state ${enabled.has(selected.name) ? "enabled" : "disabled"}`}>
                 {enabled.has(selected.name) ? "当前已启用" : "当前已停用"}
               </span>
-              <button type="button" onClick={() => onToggle(selected.name)}>
+              <button
+                type="button"
+                onClick={() => onToggle(selected.name)}
+                disabled={selected.kind === "mcp" && selected.status !== "connected"}
+              >
                 {enabled.has(selected.name) ? "停用" : "启用"}
               </button>
             </footer>
@@ -154,4 +222,12 @@ export function CapabilityLibrary({
       )}
     </section>
   );
+}
+
+function mcpStatusLabel(status: CapabilityItem["status"]) {
+  if (status === "connected") return "已连接";
+  if (status === "connecting") return "连接中";
+  if (status === "not_installed") return "未安装";
+  if (status === "error") return "连接错误";
+  return "未连接";
 }

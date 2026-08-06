@@ -41,3 +41,12 @@ test("capability cards use a compact responsive information layout", () => {
   );
   assert.doesNotMatch(stylesheet, /\.capability-card\.disabled\s*\{[^}]*opacity:/s);
 });
+
+test("MCP capabilities expose connection status, setup guidance, refresh, and discovered tools", () => {
+  assert.match(component, /刷新 MCP 连接状态/);
+  assert.match(component, /npm run mcp:setup/);
+  assert.match(component, /selected\.mcpTools/);
+  assert.match(component, /selected\.status !== "connected"/);
+  assert.match(stylesheet, /\.mcp-connection-state/);
+  assert.match(stylesheet, /\.mcp-tool-list/);
+});
