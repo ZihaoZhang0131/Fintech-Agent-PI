@@ -178,15 +178,6 @@ const SUGGESTIONS = [
   },
 ];
 
-const STATUS_COPY: Record<AgentStatus, { label: string; detail: string }> = {
-  idle: { label: "等待提问", detail: "Agent 已就绪" },
-  connecting: { label: "正在连接", detail: "正在建立模型请求" },
-  streaming: { label: "正在执行", detail: "Agent 正在处理项目任务" },
-  done: { label: "本轮完成", detail: "回答与产出已保存" },
-  stopped: { label: "已停止", detail: "保留已生成的内容" },
-  error: { label: "调用失败", detail: "请检查本地服务或 API Key" },
-};
-
 const CODE_EXTENSIONS = new Set([
   ".c",
   ".cpp",
@@ -383,15 +374,6 @@ export default function Home() {
     [activeId, activeProjectId, conversations],
   );
   const isBusy = status === "connecting" || status === "streaming";
-  const statusCopy = STATUS_COPY[status];
-  const runningTool = useMemo(
-    () =>
-      (activeConversation?.messages ?? [])
-        .flatMap((message) => message.toolRuns ?? [])
-        .filter((run) => run.status === "running")
-        .at(-1),
-    [activeConversation?.messages],
-  );
   const previewDataUrl =
     filePreview?.data && filePreview.mimeType
       ? `data:${filePreview.mimeType};base64,${filePreview.data}`
@@ -1364,18 +1346,6 @@ export default function Home() {
             </button>
             <div>
               <h1>{activeConversation?.title ?? activeProject?.name ?? "本地项目工作台"}</h1>
-              <span className="header-subtitle">
-                <span
-                  className={`status-dot ${activeProject && (isBusy || health?.keyConfigured) ? "online" : "offline"}`}
-                />
-                {activeProject
-                  ? isBusy
-                    ? runningTool
-                      ? `正在调用 ${runningTool.label}`
-                      : statusCopy.detail
-                    : `${activeProject.name} · ${statusCopy.label}`
-                  : "先绑定一个本地项目文件夹"}
-              </span>
             </div>
           </div>
           <button
@@ -1569,20 +1539,11 @@ export default function Home() {
             </div>
           ) : (
             <div className="welcome-state">
-              <div className="welcome-eyebrow">
-                <FolderOpen size={13} />
-                {activeProject.name}
-              </div>
               <h2>
                 今天想完成
                 <br />
                 什么研究？
               </h2>
-              <p>
-                当前会话已绑定本地项目。Agent 可以读取项目资料，
-                <br />
-                并把报告、代码和数据保存到项目文件夹。
-              </p>
               <div className="suggestion-grid">
                 {SUGGESTIONS.map(({ icon: Icon, title, prompt }) => (
                   <button
@@ -1614,7 +1575,6 @@ export default function Home() {
                 composerIsComposingRef.current = false;
               }}
               onKeyDown={handleKeyDown}
-              placeholder={activeProject ? "描述任务，Agent 会在当前项目中工作…" : "请先绑定本地项目"}
               rows={1}
               disabled={!activeConversation || !activeProject || !capabilitiesReady || isBusy}
               aria-label="投研任务"
