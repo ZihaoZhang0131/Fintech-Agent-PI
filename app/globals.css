@@ -285,7 +285,7 @@ body.is-resizing-row * {
 }
 
 .new-project-button {
-  margin-bottom: 8px;
+  margin-bottom: 2px;
 }
 
 .new-project-button:hover,
@@ -304,7 +304,7 @@ body.is-resizing-row * {
 
 .sidebar-divider {
   height: 1px;
-  margin: 18px 4px 12px;
+  margin: 0px 4px 8px;
   flex: none;
   background: var(--line);
 }
@@ -318,12 +318,12 @@ body.is-resizing-row * {
 
 .project-group {
   position: relative;
-  margin-bottom: 8px;
+  margin-bottom: 2px;
   border-radius: 10px;
 }
 
 .project-group.expanded {
-  padding-bottom: 2px;
+  padding-bottom: 0;
 }
 
 .project-group.active {
@@ -333,13 +333,13 @@ body.is-resizing-row * {
 .project-heading {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   width: 100%;
-  min-height: 40px;
-  padding: 8px 38px 8px 10px;
+  min-height: 34px;
+  padding: 4px 32px 4px 8px;
   overflow: hidden;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: var(--ink);
   text-align: left;
@@ -377,11 +377,11 @@ body.is-resizing-row * {
 .project-menu-trigger {
   position: absolute;
   z-index: 32;
-  top: 6px;
-  right: 6px;
+  top: 5px;
+  right: 5px;
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   place-items: center;
   border: 0;
   border-radius: 7px;
@@ -416,7 +416,7 @@ body.is-resizing-row * {
 .project-context-menu {
   position: absolute;
   z-index: 33;
-  top: 44px;
+  top: 38px;
   right: 5px;
   width: 176px;
   padding: 5px;
@@ -462,7 +462,7 @@ body.is-resizing-row * {
 }
 
 .project-group .conversation-row {
-  margin: 6px 0 0 18px;
+  margin: 0px 0 0 18px;
 }
 
 .project-group .conversation-row.active {
@@ -502,9 +502,9 @@ body.is-resizing-row * {
 
 .conversation-row {
   position: relative;
-  min-height: 38px;
+  min-height: 30px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 7px;
   background: transparent;
   transition: background 150ms ease, color 150ms ease;
 }
@@ -524,8 +524,8 @@ body.is-resizing-row * {
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: 36px;
-  padding: 8px 34px 8px 12px;
+  min-height: 28px;
+  padding: 4px 30px 4px 10px;
   border: 0;
   background: transparent;
   text-align: left;
@@ -552,11 +552,11 @@ body.is-resizing-row * {
 
 .delete-chat {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 4px;
+  right: 5px;
   display: grid;
-  width: 25px;
-  height: 25px;
+  width: 21px;
+  height: 21px;
   place-items: center;
   border: 0;
   border-radius: 6px;

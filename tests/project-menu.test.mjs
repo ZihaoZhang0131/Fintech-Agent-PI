@@ -66,3 +66,32 @@ test("sidebar uses a simplified one-line card hierarchy", () => {
   assert.match(stylesheet, /\.conversation-row\s*\{[^}]*background:\s*transparent;/s);
   assert.doesNotMatch(pageSource, /selectProject\(project\.id\)/);
 });
+
+test("sidebar project entries use compact vertical spacing", () => {
+  assert.match(stylesheet, /\.new-project-button\s*\{[^}]*margin-bottom:\s*2px;/s);
+  assert.match(stylesheet, /\.sidebar-divider\s*\{[^}]*margin:\s*0px 4px 8px;/s);
+  assert.match(stylesheet, /\.project-group\s*\{[^}]*margin-bottom:\s*2px;/s);
+  assert.match(
+    stylesheet,
+    /\.project-group \.conversation-row\s*\{[^}]*margin:\s*0px 0 0 18px;/s,
+  );
+});
+
+test("project and conversation boxes keep compact internal whitespace", () => {
+  assert.match(
+    stylesheet,
+    /\.project-heading\s*\{[^}]*gap:\s*7px;[^}]*min-height:\s*34px;[^}]*padding:\s*4px 32px 4px 8px;[^}]*border-radius:\s*8px;/s,
+  );
+  assert.match(
+    stylesheet,
+    /\.conversation-row\s*\{[^}]*min-height:\s*30px;[^}]*border-radius:\s*7px;/s,
+  );
+  assert.match(
+    stylesheet,
+    /\.conversation-select\s*\{[^}]*min-height:\s*28px;[^}]*padding:\s*4px 30px 4px 10px;/s,
+  );
+  assert.match(
+    stylesheet,
+    /\.delete-chat\s*\{[^}]*top:\s*4px;[^}]*right:\s*5px;[^}]*width:\s*21px;[^}]*height:\s*21px;/s,
+  );
+});
