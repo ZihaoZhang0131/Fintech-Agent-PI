@@ -877,6 +877,84 @@ body.is-resizing-column * {
   color: var(--ink-muted);
 }
 
+.markdown-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.markdown-body strong {
+  color: var(--foreground);
+  font-weight: 700;
+}
+
+.markdown-body a {
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration-color: color-mix(in srgb, var(--primary) 38%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.markdown-body a:hover {
+  color: var(--primary-hover);
+  text-decoration-color: currentColor;
+}
+
+.markdown-body hr {
+  height: 1px;
+  margin: 1.4em 0;
+  border: 0;
+  background: var(--border);
+}
+
+.markdown-body table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 1em 0;
+  overflow-x: auto;
+  border-spacing: 0;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.markdown-body th,
+.markdown-body td {
+  min-width: 92px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body th {
+  background: var(--muted);
+  color: var(--foreground);
+  font-weight: 700;
+}
+
+.markdown-body tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
+}
+
+.markdown-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1em 0;
+  border-radius: 10px;
+}
+
+.markdown-body input[type="checkbox"] {
+  margin: 0 7px 0 0;
+  accent-color: var(--primary);
+}
+
+.markdown-body del {
+  color: var(--muted-foreground);
+}
+
 .thinking-indicator {
   display: flex;
   align-items: center;
@@ -884,153 +962,107 @@ body.is-resizing-column * {
   height: 23px;
 }
 
-.tool-run-list {
-  display: grid;
-  gap: 8px;
-  margin: 2px 0 15px;
+.tool-run-disclosure {
+  margin: 1px 0 12px;
 }
 
-.tool-run-card {
-  overflow: hidden;
-  border: 1px solid #e1e1e1;
-  border-radius: 9px;
-  background: #f8f8f8;
-  box-shadow: 0 3px 12px rgba(49, 49, 49, 0.04);
-}
-
-.tool-run-card.running {
-  border-color: #cccccc;
-  background: #f7f7f7;
-}
-
-.tool-run-card.error {
-  border-color: #cacaca;
-  background: #f7f7f7;
-}
-
-.tool-run-card.awaiting_approval,
-.tool-run-card.rejected {
-  border-color: #c9c9c9;
-  background: #f5f5f5;
-}
-
-.tool-run-card > header {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 11px 8px;
-}
-
-.tool-run-icon {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border-radius: 6px;
-  background: var(--mint);
-  color: var(--forest);
-}
-
-.tool-run-card.running .tool-run-icon svg {
-  animation: toolPulse 1.2s ease-in-out infinite;
-}
-
-.tool-run-card.error .tool-run-icon {
-  background: #e3e3e3;
-  color: var(--danger);
-}
-
-.tool-run-card.awaiting_approval .tool-run-icon,
-.tool-run-card.rejected .tool-run-icon {
-  background: #e5e5e5;
-  color: #4e4e4e;
-}
-
-.tool-run-title {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-}
-
-.tool-run-title strong {
-  overflow: hidden;
-  font-size: 11px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.message-content .tool-run-title code {
-  flex: none;
-  padding: 1px 4px;
-  background: #ededed;
-  color: #7d7d7d;
-  font-size: 8px;
-}
-
-.tool-run-status {
-  padding: 2px 6px;
-  border-radius: 999px;
-  background: #ebebeb;
-  color: var(--forest);
-  font-size: 8px;
-  font-weight: 700;
-}
-
-.tool-run-card.running .tool-run-status {
-  background: #e8e8e8;
-  color: #6a6a6a;
-}
-
-.tool-run-card.error .tool-run-status {
-  background: #e3e3e3;
-  color: var(--danger);
-}
-
-.tool-run-card.awaiting_approval .tool-run-status,
-.tool-run-card.rejected .tool-run-status {
-  background: #e2e2e2;
-  color: #4c4c4c;
-}
-
-.tool-run-query {
-  overflow: hidden;
-  margin: 0 11px 7px !important;
-  color: #434343;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tool-run-query.command {
-  overflow: auto;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  line-height: 1.55;
-  text-overflow: clip;
-  white-space: pre-wrap;
-}
-
-.tool-run-meta {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 0 11px 9px;
-  color: #878787;
-  font-size: 8px;
-  line-height: 1.4;
-}
-
-.tool-run-meta span {
+.tool-run-summary {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  min-height: 24px;
+  padding: 2px 3px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #918b81;
+  font-size: 9px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-run-summary:hover {
+  background: color-mix(in srgb, var(--muted) 58%, transparent);
+}
+
+.tool-run-chevron {
+  flex: none;
+  color: #aaa49a;
+  transition: transform 160ms ease;
+}
+
+.tool-run-summary[aria-expanded="true"] .tool-run-chevron {
+  transform: rotate(180deg);
+}
+
+.tool-run-expanded {
+  margin: 2px 5px 2px 14px;
+  padding: 5px 0 4px 17px;
+  border-left: 1px solid var(--border);
+}
+
+.tool-run-detail {
+  min-width: 0;
+}
+
+.tool-run-history-list {
+  display: grid;
+  margin-bottom: 6px;
+}
+
+.tool-run-history-row {
+  display: grid;
+  grid-template-columns: 18px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-height: 27px;
+  color: #9a958b;
+  font-size: 8px;
+}
+
+.tool-run-history-row + .tool-run-history-row {
+  border-top: 1px solid #f0ede7;
+}
+
+.tool-run-history-row strong {
+  color: #706b62;
+  font-size: 9px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.tool-run-history-row > span:nth-child(3) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-run-history-glyph {
+  display: grid;
+  place-items: center;
+  color: #9b968c;
+}
+
+.message-content .tool-run-command {
+  display: block;
+  margin: 0 0 7px;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--card-foreground);
+  color: var(--primary-foreground);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .tool-run-sources {
   display: grid;
-  border-top: 1px solid #e8e8e8;
+  overflow: hidden;
+  border: 1px solid #ebe8e1;
+  border-radius: 7px;
   background: #fcfcfc;
 }
 
@@ -1069,7 +1101,7 @@ body.is-resizing-column * {
 .tool-run-approval-wrap {
   display: grid;
   gap: 7px;
-  padding: 0 11px 10px;
+  padding: 0 0 8px;
 }
 
 .message-content .tool-run-approval-wrap > code {
@@ -2985,7 +3017,7 @@ button.workspace-file-row:hover,
 
 .message-content code,
 .message-content pre,
-.tool-run-query,
+.tool-run-command,
 .workspace-preview-content pre,
 .plain-text-preview,
 .capability-modal-content.tool pre,
@@ -3170,7 +3202,6 @@ button.workspace-file-row:hover,
 
 .workspace-onboarding p,
 .message-meta time,
-.tool-run-meta,
 .artifact-meta,
 .capability-card-copy p,
 .project-dialog-body p {
@@ -3197,7 +3228,6 @@ button.workspace-file-row:hover,
 }
 
 .suggestion-card,
-.tool-run-card,
 .capability-card,
 .artifact-list-item {
   border-color: var(--border);
@@ -3248,7 +3278,7 @@ button.workspace-file-row:hover,
 
 .message-content pre,
 .tool-run-output pre,
-.tool-run-query.command,
+.tool-run-command,
 .capability-modal-content.tool,
 .artifact-content.code {
   background: var(--card-foreground);
@@ -3261,39 +3291,10 @@ button.workspace-file-row:hover,
   color: var(--muted-foreground);
 }
 
-.tool-run-card.running,
-.tool-run-card.awaiting_approval {
-  border-color: var(--primary);
-}
-
-.tool-run-card.error,
-.tool-run-card.rejected {
-  border-color: var(--destructive);
-}
-
-.tool-run-icon {
-  background: var(--accent);
-  color: var(--primary);
-}
-
-.tool-run-card.error .tool-run-icon,
-.tool-run-card.rejected .tool-run-icon {
-  background: var(--destructive);
-  color: var(--destructive-foreground);
-}
-
-.tool-run-card.running .tool-run-status,
-.tool-run-card.awaiting_approval .tool-run-status,
 .tool-run-sources a {
   color: var(--primary);
 }
 
-.tool-run-card.error .tool-run-status,
-.tool-run-card.rejected .tool-run-status {
-  color: var(--destructive);
-}
-
-.tool-run-query,
 .tool-run-output,
 .tool-run-approval,
 .compact-run-status,

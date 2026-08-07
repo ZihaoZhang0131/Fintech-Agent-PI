@@ -8,7 +8,6 @@ import {
   CircleCheck,
   CircleStop,
   CircleX,
-  Clock3,
   Copy,
   Cpu,
   ExternalLink,
@@ -54,6 +53,7 @@ import {
   useState,
 } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { CapabilityLibrary } from "@/components/capability-library";
 import type { CapabilityCatalog, CapabilityKind } from "@/lib/capability-types";
 import { shouldSubmitComposerKey } from "@/lib/composer-keyboard";
@@ -86,6 +86,7 @@ type ChatMessage = {
   content: string;
   createdAt: number;
   toolRuns?: ToolRun[];
+  durationMs?: number;
 };
 
 type Conversation = {
@@ -231,9 +232,23 @@ function formatTime(timestamp: number) {
   }).format(timestamp);
 }
 
-function formatDuration(durationMs?: number) {
-  if (durationMs === undefined) return "";
-  return durationMs < 1_000 ? `${durationMs}ms` : `${(durationMs / 1_000).toFixed(1)}s`;
+function formatRunDuration(durationMs: number) {
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1_000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${seconds}秒`;
+  return seconds === 0 ? `${minutes}分` : `${minutes}分${seconds}秒`;
+}
+
+function getMessageDuration(message: ChatMessage) {
+  if (message.durationMs !== undefined) return message.durationMs;
+  const lastToolCompletedAt = Math.max(
+    0,
+    ...(message.toolRuns ?? []).map((run) => run.completedAt ?? 0),
+  );
+  return lastToolCompletedAt > message.createdAt
+    ? lastToolCompletedAt - message.createdAt
+    : undefined;
 }
 
 function formatBytes(size: number) {
@@ -337,6 +352,147 @@ type PreviewCacheEntry =
   | { status: "ready"; preview: FilePreview }
   | { status: "error"; message: string };
 
+function ToolRunGlyph({ run }: { run: ToolRun }) {
+  if (run.toolName === "bash") return <Terminal size={14} />;
+  if (run.toolName.startsWith("mcp__")) return <Plug size={14} />;
+  if (run.toolName === "load_skill") return <BookOpenCheck size={14} />;
+  if (run.toolName === "write_project_file") return <Save size={14} />;
+  if (run.status === "running") return <Search size={14} />;
+  if (run.status === "success") return <CircleCheck size={14} />;
+  return <CircleX size={14} />;
+}
+
+type ToolRunDetailProps = {
+  messageId: string;
+  run: ToolRun;
+  projectPath?: string;
+  approvalSubmittingIds: string[];
+  onDecision: (messageId: string, run: ToolRun, decision: "approve" | "reject") => void;
+};
+
+function ToolRunDetail({
+  messageId,
+  run,
+  projectPath,
+  approvalSubmittingIds,
+  onDecision,
+}: ToolRunDetailProps) {
+  return (
+    <div className="tool-run-detail">
+      {run.toolName === "bash" && run.query && (
+        <code className="tool-run-command">{run.query}</code>
+      )}
+      {run.status === "awaiting_approval" && run.commandId && (
+        <div className="tool-run-approval-wrap">
+          <code>{projectPath}</code>
+          <div className="tool-run-approval">
+            <button
+              type="button"
+              className="secondary"
+              disabled={approvalSubmittingIds.includes(run.commandId)}
+              onClick={() => onDecision(messageId, run, "reject")}
+            >
+              拒绝
+            </button>
+            <button
+              type="button"
+              disabled={approvalSubmittingIds.includes(run.commandId)}
+              onClick={() => onDecision(messageId, run, "approve")}
+            >
+              允许
+            </button>
+          </div>
+        </div>
+      )}
+      {run.toolName === "bash" && (run.stdout || run.stderr || run.truncated) && (
+        <details className="tool-run-output">
+          <summary>查看命令输出</summary>
+          {run.stdout && <pre>{run.stdout}</pre>}
+          {run.stderr && (
+            <pre>
+              <strong>STDERR</strong>{"\n"}
+              {run.stderr}
+            </pre>
+          )}
+          {run.truncated && <p>输出超过 200KB，后续内容已截断。</p>}
+        </details>
+      )}
+      {Boolean(run.sources?.length) && (
+        <div className="tool-run-sources">
+          {run.sources?.map((source) => (
+            <a href={source.url} target="_blank" rel="noreferrer" key={source.url}>
+              <span>{source.title}</span>
+              <ExternalLink size={11} />
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type ToolRunStackProps = Omit<ToolRunDetailProps, "run"> & {
+  runs: ToolRun[];
+  durationMs?: number;
+  expanded: boolean;
+  onToggle: () => void;
+};
+
+function ToolRunStack({
+  runs,
+  durationMs,
+  expanded,
+  onToggle,
+  ...detailProps
+}: ToolRunStackProps) {
+  const latestRun = runs.reduce((latest, run) =>
+    run.startedAt >= latest.startedAt ? run : latest,
+  );
+
+  return (
+    <div className="tool-run-disclosure">
+      <button
+        className="tool-run-summary"
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        <span>{durationMs === undefined ? "正在运行…" : `本次运行 ${formatRunDuration(durationMs)}`}</span>
+        <ChevronDown className="tool-run-chevron" size={14} />
+      </button>
+      {expanded && (
+        <div className="tool-run-expanded">
+          <div className="tool-run-history-list" aria-label="工具调用记录">
+            {runs.map((run) => (
+              <div className="tool-run-history-row" key={run.toolCallId}>
+                <span className="tool-run-history-glyph">
+                  <ToolRunGlyph run={run} />
+                </span>
+                <strong>{run.label}</strong>
+                {run.query && <span>{run.query}</span>}
+              </div>
+            ))}
+          </div>
+          <ToolRunDetail run={latestRun} {...detailProps} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MarkdownMessage({ content }: { content: string }) {
+  const normalizedContent = content.replace(
+    /([。！？.!?：:])\s*(#{1,6}\s+)/g,
+    "$1\n\n$2",
+  );
+
+  return (
+    <div className="markdown-body">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizedContent}</ReactMarkdown>
+    </div>
+  );
+}
+
 export default function Home() {
   const [projects, setProjects] = useState<LocalProject[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -351,6 +507,7 @@ export default function Home() {
   const [removeProjectCandidate, setRemoveProjectCandidate] = useState<LocalProject | null>(null);
   const [fullPermissionConversationId, setFullPermissionConversationId] = useState("");
   const [approvalSubmittingIds, setApprovalSubmittingIds] = useState<string[]>([]);
+  const [expandedToolMessageIds, setExpandedToolMessageIds] = useState<string[]>([]);
   const [copiedProjectPath, setCopiedProjectPath] = useState(false);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<AgentStatus>("idle");
@@ -845,6 +1002,21 @@ export default function Home() {
     setActiveView("workspace");
   }
 
+  function toolRunsAreExpanded(messageId: string) {
+    const activeMessageId = activeConversation?.messages.at(-1)?.id;
+    return (isBusy && activeMessageId === messageId) || expandedToolMessageIds.includes(messageId);
+  }
+
+  function toggleToolRuns(messageId: string) {
+    const activeMessageId = activeConversation?.messages.at(-1)?.id;
+    if (isBusy && activeMessageId === messageId) return;
+    setExpandedToolMessageIds((current) =>
+      current.includes(messageId)
+        ? current.filter((id) => id !== messageId)
+        : [...current, messageId],
+    );
+  }
+
   function toggleCapability(kind: CapabilityKind, name: string) {
     const update = (current: string[], storageKey: string) => {
       const next = current.includes(name)
@@ -1188,6 +1360,13 @@ export default function Home() {
             setStatus("done");
             setDurationMs(event.durationMs);
             setTokenUsage(event.usage?.totalTokens ?? null);
+            updateConversation(conversationId, (conversation) => ({
+              ...conversation,
+              messages: conversation.messages.map((message) =>
+                message.id === assistantId ? { ...message, durationMs: event.durationMs } : message,
+              ),
+              updatedAt: timestampNow(),
+            }));
             void loadProjectFiles(activeProject.id);
           }
           if (event.type === "error") throw new Error(event.message);
@@ -1528,143 +1707,20 @@ export default function Home() {
                     </div>
                     <div className={`message-content ${!message.content ? "is-streaming" : ""}`}>
                       {message.role === "assistant" && Boolean(message.toolRuns?.length) && (
-                        <div className="tool-run-list" aria-label="Agent 工具执行记录">
-                          {message.toolRuns?.map((run) => (
-                            <section className={`tool-run-card ${run.status}`} key={run.toolCallId}>
-                              <header>
-                                <span className="tool-run-icon">
-                                  {run.toolName === "bash" ? (
-                                    <Terminal size={14} />
-                                  ) : run.toolName.startsWith("mcp__") ? (
-                                    <Plug size={14} />
-                                  ) : run.toolName === "load_skill" ? (
-                                    <BookOpenCheck size={14} />
-                                  ) : run.toolName === "write_project_file" ? (
-                                    <Save size={14} />
-                                  ) : run.status === "running" ? (
-                                    <Search size={14} />
-                                  ) : run.status === "success" ? (
-                                    <CircleCheck size={14} />
-                                  ) : (
-                                    <CircleX size={14} />
-                                  )}
-                                </span>
-                                <span className="tool-run-title">
-                                  <strong>{run.label}</strong>
-                                  <code>{run.toolName}</code>
-                                </span>
-                                <span className="tool-run-status">
-                                  {run.status === "awaiting_approval"
-                                    ? "等待确认"
-                                    : run.status === "running"
-                                    ? "调用中"
-                                    : run.status === "success"
-                                      ? "已完成"
-                                      : run.status === "rejected"
-                                        ? "已拒绝"
-                                        : "失败"}
-                                </span>
-                              </header>
-                              {run.query && (
-                                <p
-                                  className={`tool-run-query ${run.toolName === "bash" ? "command" : ""}`}
-                                >
-                                  {run.query}
-                                </p>
-                              )}
-                              <div className="tool-run-meta">
-                                {run.status === "awaiting_approval" ? (
-                                  <span>
-                                    {run.permissionMode === "full" ? "完整本机权限" : "项目沙箱"}
-                                  </span>
-                                ) : run.status === "running" ? (
-                                  <span>Agent 正在处理…</span>
-                                ) : (
-                                  <>
-                                    {run.toolName === "bash" && (
-                                      <span>
-                                        {run.permissionMode === "full"
-                                          ? "完整本机权限"
-                                          : "项目沙箱"}
-                                      </span>
-                                    )}
-                                    {run.summary && <span>{run.summary}</span>}
-                                    {run.resultCount !== undefined && (
-                                      <span>{run.resultCount} 个结果</span>
-                                    )}
-                                    {run.durationMs !== undefined && (
-                                      <span>
-                                        <Clock3 size={11} /> {formatDuration(run.durationMs)}
-                                      </span>
-                                    )}
-                                    {run.toolName === "bash" && run.exitCode !== undefined && (
-                                      <span>退出码 {run.exitCode ?? "无"}</span>
-                                    )}
-                                    {run.timedOut && <span>已超时</span>}
-                                    {run.truncated && <span>输出已截断</span>}
-                                  </>
-                                )}
-                              </div>
-                              {run.status === "awaiting_approval" && run.commandId && (
-                                <div className="tool-run-approval-wrap">
-                                  <code>{activeProject?.path}</code>
-                                  <div className="tool-run-approval">
-                                    <button
-                                      type="button"
-                                      className="secondary"
-                                      disabled={approvalSubmittingIds.includes(run.commandId)}
-                                      onClick={() =>
-                                        void decideBashCommand(message.id, run, "reject")
-                                      }
-                                    >
-                                      拒绝
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={approvalSubmittingIds.includes(run.commandId)}
-                                      onClick={() =>
-                                        void decideBashCommand(message.id, run, "approve")
-                                      }
-                                    >
-                                      允许
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-                              {run.toolName === "bash" &&
-                                (run.stdout || run.stderr || run.truncated) && (
-                                  <details className="tool-run-output">
-                                    <summary>查看命令输出</summary>
-                                    {run.stdout && <pre>{run.stdout}</pre>}
-                                    {run.stderr && (
-                                      <pre>
-                                        <strong>STDERR</strong>{"\n"}
-                                        {run.stderr}
-                                      </pre>
-                                    )}
-                                    {run.truncated && <p>输出超过 200KB，后续内容已截断。</p>}
-                                  </details>
-                                )}
-                              {Boolean(run.sources?.length) && (
-                                <div className="tool-run-sources">
-                                  {run.sources?.map((source) => (
-                                    <a
-                                      href={source.url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      key={source.url}
-                                    >
-                                      <span>{source.title}</span>
-                                      <ExternalLink size={11} />
-                                    </a>
-                                  ))}
-                                </div>
-                              )}
-                            </section>
-                          ))}
-                        </div>
+                        <ToolRunStack
+                          runs={message.toolRuns ?? []}
+                          durationMs={getMessageDuration(message)}
+                          messageId={message.id}
+                          projectPath={activeProject?.path}
+                          approvalSubmittingIds={approvalSubmittingIds}
+                          expanded={toolRunsAreExpanded(message.id)}
+                          onToggle={() => toggleToolRuns(message.id)}
+                          onDecision={(messageId, run, decision) =>
+                            void decideBashCommand(messageId, run, decision)
+                          }
+                        />
                       )}
-                      {message.content ? <ReactMarkdown>{message.content}</ReactMarkdown> : null}
+                      {message.content ? <MarkdownMessage content={message.content} /> : null}
                       {!message.content && (
                         <span className="thinking-indicator">
                           <i />
