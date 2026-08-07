@@ -1786,16 +1786,6 @@ button.workspace-file-row:hover,
   white-space: nowrap;
 }
 
-.workspace-preview-title > small {
-  flex: none;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: var(--secondary);
-  color: var(--muted-foreground);
-  font-size: 7px;
-  font-weight: 650;
-}
-
 .workspace-preview-actions {
   flex: none;
   gap: 5px;

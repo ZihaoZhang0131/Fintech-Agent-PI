@@ -339,15 +339,6 @@ function fileNameFromPath(path: string) {
   return path.split("/").pop() || path;
 }
 
-function previewKindLabel(preview: FilePreview) {
-  if (preview.kind === "image") return "图片";
-  if (preview.kind === "pdf") return "PDF";
-  if (preview.kind === "text" && CODE_EXTENSIONS.has(preview.extension)) return "代码";
-  if (preview.kind === "text") return "文本";
-  if (preview.kind === "too-large") return "文件过大";
-  return "二进制文件";
-}
-
 function fileTabId(projectId: string, path: string | null) {
   const tab = path === null ? "directory" : encodeURIComponent(path);
   return `workspace-file-tab-${encodeURIComponent(projectId)}-${tab}`;
@@ -2050,18 +2041,25 @@ export default function Home() {
                     <div className="workspace-preview-title">
                       <FileText size={14} />
                       <span title={filePreview.path}>{filePreview.path}</span>
-                      <small>{previewKindLabel(filePreview)}</small>
                     </div>
                     <div className="workspace-preview-actions">
                       {filePreview.content && (
-                        <button type="button" onClick={() => void copyPreview()}>
+                        <button
+                          type="button"
+                          aria-label={copiedPreviewPath === activeFilePath ? "已复制文件" : "复制文件"}
+                          title={copiedPreviewPath === activeFilePath ? "已复制" : "复制"}
+                          onClick={() => void copyPreview()}
+                        >
                           <Copy size={13} />
-                          {copiedPreviewPath === activeFilePath ? "已复制" : "复制"}
                         </button>
                       )}
-                      <a href={downloadAssetUrl} download={filePreview.name}>
+                      <a
+                        href={downloadAssetUrl}
+                        download={filePreview.name}
+                        aria-label="下载文件"
+                        title="下载文件"
+                      >
                         <Download size={13} />
-                        下载原件
                       </a>
                     </div>
                   </header>

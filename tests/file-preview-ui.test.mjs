@@ -17,8 +17,9 @@ test("file preview UI uses protected asset URLs instead of Base64 data URLs", ()
 
 test("file preview UI exposes code, download, and recoverable unsupported states", () => {
   assert.match(pageSource, /<CodePreview/);
-  assert.match(pageSource, /下载原件/);
-  assert.match(pageSource, /previewKindLabel/);
+  assert.match(pageSource, /aria-label=\{copiedPreviewPath === activeFilePath \? "已复制文件" : "复制文件"\}/);
+  assert.match(pageSource, /aria-label="下载文件"/);
+  assert.doesNotMatch(pageSource, /previewKindLabel|下载原件|>复制</);
   assert.match(pageSource, /重新加载/);
   assert.match(pageSource, /文件超过预览限制/);
   assert.match(pageSource, /该文件可下载后使用对应应用打开/);
