@@ -83,6 +83,21 @@ test("local runtime binds a folder and keeps file access inside it", async (t) =
   );
 });
 
+test("workspace file listing only shows first-level entries by default", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "pi-file-listing-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  await mkdir(path.join(temporaryRoot, "reports", "archive"), { recursive: true });
+  await writeFile(path.join(temporaryRoot, "readme.md"), "# Project\n", "utf8");
+  await writeFile(path.join(temporaryRoot, "reports", "summary.md"), "# Summary\n", "utf8");
+  await writeFile(path.join(temporaryRoot, "reports", "archive", "old.md"), "# Old\n", "utf8");
+
+  const listing = await listWorkspaceFiles(temporaryRoot);
+  assert.deepEqual(
+    listing.entries.map((entry) => entry.path),
+    ["reports", "readme.md"],
+  );
+});
+
 async function waitForCommand(manager, workspaceId, commandId) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const job = manager.get(workspaceId, commandId);

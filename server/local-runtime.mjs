@@ -168,8 +168,8 @@ async function findWorkspace(dataDirectory, workspaceId) {
   return { ...workspace, path: canonicalPath };
 }
 
-export async function listWorkspaceFiles(root, requestedDepth = 8) {
-  const maxDepth = Math.max(1, Math.min(Number(requestedDepth) || 8, 12));
+export async function listWorkspaceFiles(root, requestedDepth = 1) {
+  const maxDepth = Math.max(1, Math.min(Number(requestedDepth) || 1, 12));
   const entries = [];
 
   async function visit(directory, relativeDirectory, depth) {
