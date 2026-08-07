@@ -2032,7 +2032,7 @@ button.workspace-file-row:hover,
 .capability-card {
   display: flex;
   min-width: 0;
-  min-height: 214px;
+  min-height: 196px;
   padding: 20px;
   flex-direction: column;
   border: 1px solid var(--line);
@@ -2125,30 +2125,30 @@ button.workspace-file-row:hover,
   white-space: nowrap;
 }
 
-.mcp-connection-state {
+.mcp-card-summary,
+.mcp-detail-summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-top: 2px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: #f2f2f2;
-  color: #777777;
+  gap: 6px;
+  color: var(--ink-muted);
   font-size: 9px;
 }
 
-.mcp-connection-state.connected span {
+.mcp-card-summary.connected span:first-child,
+.mcp-detail-summary.connected span:first-child {
   color: var(--forest);
   font-weight: 700;
 }
 
-.mcp-connection-state.error span,
-.mcp-connection-state.not_installed span {
+.mcp-card-summary.error span:first-child,
+.mcp-card-summary.not_installed span:first-child,
+.mcp-detail-summary.error span:first-child,
+.mcp-detail-summary.not_installed span:first-child {
   color: #a14e36;
 }
 
-.mcp-connection-state code {
-  font-size: 8px;
+.mcp-detail-summary {
+  margin-top: -8px;
 }
 
 .capability-card-actions {
@@ -2361,39 +2361,14 @@ button.workspace-file-row:hover,
 }
 
 .capability-modal-content.mcp {
-  padding: 22px 24px 30px;
+  padding: 20px 24px 26px;
 }
 
 .mcp-detail > p {
-  margin: 0 0 18px;
+  margin: 0 0 10px;
   color: var(--ink-muted);
   font-size: 11px;
   line-height: 1.75;
-}
-
-.mcp-detail dl {
-  display: grid;
-  margin: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.mcp-detail dl > div {
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--muted);
-}
-
-.mcp-detail dt {
-  color: var(--ink-muted);
-  font-size: 8px;
-}
-
-.mcp-detail dd {
-  margin: 4px 0 0;
-  font-size: 10px;
-  font-weight: 650;
 }
 
 .mcp-detail-error,
@@ -2415,7 +2390,7 @@ button.workspace-file-row:hover,
 }
 
 .mcp-tool-list {
-  margin-top: 20px;
+  margin-top: 18px;
 }
 
 .mcp-tool-list h3 {
@@ -2440,6 +2415,12 @@ button.workspace-file-row:hover,
   line-height: 1.55;
 }
 
+.mcp-tool-list > p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 9px;
+}
+
 .mcp-detail > a {
   display: inline-flex;
   align-items: center;
@@ -2458,6 +2439,10 @@ button.workspace-file-row:hover,
   padding: 12px 18px;
   border-top: 1px solid var(--line);
   background: #f9f9f9;
+}
+
+.capability-modal-footer.mcp {
+  justify-content: flex-end;
 }
 
 .capability-modal-footer > button {

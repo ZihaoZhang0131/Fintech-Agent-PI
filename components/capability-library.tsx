@@ -97,7 +97,7 @@ export function CapabilityLibrary({
                 <article className={`capability-card ${itemEnabled ? "enabled" : "disabled"}`} key={item.name}>
                   <div className="capability-card-copy">
                     <h2>{item.label}</h2>
-                    {item.label !== item.name && <code>{item.name}</code>}
+                    {!isMcp && item.label !== item.name && <code>{item.name}</code>}
                     <p>{item.description}</p>
                   </div>
                   {isSkill && Boolean(item.allowedTools?.length) && (
@@ -106,9 +106,10 @@ export function CapabilityLibrary({
                     </div>
                   )}
                   {isMcp && (
-                    <div className={`mcp-connection-state ${item.status ?? "stopped"}`}>
+                    <div className={`mcp-card-summary ${item.status ?? "stopped"}`}>
                       <span>{mcpStatusLabel(item.status)}</span>
-                      <code>{item.mcpTools?.length ?? 0} 个工具</code>
+                      <span aria-hidden="true">·</span>
+                      <span>{item.mcpTools?.length ?? 0} 个工具</span>
                     </div>
                   )}
                   <footer className="capability-card-actions">
@@ -155,11 +156,10 @@ export function CapabilityLibrary({
                   {selected.kind === "skill"
                     ? "SKILL DETAIL"
                     : selected.kind === "mcp"
-                      ? "MCP SERVER"
+                      ? "MCP"
                       : "TOOL SOURCE"}
                 </span>
                 <h2 id="capability-modal-title">{selected.label}</h2>
-                <code>{selected.sourcePath}</code>
               </div>
               <button type="button" onClick={() => setSelectedName(null)} aria-label="关闭详情">
                 <X size={18} />
@@ -171,12 +171,10 @@ export function CapabilityLibrary({
               ) : selected.kind === "mcp" ? (
                 <div className="mcp-detail">
                   <p>{selected.description}</p>
-                  <dl>
-                    <div><dt>连接状态</dt><dd>{mcpStatusLabel(selected.status)}</dd></div>
-                    <div><dt>版本</dt><dd>{selected.version}</dd></div>
-                    <div><dt>传输方式</dt><dd>本地 stdio</dd></div>
-                    <div><dt>认证</dt><dd>{selected.requiresApiKey ? "需要 API Key" : "免费，无需 API Key"}</dd></div>
-                  </dl>
+                  <div className={`mcp-detail-summary ${selected.status ?? "stopped"}`}>
+                    <span>{mcpStatusLabel(selected.status)}</span>
+                    <span>{selected.mcpTools?.length ?? 0} 个工具</span>
+                  </div>
                   {selected.error && <div className="mcp-detail-error">{selected.error}</div>}
                   {selected.status === "not_installed" && (
                     <div className="mcp-setup-command">
@@ -185,11 +183,11 @@ export function CapabilityLibrary({
                     </div>
                   )}
                   <div className="mcp-tool-list">
-                    <h3>可调用工具（{selected.mcpTools?.length ?? 0}）</h3>
+                    <h3>工具</h3>
                     {selected.mcpTools?.length ? selected.mcpTools.map((tool) => (
                       <article key={tool.name}>
                         <code>{tool.name}</code>
-                        <p>{tool.description || "服务未提供工具说明。"}</p>
+                        <p>{mcpToolDescription(tool.name)}</p>
                       </article>
                     )) : <p>连接成功后会自动发现并展示工具。</p>}
                   </div>
@@ -205,10 +203,7 @@ export function CapabilityLibrary({
                 </pre>
               )}
             </div>
-            <footer className="capability-modal-footer">
-              <span className={`capability-state ${enabled.has(selected.name) ? "enabled" : "disabled"}`}>
-                {enabled.has(selected.name) ? "当前已启用" : "当前已停用"}
-              </span>
+            <footer className={`capability-modal-footer ${selected.kind === "mcp" ? "mcp" : ""}`}>
               <button
                 type="button"
                 onClick={() => onToggle(selected.name)}
@@ -230,4 +225,20 @@ function mcpStatusLabel(status: CapabilityItem["status"]) {
   if (status === "not_installed") return "未安装";
   if (status === "error") return "连接错误";
   return "未连接";
+}
+
+function mcpToolDescription(name: string) {
+  const descriptions: Record<string, string> = {
+    get_hist_data: "查询 A 股历史行情，支持 A、B、H 股。",
+    get_realtime_data: "查询 A 股实时行情，支持 A、B、H 股。",
+    get_news_data: "查询与个股相关的新闻。",
+    get_balance_sheet: "查询公司的资产负债表。",
+    get_income_statement: "查询公司的利润表。",
+    get_cash_flow: "查询公司的现金流量表。",
+    get_inner_trade_data: "查询公司的内部交易数据。",
+    get_financial_metrics: "查询公司的财务指标。",
+    get_time_info: "查询交易日与市场时间信息。",
+  };
+
+  return descriptions[name] ?? "查询相关的市场与公司数据。";
 }

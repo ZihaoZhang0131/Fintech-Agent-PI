@@ -34,7 +34,7 @@ test("capability cards use a compact responsive information layout", () => {
     stylesheet,
     /\.capability-grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fit, minmax\(min\(100%, 270px\), 1fr\)\);/s,
   );
-  assert.match(stylesheet, /\.capability-card\s*\{[^}]*min-height:\s*214px;/s);
+  assert.match(stylesheet, /\.capability-card\s*\{[^}]*min-height:\s*196px;/s);
   assert.match(
     stylesheet,
     /\.capability-card-copy h2\s*\{[^}]*font-family:\s*var\(--font-interface\);/s,
@@ -42,11 +42,16 @@ test("capability cards use a compact responsive information layout", () => {
   assert.doesNotMatch(stylesheet, /\.capability-card\.disabled\s*\{[^}]*opacity:/s);
 });
 
-test("MCP capabilities expose connection status, setup guidance, refresh, and discovered tools", () => {
+test("MCP capabilities expose concise status, setup guidance, refresh, and discovered tools", () => {
   assert.match(component, /刷新 MCP 连接状态/);
   assert.match(component, /npm run mcp:setup/);
   assert.match(component, /selected\.mcpTools/);
   assert.match(component, /selected\.status !== "connected"/);
-  assert.match(stylesheet, /\.mcp-connection-state/);
+  assert.match(stylesheet, /\.mcp-card-summary/);
   assert.match(stylesheet, /\.mcp-tool-list/);
+  assert.match(component, /mcpToolDescription\(tool\.name\)/);
+  assert.match(component, /查询 A 股历史行情/);
+  assert.match(stylesheet, /\.mcp-tool-list article/);
+  assert.doesNotMatch(component, /<dt>连接状态|<dt>传输方式|<dt>认证/);
+  assert.doesNotMatch(component, /tool\.description/);
 });
