@@ -29,11 +29,12 @@
   --sidebar-accent-foreground: #343434;
   --sidebar-border: #ebebeb;
   --radius: 1rem;
-  --font-sans: var(--font-outfit), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
-    sans-serif;
-  --font-interface: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  --font-mono: var(--font-geist-mono), "SFMono-Regular", Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font-interface: var(--font-sans);
+  --font-mono: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono",
+    "PingFang SC", monospace;
+  --font-size-ui: 14px;
   --shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.05);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
   --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
@@ -67,9 +68,17 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  font-size: var(--font-size-ui);
+}
+
+/* Keep every visible label, heading, control, preview, and code block at one size. */
+body :where(*) {
+  font-size: inherit !important;
 }
 
 button,
+input,
+select,
 textarea {
   font: inherit;
 }
@@ -246,7 +255,7 @@ body.is-resizing-column * {
   border-radius: 10px;
   background: var(--forest);
   color: white;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   font-size: 18px;
   box-shadow: 0 5px 14px rgba(63, 63, 63, 0.2);
 }
@@ -600,7 +609,7 @@ body.is-resizing-column * {
   max-width: 42vw;
   margin: 0;
   overflow: hidden;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   font-size: 15px;
   font-weight: 650;
   text-overflow: ellipsis;
@@ -658,7 +667,7 @@ body.is-resizing-column * {
 
 .workspace-onboarding h2 {
   margin: 15px 0 12px;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   font-size: clamp(32px, 4vw, 48px);
   font-weight: 500;
 }
@@ -693,7 +702,7 @@ body.is-resizing-column * {
 
 .welcome-state h2 {
   margin: 0 0 28px;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   font-size: clamp(36px, 5vw, 58px);
   font-weight: 500;
   letter-spacing: -0.035em;
@@ -825,7 +834,7 @@ body.is-resizing-column * {
 .message-content h2,
 .message-content h3 {
   margin: 1.2em 0 0.5em;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   line-height: 1.4;
 }
 
@@ -854,7 +863,7 @@ body.is-resizing-column * {
   padding: 2px 5px;
   border-radius: 4px;
   background: #efefef;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.88em;
 }
 
@@ -1803,7 +1812,7 @@ button.workspace-file-row:hover,
   margin: 0;
   padding: 15px;
   overflow: visible;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   line-height: 1.7;
   tab-size: 2;
@@ -1818,7 +1827,7 @@ button.workspace-file-row:hover,
 .markdown-preview {
   padding: 15px 17px 30px;
   color: #3d3d3d;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   font-size: 10px;
   line-height: 1.8;
 }
@@ -2321,7 +2330,7 @@ button.workspace-file-row:hover,
 
 .capability-modal-header h2 {
   margin: 4px 0 5px;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   font-size: 20px;
 }
 
@@ -2351,7 +2360,7 @@ button.workspace-file-row:hover,
 .capability-modal-content.skill {
   padding: 22px 24px 36px;
   color: #3d3d3d;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   font-size: 11px;
   line-height: 1.85;
 }
@@ -2369,7 +2378,7 @@ button.workspace-file-row:hover,
   margin: 0;
   padding: 20px;
   overflow: visible;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   line-height: 1.65;
   tab-size: 2;
@@ -2531,7 +2540,7 @@ button.workspace-file-row:hover,
 
 .project-dialog header h2 {
   margin: 4px 0 0;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   font-size: 19px;
 }
 
@@ -2560,7 +2569,7 @@ button.workspace-file-row:hover,
   border-radius: 9px;
   background: #f6f6f6;
   color: #4c4c4c;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   line-height: 1.65;
 }
@@ -2629,7 +2638,7 @@ button.workspace-file-row:hover,
 
 .artifact-panel-header h2 {
   margin: 0;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   font-size: 17px;
   font-weight: 600;
 }
@@ -2846,7 +2855,7 @@ button.workspace-file-row:hover,
 .artifact-content.report h2,
 .artifact-content.report h3 {
   margin: 1.25em 0 0.5em;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   line-height: 1.45;
 }
 
@@ -2884,7 +2893,7 @@ button.workspace-file-row:hover,
   margin: 0;
   padding: 20px;
   overflow: visible;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   line-height: 1.7;
   tab-size: 2;
@@ -2945,7 +2954,7 @@ button.workspace-file-row:hover,
 
 .artifact-empty-state h3 {
   margin: 16px 0 7px;
-  font-family: Georgia, "Songti SC", serif;
+  font-family: var(--font-sans);
   font-size: 16px;
 }
 

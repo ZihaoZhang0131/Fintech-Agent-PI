@@ -28,15 +28,22 @@ test("the interface exposes the Claude+ light theme contract", () => {
   }
 
   assert.match(stylesheet, /--shadow-xs:\s*0 1px 3px rgba\(0, 0, 0, 0\.05\);/);
-  assert.match(stylesheet, /--font-sans:\s*var\(--font-outfit\)/);
-  assert.match(stylesheet, /--font-mono:\s*var\(--font-geist-mono\)/);
+  assert.match(stylesheet, /--font-sans:\s*-apple-system, BlinkMacSystemFont/);
+  assert.match(stylesheet, /--font-mono:\s*"SFMono-Regular"/);
 });
 
-test("Outfit and Geist Mono are loaded through the existing framework font support", () => {
-  assert.match(layout, /import \{ Geist_Mono, Outfit \} from "next\/font\/google";/);
-  assert.match(layout, /variable: "--font-outfit"/);
-  assert.match(layout, /variable: "--font-geist-mono"/);
-  assert.match(layout, /className=\{`\$\{outfit\.variable\} \$\{geistMono\.variable\}`\}/);
+test("the app uses the native SF Pro and PingFang system font stack", () => {
+  assert.match(stylesheet, /"SF Pro Text", "SF Pro Display"/);
+  assert.match(stylesheet, /"PingFang SC", "Hiragino Sans GB"/);
+  assert.match(stylesheet, /--font-interface:\s*var\(--font-sans\);/);
+  assert.match(stylesheet, /--font-size-ui:\s*14px;/);
+  assert.match(
+    stylesheet,
+    /body :where\(\*\)\s*\{[^}]*font-size:\s*inherit !important;/s,
+  );
+  assert.doesNotMatch(stylesheet, /Georgia|Songti SC|font-outfit|font-geist-mono/);
+  assert.doesNotMatch(layout, /next\/font/);
+  assert.match(layout, /<html lang="zh-CN">/);
 });
 
 test("primary controls, cards, and focus states consume semantic theme tokens", () => {
