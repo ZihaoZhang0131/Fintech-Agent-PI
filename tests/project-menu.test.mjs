@@ -6,12 +6,15 @@ const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "
 const stylesheet = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
 test("project cards keep secondary actions in a hover menu", () => {
+  assert.match(pageSource, /project-new-conversation-trigger/);
+  assert.match(pageSource, /在\$\{project\.name\}中新建会话/);
   assert.match(pageSource, /project-menu-trigger/);
   assert.match(pageSource, /新建项目下会话/);
   assert.match(pageSource, /查看项目地址/);
   assert.match(pageSource, /移除项目/);
   assert.match(pageSource, /method: "DELETE"/);
   assert.match(stylesheet, /\.project-group:hover > \.project-menu-trigger/);
+  assert.match(stylesheet, /\.project-group:hover > \.project-new-conversation-trigger/);
   assert.match(stylesheet, /\.project-context-menu/);
 });
 
@@ -79,7 +82,7 @@ test("sidebar project entries use compact vertical spacing", () => {
 test("project and conversation boxes keep compact internal whitespace", () => {
   assert.match(
     stylesheet,
-    /\.project-heading\s*\{[^}]*gap:\s*7px;[^}]*min-height:\s*34px;[^}]*padding:\s*4px 32px 4px 8px;[^}]*border-radius:\s*8px;/s,
+    /\.project-heading\s*\{[^}]*gap:\s*7px;[^}]*min-height:\s*34px;[^}]*padding:\s*4px 58px 4px 8px;[^}]*border-radius:\s*8px;/s,
   );
   assert.match(
     stylesheet,

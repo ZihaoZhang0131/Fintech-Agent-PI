@@ -1487,6 +1487,18 @@ export default function Home() {
                   </span>
                 </button>
                 <button
+                  className="project-new-conversation-trigger"
+                  type="button"
+                  aria-label={`在${project.name}中新建会话`}
+                  title="新建会话"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    newConversation(project.id);
+                  }}
+                >
+                  <Plus size={16} />
+                </button>
+                <button
                   className="project-menu-trigger"
                   type="button"
                   aria-label={`打开${project.name}项目菜单`}

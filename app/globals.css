@@ -339,7 +339,7 @@ body.is-resizing-column * {
   gap: 7px;
   width: 100%;
   min-height: 34px;
-  padding: 4px 32px 4px 8px;
+  padding: 4px 58px 4px 8px;
   overflow: hidden;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -395,14 +395,35 @@ body.is-resizing-column * {
   transition: opacity 120ms ease, background 120ms ease;
 }
 
+.project-new-conversation-trigger {
+  position: absolute;
+  z-index: 32;
+  top: 5px;
+  right: 31px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #7b7b7b;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+
 .project-group:hover > .project-menu-trigger,
 .project-group.menu-open > .project-menu-trigger,
-.project-menu-trigger:focus-visible {
+.project-menu-trigger:focus-visible,
+.project-group:hover > .project-new-conversation-trigger,
+.project-new-conversation-trigger:focus-visible {
   opacity: 1;
 }
 
 .project-menu-trigger:hover,
-.project-group.menu-open > .project-menu-trigger {
+.project-group.menu-open > .project-menu-trigger,
+.project-new-conversation-trigger:hover {
   background: #eaeaea;
   color: var(--forest);
 }
