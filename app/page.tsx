@@ -4,6 +4,7 @@ import {
   BookOpenCheck,
   Braces,
   ChevronDown,
+  ChevronRight,
   CircleCheck,
   CircleStop,
   CircleX,
@@ -43,6 +44,7 @@ import {
 import {
   CSSProperties,
   FormEvent,
+  Fragment,
   KeyboardEvent,
   PointerEvent as ReactPointerEvent,
   useCallback,
@@ -58,13 +60,25 @@ import { CodePreview } from "@/components/code-preview";
 import type { CapabilityCatalog, CapabilityKind } from "@/lib/capability-types";
 import { shouldSubmitComposerKey } from "@/lib/composer-keyboard";
 import {
+  getLoadedFileTreeEntries,
+  getProjectFileTree,
+  getVisibleFileTreeEntries,
+  removeProjectFileTree,
+  resetProjectFileTree,
+  setDirectoryEntries,
+  setDirectoryError,
+  setDirectoryLoading,
+  toggleDirectoryExpansion,
+  type FileTreeEntry,
+  type ProjectFileTreeState,
+} from "@/lib/file-tree";
+import {
   MAX_OPEN_FILE_TABS,
   activateFileTab,
   closeFileTab,
   getProjectFileTabs,
   openFileTab,
   parseProjectFileTabs,
-  reconcileFileTabs,
   removeProjectFileTabs,
   type ProjectFileTabsState,
 } from "@/lib/file-tabs";
@@ -107,14 +121,7 @@ type LocalProject = {
   updatedAt: number;
 };
 
-type ProjectFile = {
-  path: string;
-  name: string;
-  kind: "file" | "directory";
-  size: number;
-  modifiedAt: number;
-  extension: string;
-};
+type ProjectFile = FileTreeEntry;
 
 type FilePreview = {
   path: string;
@@ -514,8 +521,7 @@ export default function Home() {
   const [tokenUsage, setTokenUsage] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [filePanelOpen, setFilePanelOpen] = useState(false);
-  const [files, setFiles] = useState<ProjectFile[]>([]);
-  const [filesLoading, setFilesLoading] = useState(false);
+  const [fileTreesByProject, setFileTreesByProject] = useState<ProjectFileTreeState>({});
   const [fileTabsByProject, setFileTabsByProject] = useState<ProjectFileTabsState>({});
   const [previewCache, setPreviewCache] = useState<Record<string, PreviewCacheEntry>>({});
   const [copiedPreviewPath, setCopiedPreviewPath] = useState("");
@@ -538,8 +544,9 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerIsComposingRef = useRef(false);
-  const filesRequestRef = useRef(0);
+  const directoryRequestRef = useRef<Record<string, number>>({});
   const previewRequestRef = useRef<Record<string, number>>({});
+  const fileTreesByProjectRef = useRef<ProjectFileTreeState>({});
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId),
@@ -554,6 +561,11 @@ export default function Home() {
   );
   const isBusy = status === "connecting" || status === "streaming";
   const activeFileTabs = getProjectFileTabs(fileTabsByProject, activeProjectId);
+  const activeFileTree = getProjectFileTree(fileTreesByProject, activeProjectId);
+  const files = useMemo(() => getVisibleFileTreeEntries(activeFileTree), [activeFileTree]);
+  const loadedFiles = useMemo(() => getLoadedFileTreeEntries(activeFileTree), [activeFileTree]);
+  const rootFilesLoaded = Object.hasOwn(activeFileTree.childrenByDirectory, "");
+  const filesLoading = activeFileTree.loadingPaths.length > 0;
   const activeFilePath = activeFileTabs.activePath;
   const activePreviewEntry =
     activeProjectId && activeFilePath
@@ -566,38 +578,43 @@ export default function Home() {
       : "";
   const downloadAssetUrl = previewAssetUrl ? `${previewAssetUrl}&download=1` : "";
 
-  const loadProjectFiles = useCallback(async (projectId: string) => {
+  const loadProjectDirectory = useCallback(async (projectId: string, directoryPath = "") => {
     if (!projectId) return;
-    const requestId = ++filesRequestRef.current;
-    setFilesLoading(true);
+    const key = `${projectId}\u0000${directoryPath}`;
+    const requestId = (directoryRequestRef.current[key] ?? 0) + 1;
+    directoryRequestRef.current[key] = requestId;
+    setFileTreesByProject((current) =>
+      setDirectoryLoading(current, projectId, directoryPath),
+    );
     try {
-      const payload = await responseJson<{ entries: ProjectFile[] }>(
-        await fetch(`/api/local/workspaces/${projectId}/files`, { cache: "no-store" }),
+      const query = directoryPath ? `?path=${encodeURIComponent(directoryPath)}` : "";
+      const payload = await responseJson<{
+        directory: string;
+        entries: ProjectFile[];
+        truncated: boolean;
+      }>(
+        await fetch(`/api/local/workspaces/${projectId}/files${query}`, { cache: "no-store" }),
       );
-      if (requestId !== filesRequestRef.current) return;
-      const availablePaths = payload.entries
-        .filter((entry) => entry.kind === "file")
-        .map((entry) => entry.path);
-      const availablePathSet = new Set(availablePaths);
-      const projectPrefix = `${projectId}\u0000`;
-      setFiles(payload.entries);
-      setFileTabsByProject((current) =>
-        reconcileFileTabs(current, projectId, availablePaths),
-      );
-      setPreviewCache((current) =>
-        Object.fromEntries(
-          Object.entries(current).filter(
-            ([key]) =>
-              !key.startsWith(projectPrefix) || availablePathSet.has(key.slice(projectPrefix.length)),
-          ),
+      if (directoryRequestRef.current[key] !== requestId) return;
+      setFileTreesByProject((current) =>
+        setDirectoryEntries(
+          current,
+          projectId,
+          directoryPath,
+          payload.entries,
+          payload.truncated,
         ),
       );
     } catch (error) {
-      if (requestId !== filesRequestRef.current) return;
-      setProjectError(error instanceof Error ? error.message : "无法读取项目文件。");
-      setFiles([]);
-    } finally {
-      if (requestId === filesRequestRef.current) setFilesLoading(false);
+      if (directoryRequestRef.current[key] !== requestId) return;
+      setFileTreesByProject((current) =>
+        setDirectoryError(
+          current,
+          projectId,
+          directoryPath,
+          error instanceof Error ? error.message : "无法读取目录。",
+        ),
+      );
     }
   }, []);
 
@@ -634,6 +651,13 @@ export default function Home() {
     (projectId: string) => {
       if (!projectId) return;
       const projectPrefix = `${projectId}\u0000`;
+      const expandedPaths = getProjectFileTree(
+        fileTreesByProjectRef.current,
+        projectId,
+      ).expandedPaths;
+      for (const key of Object.keys(directoryRequestRef.current)) {
+        if (key.startsWith(projectPrefix)) directoryRequestRef.current[key] += 1;
+      }
       for (const key of Object.keys(previewRequestRef.current)) {
         if (key.startsWith(projectPrefix)) {
           previewRequestRef.current[key] += 1;
@@ -644,9 +668,17 @@ export default function Home() {
           Object.entries(current).filter(([key]) => !key.startsWith(projectPrefix)),
         ),
       );
-      void loadProjectFiles(projectId);
+      setFileTreesByProject((current) => resetProjectFileTree(current, projectId));
+      void (async () => {
+        await loadProjectDirectory(projectId);
+        await Promise.all(
+          expandedPaths.map((directoryPath) =>
+            loadProjectDirectory(projectId, directoryPath),
+          ),
+        );
+      })();
     },
-    [loadProjectFiles],
+    [loadProjectDirectory],
   );
 
   useEffect(() => {
@@ -802,16 +834,23 @@ export default function Home() {
   }, [fileTabsByProject, hydrated]);
 
   useEffect(() => {
+    fileTreesByProjectRef.current = fileTreesByProject;
+  }, [fileTreesByProject]);
+
+  useEffect(() => {
     if (!hydrated) return;
     if (!activeProjectId) {
-      filesRequestRef.current += 1;
-      setFiles([]);
-      setFilesLoading(false);
       return;
     }
-    setFiles([]);
-    void loadProjectFiles(activeProjectId);
-  }, [activeProjectId, hydrated, loadProjectFiles]);
+    const tree = getProjectFileTree(fileTreesByProject, activeProjectId);
+    if (
+      !Object.hasOwn(tree.childrenByDirectory, "") &&
+      !tree.loadingPaths.includes("") &&
+      !tree.errorsByPath[""]
+    ) {
+      void loadProjectDirectory(activeProjectId);
+    }
+  }, [activeProjectId, fileTreesByProject, hydrated, loadProjectDirectory]);
 
   useEffect(() => {
     if (!hydrated || !activeProjectId || !activeFilePath || activePreviewEntry) return;
@@ -929,15 +968,18 @@ export default function Home() {
           setActiveProjectId("");
           setActiveId("");
           localStorage.removeItem(ACTIVE_PROJECT_KEY);
-          setFiles([]);
         }
         setStatus("idle");
       }
 
       setProjects(remainingProjects);
       setConversations(remainingConversations);
-      setFileTabsByProject((current) => removeProjectFileTabs(current, project.id));
       const projectPrefix = `${project.id}\u0000`;
+      for (const key of Object.keys(directoryRequestRef.current)) {
+        if (key.startsWith(projectPrefix)) directoryRequestRef.current[key] += 1;
+      }
+      setFileTreesByProject((current) => removeProjectFileTree(current, project.id));
+      setFileTabsByProject((current) => removeProjectFileTabs(current, project.id));
       for (const key of Object.keys(previewRequestRef.current)) {
         if (key.startsWith(projectPrefix)) {
           previewRequestRef.current[key] += 1;
@@ -1194,6 +1236,29 @@ export default function Home() {
     setFileTabsByProject((current) => openFileTab(current, activeProject.id, file.path));
   }
 
+  function toggleProjectDirectory(file: ProjectFile) {
+    if (!activeProject || file.kind !== "directory") return;
+    const isExpanded = activeFileTree.expandedPaths.includes(file.path);
+    const isLoaded = Object.hasOwn(activeFileTree.childrenByDirectory, file.path);
+    setFileTreesByProject((current) =>
+      toggleDirectoryExpansion(current, activeProject.id, file.path),
+    );
+    if (!isExpanded && !isLoaded && !activeFileTree.loadingPaths.includes(file.path)) {
+      void loadProjectDirectory(activeProject.id, file.path);
+    }
+  }
+
+  function handleDirectoryKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    file: ProjectFile,
+  ) {
+    const isExpanded = activeFileTree.expandedPaths.includes(file.path);
+    if ((event.key === "ArrowRight" && !isExpanded) || (event.key === "ArrowLeft" && isExpanded)) {
+      event.preventDefault();
+      toggleProjectDirectory(file);
+    }
+  }
+
   function activateProjectFile(path: string | null) {
     if (!activeProject) return;
     setFileTabsByProject((current) => activateFileTab(current, activeProject.id, path));
@@ -1365,7 +1430,7 @@ export default function Home() {
               ),
               updatedAt: timestampNow(),
             }));
-            void loadProjectFiles(activeProject.id);
+            refreshProjectFiles(activeProject.id);
           }
           if (event.type === "error") throw new Error(event.message);
         }
@@ -1887,7 +1952,9 @@ export default function Home() {
             <div className="workspace-file-tabs-scroll">
               {activeProject &&
                 activeFileTabs.openPaths.map((path) => {
-                  const file = files.find((entry) => entry.kind === "file" && entry.path === path);
+                  const file = loadedFiles.find(
+                    (entry) => entry.kind === "file" && entry.path === path,
+                  );
                   const Icon = file ? fileIcon(file) : FileText;
                   const active = activeFilePath === path;
                   return (
@@ -1968,26 +2035,90 @@ export default function Home() {
             role="tabpanel"
             aria-labelledby={fileTabId(activeProject.id, null)}
           >
-              {filesLoading && files.length === 0 ? (
+              {!rootFilesLoaded && activeFileTree.loadingPaths.includes("") ? (
                 <div className="workspace-files-empty">
                   <RefreshCw size={20} className="spinning" />
                   <span>正在读取项目文件…</span>
+                </div>
+              ) : activeFileTree.errorsByPath[""] && !rootFilesLoaded ? (
+                <div className="workspace-files-empty workspace-files-error">
+                  <CircleX size={20} />
+                  <strong>无法读取项目文件</strong>
+                  <span>{activeFileTree.errorsByPath[""]}</span>
+                  <button type="button" onClick={() => void loadProjectDirectory(activeProject.id)}>
+                    重新加载
+                  </button>
                 </div>
               ) : files.length > 0 ? (
                 <nav className="workspace-file-list" aria-label="项目文件列表">
                   {files.map((file) => {
                     const Icon = fileIcon(file);
                     const depth = Math.max(0, file.path.split("/").length - 1);
-                    return file.kind === "directory" ? (
-                      <div
-                        className="workspace-file-row directory"
-                        style={{ paddingLeft: `${10 + depth * 14}px` }}
-                        key={file.path}
-                      >
-                        <Icon size={14} />
-                        <span>{file.name}</span>
-                      </div>
-                    ) : (
+                    if (file.kind === "directory") {
+                      const expanded = activeFileTree.expandedPaths.includes(file.path);
+                      const loading = activeFileTree.loadingPaths.includes(file.path);
+                      const error = activeFileTree.errorsByPath[file.path];
+                      const loaded = Object.hasOwn(
+                        activeFileTree.childrenByDirectory,
+                        file.path,
+                      );
+                      const childCount = activeFileTree.childrenByDirectory[file.path]?.length ?? 0;
+                      const DirectoryIcon = expanded ? FolderOpen : Folder;
+                      return (
+                        <Fragment key={file.path}>
+                          <button
+                            className="workspace-file-row directory"
+                            style={{ paddingLeft: `${10 + depth * 14}px` }}
+                            type="button"
+                            aria-expanded={expanded}
+                            aria-label={`${expanded ? "收起" : "展开"}目录 ${file.path}`}
+                            onClick={() => toggleProjectDirectory(file)}
+                            onKeyDown={(event) => handleDirectoryKeyDown(event, file)}
+                            title={file.path}
+                          >
+                            {expanded ? (
+                              <ChevronDown className="workspace-directory-chevron" size={12} />
+                            ) : (
+                              <ChevronRight className="workspace-directory-chevron" size={12} />
+                            )}
+                            <DirectoryIcon size={14} />
+                            <span>{file.name}</span>
+                          </button>
+                          {expanded && loading && (
+                            <div
+                              className="workspace-directory-status"
+                              style={{ paddingLeft: `${31 + depth * 14}px` }}
+                            >
+                              <RefreshCw size={11} className="spinning" />
+                              <span>正在读取…</span>
+                            </div>
+                          )}
+                          {expanded && error && !loading && (
+                            <div
+                              className="workspace-directory-status error"
+                              style={{ paddingLeft: `${31 + depth * 14}px` }}
+                            >
+                              <span>{error}</span>
+                              <button
+                                type="button"
+                                onClick={() => void loadProjectDirectory(activeProject.id, file.path)}
+                              >
+                                重试
+                              </button>
+                            </div>
+                          )}
+                          {expanded && loaded && !loading && !error && childCount === 0 && (
+                            <div
+                              className="workspace-directory-status"
+                              style={{ paddingLeft: `${31 + depth * 14}px` }}
+                            >
+                              <span>空文件夹</span>
+                            </div>
+                          )}
+                        </Fragment>
+                      );
+                    }
+                    return (
                       <button
                         className="workspace-file-row"
                         style={{ paddingLeft: `${10 + depth * 14}px` }}
@@ -2003,11 +2134,16 @@ export default function Home() {
                     );
                   })}
                 </nav>
-              ) : (
+              ) : rootFilesLoaded ? (
                 <div className="workspace-files-empty">
                   <FolderOpen size={22} />
                   <strong>项目文件夹为空</strong>
                   <span>Agent 保存产出后会自动刷新</span>
+                </div>
+              ) : (
+                <div className="workspace-files-empty">
+                  <RefreshCw size={20} className="spinning" />
+                  <span>正在读取项目文件…</span>
                 </div>
               )}
           </section>

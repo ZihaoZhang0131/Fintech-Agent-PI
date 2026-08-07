@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   listWorkspaceFiles,
+  listWorkspaceDirectory,
   createCommandManager,
   createLocalRuntimeHandler,
   executeWorkspaceCommand,
@@ -96,6 +97,78 @@ test("workspace file listing only shows first-level entries by default", async (
     listing.entries.map((entry) => entry.path),
     ["reports", "readme.md"],
   );
+});
+
+test("workspace directory listing loads one safe branch at a time", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "pi-directory-listing-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const workspaceDirectory = path.join(temporaryRoot, "workspace");
+  const outsideDirectory = path.join(temporaryRoot, "outside");
+  await mkdir(path.join(workspaceDirectory, "reports", "archive"), { recursive: true });
+  await mkdir(path.join(workspaceDirectory, "node_modules"));
+  await mkdir(outsideDirectory);
+  await writeFile(path.join(workspaceDirectory, "reports", "summary.md"), "# Summary\n", "utf8");
+  await writeFile(path.join(workspaceDirectory, "reports", "alpha.md"), "# Alpha\n", "utf8");
+  await symlink(outsideDirectory, path.join(workspaceDirectory, "escape"));
+
+  const rootListing = await listWorkspaceDirectory(workspaceDirectory);
+  assert.deepEqual(rootListing.entries.map((entry) => entry.path), ["reports"]);
+
+  const reportsListing = await listWorkspaceDirectory(workspaceDirectory, "reports");
+  assert.equal(reportsListing.directory, "reports");
+  assert.deepEqual(
+    reportsListing.entries.map((entry) => entry.path),
+    ["reports/archive", "reports/alpha.md", "reports/summary.md"],
+  );
+  assert.deepEqual(await listWorkspaceDirectory(workspaceDirectory, "reports/archive"), {
+    directory: "reports/archive",
+    entries: [],
+    truncated: false,
+  });
+
+  await assert.rejects(
+    listWorkspaceDirectory(workspaceDirectory, "../outside"),
+    /超出了已绑定的项目目录/,
+  );
+  await assert.rejects(
+    listWorkspaceDirectory(workspaceDirectory, "escape"),
+    /目录链接指向项目目录之外/,
+  );
+  await assert.rejects(
+    listWorkspaceDirectory(workspaceDirectory, "reports/summary.md"),
+    /所选路径不是目录/,
+  );
+});
+
+test("workspace files endpoint accepts a directory path without changing recursive depth calls", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "pi-directory-endpoint-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const dataDirectory = path.join(temporaryRoot, "data");
+  const workspaceDirectory = path.join(temporaryRoot, "workspace");
+  await mkdir(path.join(workspaceDirectory, "reports", "archive"), { recursive: true });
+  await writeFile(path.join(workspaceDirectory, "reports", "summary.md"), "# Summary\n", "utf8");
+  const workspace = await registerWorkspace(dataDirectory, workspaceDirectory);
+  const server = createServer(
+    createLocalRuntimeHandler({ dataDirectory, token: "directory-token", mcpManager: { listServers() {} } }),
+  );
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const request = (suffix) =>
+    fetch(`${baseUrl}/workspaces/${workspace.id}/files${suffix}`, {
+      headers: { Authorization: "Bearer directory-token" },
+    }).then((response) => response.json());
+
+  const branch = await request("?path=reports");
+  assert.equal(branch.directory, "reports");
+  assert.deepEqual(
+    branch.entries.map((entry) => entry.path),
+    ["reports/archive", "reports/summary.md"],
+  );
+
+  const recursive = await request("?depth=4");
+  assert.ok(recursive.entries.some((entry) => entry.path === "reports/summary.md"));
 });
 
 test("workspace previews keep text in JSON and stream images, PDFs, and downloads as assets", async (t) => {

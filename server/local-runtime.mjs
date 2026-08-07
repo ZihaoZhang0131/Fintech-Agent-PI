@@ -90,6 +90,12 @@ export function resolveWorkspacePath(root, relativePath = "") {
   return target;
 }
 
+function normalizeWorkspaceRelativePath(relativePath = "") {
+  const slashPath = relativePath.replaceAll("\\", "/").replace(/^\/+/, "");
+  const normalized = path.posix.normalize(slashPath);
+  return normalized === "." ? "" : normalized.replace(/\/$/, "");
+}
+
 async function ensureSafeWriteTarget(root, target) {
   let ancestor = path.dirname(target);
   while (ancestor !== path.dirname(ancestor)) {
@@ -204,6 +210,56 @@ export async function listWorkspaceFiles(root, requestedDepth = 1) {
 
   await visit(root, "", 1);
   return { entries, truncated: entries.length >= MAX_FILE_ENTRIES };
+}
+
+export async function listWorkspaceDirectory(root, relativeDirectory = "") {
+  if (typeof relativeDirectory !== "string" || relativeDirectory.includes("\0")) {
+    throw Object.assign(new Error("目录路径无效。"), { status: 400 });
+  }
+
+  const normalizedDirectory = normalizeWorkspaceRelativePath(relativeDirectory);
+  const canonicalRoot = await realpath(root);
+  const target = resolveWorkspacePath(canonicalRoot, normalizedDirectory);
+  const canonicalTarget = await realpath(target);
+  if (!isInside(canonicalRoot, canonicalTarget)) {
+    throw Object.assign(new Error("目录链接指向项目目录之外。"), { status: 400 });
+  }
+  const targetInfo = await stat(canonicalTarget);
+  if (!targetInfo.isDirectory()) {
+    throw Object.assign(new Error("所选路径不是目录。"), { status: 400 });
+  }
+
+  const children = await readdir(canonicalTarget, { withFileTypes: true });
+  children.sort((left, right) => {
+    if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1;
+    return left.name.localeCompare(right.name, "zh-CN");
+  });
+  const visibleChildren = children.filter(
+    (child) =>
+      !child.isSymbolicLink() &&
+      !(child.isDirectory() && EXCLUDED_DIRECTORIES.has(child.name)),
+  );
+
+  const entries = [];
+  for (const child of visibleChildren) {
+    if (entries.length >= MAX_FILE_ENTRIES) break;
+    const absolutePath = path.join(canonicalTarget, child.name);
+    const info = await stat(absolutePath);
+    entries.push({
+      path: path.posix.join(normalizedDirectory, child.name),
+      name: child.name,
+      kind: child.isDirectory() ? "directory" : "file",
+      size: child.isFile() ? info.size : 0,
+      modifiedAt: info.mtimeMs,
+      extension: child.isFile() ? path.extname(child.name).toLowerCase() : "",
+    });
+  }
+
+  return {
+    directory: normalizedDirectory,
+    entries,
+    truncated: visibleChildren.length > entries.length,
+  };
 }
 
 function previewKind(extension, buffer) {
@@ -706,7 +762,11 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
         }
         if (request.method === "GET" && segments[2] === "files" && segments.length === 3) {
           return sendJson(response, 200, {
-            ...(await listWorkspaceFiles(workspace.path, url.searchParams.get("depth"))),
+            ...(url.searchParams.has("depth")
+              ? await listWorkspaceFiles(workspace.path, url.searchParams.get("depth"))
+              : url.searchParams.has("path")
+              ? await listWorkspaceDirectory(workspace.path, url.searchParams.get("path") ?? "")
+              : await listWorkspaceDirectory(workspace.path)),
             workspaceId: workspace.id,
           });
         }

@@ -1674,6 +1674,45 @@ button.workspace-file-row:hover,
   font-weight: 650;
 }
 
+.workspace-directory-chevron {
+  flex: none;
+  color: #9a9a9a;
+}
+
+.workspace-directory-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding-top: 4px;
+  padding-right: 9px;
+  padding-bottom: 4px;
+  color: #929292;
+  font-size: 8px;
+}
+
+.workspace-directory-status.error {
+  color: var(--destructive);
+}
+
+.workspace-directory-status button,
+.workspace-files-error button {
+  border: 0;
+  border-radius: 5px;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  cursor: pointer;
+  font: inherit;
+}
+
+.workspace-directory-status button {
+  padding: 2px 6px;
+}
+
+.workspace-files-error button {
+  padding: 5px 9px;
+}
+
 .workspace-file-row > svg {
   flex: none;
 }
