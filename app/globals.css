@@ -764,48 +764,23 @@ body.is-resizing-column * {
 }
 
 .message {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
-  gap: 13px;
-  padding: 19px 0;
+  padding: 16px 0;
 }
 
-.message + .message {
-  border-top: 1px solid #efefef;
-}
-
-.message-avatar {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #f6f6f6;
-  color: #737373;
-}
-
-.message.assistant .message-avatar {
-  border-color: #d6d6d6;
-  background: var(--mint);
-  color: var(--forest);
-}
-
-.message-meta {
+.message.user {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-height: 25px;
+  justify-content: flex-end;
 }
 
-.message-meta strong {
-  font-size: 11px;
-  font-weight: 700;
+.message.user .message-body {
+  width: fit-content;
+  max-width: min(80%, 620px);
 }
 
-.message-meta time {
-  color: #a5a5a5;
-  font-size: 9px;
+.message.user .message-content {
+  padding: 7px 14px;
+  border-radius: 18px;
+  background: var(--muted);
 }
 
 .message-content {
@@ -3210,7 +3185,6 @@ button.workspace-file-row:hover,
 }
 
 .workspace-onboarding p,
-.message-meta time,
 .artifact-meta,
 .capability-card-copy p,
 .project-dialog-body p {
@@ -3264,19 +3238,6 @@ button.workspace-file-row:hover,
 .capability-card.disabled,
 .capability-dependencies {
   color: var(--muted-foreground);
-}
-
-.message-avatar {
-  border-color: var(--border);
-  background: var(--popover);
-  color: var(--secondary-foreground);
-  box-shadow: var(--shadow-xs);
-}
-
-.message.assistant .message-avatar {
-  border-color: var(--primary);
-  background: var(--accent);
-  color: var(--primary);
 }
 
 .message-content code {

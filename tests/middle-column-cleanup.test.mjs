@@ -27,3 +27,12 @@ test("welcome heading flows directly into suggestions with compact spacing", () 
   assert.match(styleSource, /\.suggestion-grid\s*\{[^}]*margin-top:\s*0;/s);
   assert.doesNotMatch(styleSource, /\.header-subtitle|\.status-dot|\.welcome-eyebrow/);
 });
+
+test("messages omit identity metadata and present user input as a right-aligned bubble", () => {
+  assert.doesNotMatch(pageSource, /className="message-avatar"/);
+  assert.doesNotMatch(pageSource, /className="message-meta"/);
+  assert.doesNotMatch(pageSource, /function formatTime\(/);
+  assert.match(styleSource, /\.message\.user\s*\{[^}]*display:\s*flex;[^}]*justify-content:\s*flex-end;/s);
+  assert.match(styleSource, /\.message\.user \.message-body\s*\{[^}]*width:\s*fit-content;[^}]*max-width:\s*min\(80%, 620px\);/s);
+  assert.match(styleSource, /\.message\.user \.message-content\s*\{[^}]*padding:\s*7px 14px;[^}]*border-radius:\s*18px;[^}]*background:\s*var\(--muted\);/s);
+});

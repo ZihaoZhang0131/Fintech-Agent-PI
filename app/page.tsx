@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Bot,
   BookOpenCheck,
   Braces,
   ChevronDown,
@@ -37,7 +36,6 @@ import {
   Terminal,
   Trash2,
   TrendingUp,
-  UserRound,
   Wrench,
   X,
 } from "lucide-react";
@@ -223,13 +221,6 @@ function makeConversation(projectId: string): Conversation {
     bashApprovalMode: "auto",
     bashPermissionMode: "sandbox",
   };
-}
-
-function formatTime(timestamp: number) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(timestamp);
 }
 
 function formatRunDuration(durationMs: number) {
@@ -1697,14 +1688,7 @@ export default function Home() {
             <div className="message-thread">
               {activeConversation.messages.map((message) => (
                 <article className={`message ${message.role}`} key={message.id}>
-                  <div className="message-avatar" aria-hidden="true">
-                    {message.role === "user" ? <UserRound size={17} /> : <Bot size={18} />}
-                  </div>
                   <div className="message-body">
-                    <div className="message-meta">
-                      <strong>{message.role === "user" ? "你" : "知衡 Agent"}</strong>
-                      <time>{formatTime(message.createdAt)}</time>
-                    </div>
                     <div className={`message-content ${!message.content ? "is-streaming" : ""}`}>
                       {message.role === "assistant" && Boolean(message.toolRuns?.length) && (
                         <ToolRunStack
