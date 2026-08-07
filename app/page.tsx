@@ -9,6 +9,7 @@ import {
   CircleX,
   Copy,
   Cpu,
+  Download,
   ExternalLink,
   File,
   FileChartColumn,
@@ -53,6 +54,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CapabilityLibrary } from "@/components/capability-library";
+import { CodePreview } from "@/components/code-preview";
 import type { CapabilityCatalog, CapabilityKind } from "@/lib/capability-types";
 import { shouldSubmitComposerKey } from "@/lib/composer-keyboard";
 import {
@@ -123,7 +125,7 @@ type FilePreview = {
   kind: "text" | "image" | "pdf" | "unsupported" | "too-large";
   mimeType: string;
   content?: string;
-  data?: string;
+  previewLimitBytes?: number;
 };
 
 type HealthInfo = {
@@ -186,17 +188,21 @@ const SUGGESTIONS = [
 
 const CODE_EXTENSIONS = new Set([
   ".c",
+  ".cc",
   ".cpp",
   ".css",
   ".go",
+  ".h",
   ".html",
   ".java",
   ".js",
   ".jsx",
   ".mjs",
+  ".mts",
   ".py",
   ".rb",
   ".rs",
+  ".scss",
   ".sh",
   ".sql",
   ".ts",
@@ -331,6 +337,15 @@ function previewCacheKey(projectId: string, path: string) {
 
 function fileNameFromPath(path: string) {
   return path.split("/").pop() || path;
+}
+
+function previewKindLabel(preview: FilePreview) {
+  if (preview.kind === "image") return "图片";
+  if (preview.kind === "pdf") return "PDF";
+  if (preview.kind === "text" && CODE_EXTENSIONS.has(preview.extension)) return "代码";
+  if (preview.kind === "text") return "文本";
+  if (preview.kind === "too-large") return "文件过大";
+  return "二进制文件";
 }
 
 function fileTabId(projectId: string, path: string | null) {
@@ -554,10 +569,11 @@ export default function Home() {
       ? previewCache[previewCacheKey(activeProjectId, activeFilePath)]
       : undefined;
   const filePreview = activePreviewEntry?.status === "ready" ? activePreviewEntry.preview : null;
-  const previewDataUrl =
-    filePreview?.data && filePreview.mimeType
-      ? `data:${filePreview.mimeType};base64,${filePreview.data}`
+  const previewAssetUrl =
+    activeProjectId && activeFilePath
+      ? `/api/local/workspaces/${activeProjectId}/files/asset?path=${encodeURIComponent(activeFilePath)}`
       : "";
+  const downloadAssetUrl = previewAssetUrl ? `${previewAssetUrl}&download=1` : "";
 
   const loadProjectFiles = useCallback(async (projectId: string) => {
     if (!projectId) return;
@@ -2031,16 +2047,23 @@ export default function Home() {
               ) : filePreview ? (
                 <>
                   <header className="workspace-preview-toolbar">
-                    <div>
+                    <div className="workspace-preview-title">
                       <FileText size={14} />
                       <span title={filePreview.path}>{filePreview.path}</span>
+                      <small>{previewKindLabel(filePreview)}</small>
                     </div>
-                    {filePreview.content && (
-                      <button type="button" onClick={() => void copyPreview()}>
-                        <Copy size={13} />
-                        {copiedPreviewPath === activeFilePath ? "已复制" : "复制"}
-                      </button>
-                    )}
+                    <div className="workspace-preview-actions">
+                      {filePreview.content && (
+                        <button type="button" onClick={() => void copyPreview()}>
+                          <Copy size={13} />
+                          {copiedPreviewPath === activeFilePath ? "已复制" : "复制"}
+                        </button>
+                      )}
+                      <a href={downloadAssetUrl} download={filePreview.name}>
+                        <Download size={13} />
+                        下载原件
+                      </a>
+                    </div>
                   </header>
                   <div className={`workspace-preview-content ${filePreview.kind}`}>
                     {filePreview.kind === "text" && filePreview.content !== undefined &&
@@ -2049,19 +2072,21 @@ export default function Home() {
                           <ReactMarkdown>{filePreview.content}</ReactMarkdown>
                         </div>
                       ) : CODE_EXTENSIONS.has(filePreview.extension) ? (
-                        <pre>
-                          <code>{filePreview.content}</code>
-                        </pre>
+                        <CodePreview
+                          content={filePreview.content}
+                          extension={filePreview.extension}
+                          name={filePreview.name}
+                        />
                       ) : (
                         <pre className="plain-text-preview">{filePreview.content}</pre>
                       ))}
-                    {filePreview.kind === "image" && previewDataUrl && (
+                    {filePreview.kind === "image" && previewAssetUrl && (
                       // The data comes from the user-selected local workspace.
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={previewDataUrl} alt={filePreview.name} />
+                      <img src={previewAssetUrl} alt={filePreview.name} />
                     )}
-                    {filePreview.kind === "pdf" && previewDataUrl && (
-                      <iframe src={previewDataUrl} title={filePreview.name} />
+                    {filePreview.kind === "pdf" && previewAssetUrl && (
+                      <iframe src={previewAssetUrl} title={filePreview.name} />
                     )}
                     {(filePreview.kind === "unsupported" || filePreview.kind === "too-large") && (
                       <div className="unsupported-preview">
@@ -2069,8 +2094,8 @@ export default function Home() {
                         <strong>暂不支持在线预览</strong>
                         <span>
                           {filePreview.kind === "too-large"
-                            ? `文件超过 5MB（${formatBytes(filePreview.size)}）`
-                            : "可以继续让 Agent 通过其他工具处理此文件"}
+                            ? `文件超过预览限制（${formatBytes(filePreview.size)}，上限 ${formatBytes(filePreview.previewLimitBytes ?? 0)}）`
+                            : "该文件可下载后使用对应应用打开"}
                         </span>
                       </div>
                     )}

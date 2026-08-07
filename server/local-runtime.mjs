@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -10,7 +12,8 @@ import { createMcpManager } from "./mcp-manager.mjs";
 const execFileAsync = promisify(execFile);
 const DEFAULT_PORT = 4318;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
-const MAX_PREVIEW_BYTES = 5 * 1024 * 1024;
+const MAX_TEXT_PREVIEW_BYTES = 1 * 1024 * 1024;
+const MAX_ASSET_PREVIEW_BYTES = 20 * 1024 * 1024;
 const MAX_FILE_ENTRIES = 800;
 const MAX_COMMAND_BYTES = 20_000;
 const MAX_COMMAND_OUTPUT_BYTES = 200 * 1024;
@@ -206,42 +209,87 @@ export async function listWorkspaceFiles(root, requestedDepth = 1) {
 function previewKind(extension, buffer) {
   if (IMAGE_TYPES.has(extension)) return { kind: "image", mimeType: IMAGE_TYPES.get(extension) };
   if (extension === ".pdf") return { kind: "pdf", mimeType: "application/pdf" };
-  if (TEXT_EXTENSIONS.has(extension) || !buffer.includes(0)) {
+  if (TEXT_EXTENSIONS.has(extension)) {
+    if (buffer.includes(0)) return { kind: "unsupported", mimeType: "application/octet-stream" };
+    return { kind: "text", mimeType: "text/plain; charset=utf-8" };
+  }
+  if (!buffer.includes(0)) {
     return { kind: "text", mimeType: "text/plain; charset=utf-8" };
   }
   return { kind: "unsupported", mimeType: "application/octet-stream" };
 }
 
-export async function readWorkspaceFile(root, relativePath) {
+async function inspectWorkspaceFile(root, relativePath) {
   const target = resolveWorkspacePath(root, relativePath);
   const canonicalTarget = await realpath(target);
   if (!isInside(root, canonicalTarget)) throw new Error("文件链接指向项目目录之外。");
   const info = await stat(canonicalTarget);
   if (!info.isFile()) throw new Error("所选路径不是文件。");
-  const extension = path.extname(canonicalTarget).toLowerCase();
-  if (info.size > MAX_PREVIEW_BYTES) {
-    return {
-      path: relativePath,
-      name: path.basename(canonicalTarget),
-      size: info.size,
-      modifiedAt: info.mtimeMs,
-      extension,
-      kind: "too-large",
-      mimeType: "application/octet-stream",
-    };
-  }
-  const buffer = await readFile(canonicalTarget);
-  const preview = previewKind(extension, buffer);
   return {
     path: relativePath,
     name: path.basename(canonicalTarget),
     size: info.size,
     modifiedAt: info.mtimeMs,
-    extension,
+    extension: path.extname(canonicalTarget).toLowerCase(),
+    canonicalTarget,
+  };
+}
+
+function contentDisposition(name, disposition) {
+  return `${disposition}; filename="download"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
+export async function readWorkspaceFile(root, relativePath) {
+  const file = await inspectWorkspaceFile(root, relativePath);
+  const assetPreview = previewKind(file.extension, Buffer.alloc(0));
+  if (assetPreview.kind === "image" || assetPreview.kind === "pdf") {
+    return {
+      ...file,
+      canonicalTarget: undefined,
+      ...assetPreview,
+      kind: file.size > MAX_ASSET_PREVIEW_BYTES ? "too-large" : assetPreview.kind,
+      previewLimitBytes: MAX_ASSET_PREVIEW_BYTES,
+    };
+  }
+  if (file.size > MAX_TEXT_PREVIEW_BYTES) {
+    return {
+      ...file,
+      canonicalTarget: undefined,
+      kind: "too-large",
+      mimeType: "application/octet-stream",
+      previewLimitBytes: MAX_TEXT_PREVIEW_BYTES,
+    };
+  }
+  const buffer = await readFile(file.canonicalTarget);
+  const preview = previewKind(file.extension, buffer);
+  return {
+    ...file,
+    canonicalTarget: undefined,
     ...preview,
     content: preview.kind === "text" ? buffer.toString("utf8") : undefined,
-    data: preview.kind === "image" || preview.kind === "pdf" ? buffer.toString("base64") : undefined,
   };
+}
+
+async function sendWorkspaceAsset(response, root, relativePath, download) {
+  const file = await inspectWorkspaceFile(root, relativePath);
+  const preview = previewKind(file.extension, Buffer.alloc(0));
+  const isPreviewableAsset = preview.kind === "image" || preview.kind === "pdf";
+  if (!download && !isPreviewableAsset) {
+    throw Object.assign(new Error("该文件不能以内嵌资源方式预览。"), { status: 415 });
+  }
+  if (!download && file.size > MAX_ASSET_PREVIEW_BYTES) {
+    throw Object.assign(new Error(`文件超过 ${MAX_ASSET_PREVIEW_BYTES / 1024 / 1024}MB 预览限制。`), {
+      status: 413,
+    });
+  }
+  response.writeHead(200, {
+    "Content-Type": isPreviewableAsset ? preview.mimeType : "application/octet-stream",
+    "Content-Length": file.size,
+    "Content-Disposition": contentDisposition(file.name, download ? "attachment" : "inline"),
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  await pipeline(createReadStream(file.canonicalTarget), response);
 }
 
 export async function writeWorkspaceFile(root, relativePath, content) {
@@ -662,9 +710,28 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
             workspaceId: workspace.id,
           });
         }
-        if (request.method === "GET" && segments[2] === "files" && segments[3] === "content") {
+        if (
+          request.method === "GET" &&
+          segments[2] === "files" &&
+          segments[3] === "content" &&
+          segments.length === 4
+        ) {
           const filePath = url.searchParams.get("path") ?? "";
           return sendJson(response, 200, await readWorkspaceFile(workspace.path, filePath));
+        }
+        if (
+          request.method === "GET" &&
+          segments[2] === "files" &&
+          segments[3] === "asset" &&
+          segments.length === 4
+        ) {
+          const filePath = url.searchParams.get("path") ?? "";
+          return await sendWorkspaceAsset(
+            response,
+            workspace.path,
+            filePath,
+            url.searchParams.get("download") === "1",
+          );
         }
         if (request.method === "POST" && segments[2] === "files" && segments[3] === "write") {
           const payload = await readJsonBody(request);
@@ -699,6 +766,10 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
 
       return sendJson(response, 404, { message: "本机 Runtime 路由不存在。" });
     } catch (error) {
+      if (response.headersSent) {
+        response.destroy(error instanceof Error ? error : undefined);
+        return;
+      }
       const status = Number(error?.status) || (error instanceof SyntaxError ? 400 : 500);
       const message =
         error?.code === "ENOENT"

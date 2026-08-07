@@ -1767,14 +1767,18 @@ button.workspace-file-row:hover,
   background: #f6f6f6;
 }
 
-.workspace-preview-toolbar > div {
+.workspace-preview-title,
+.workspace-preview-actions {
   display: flex;
   align-items: center;
+}
+
+.workspace-preview-title {
   min-width: 0;
   gap: 6px;
 }
 
-.workspace-preview-toolbar > div > span {
+.workspace-preview-title > span {
   overflow: hidden;
   font-size: 9px;
   font-weight: 650;
@@ -1782,7 +1786,23 @@ button.workspace-file-row:hover,
   white-space: nowrap;
 }
 
-.workspace-preview-toolbar button {
+.workspace-preview-title > small {
+  flex: none;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-size: 7px;
+  font-weight: 650;
+}
+
+.workspace-preview-actions {
+  flex: none;
+  gap: 5px;
+}
+
+.workspace-preview-toolbar button,
+.workspace-preview-toolbar a {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1794,6 +1814,7 @@ button.workspace-file-row:hover,
   color: #6e6e6e;
   font-size: 8px;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .workspace-preview-content {
@@ -1818,6 +1839,98 @@ button.workspace-file-row:hover,
 .workspace-preview-content:has(pre code) {
   background: #ffffff;
   color: var(--ink);
+}
+
+.ide-code-preview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: max-content;
+  min-height: 100%;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.7;
+  tab-size: 2;
+}
+
+.code-line-numbers {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 42px;
+  margin: 0;
+  padding: 15px 9px 15px 7px;
+  overflow: hidden;
+  border-right: 1px solid #e7e5df;
+  background: #faf9f6;
+  color: #9a978e;
+  list-style: none;
+  text-align: right;
+  user-select: none;
+}
+
+.code-line-numbers li {
+  height: 1.7em;
+}
+
+.ide-code-preview pre {
+  min-width: 0;
+  min-height: 100%;
+  margin: 0;
+  padding: 15px;
+  overflow: visible;
+  white-space: pre;
+}
+
+.ide-code-preview code {
+  color: var(--ink);
+}
+
+.ide-code-preview .token.comment,
+.ide-code-preview .token.prolog,
+.ide-code-preview .token.doctype,
+.ide-code-preview .token.cdata {
+  color: #8b8a85;
+}
+
+.ide-code-preview .token.punctuation,
+.ide-code-preview .token.operator {
+  color: #5c5a55;
+}
+
+.ide-code-preview .token.property,
+.ide-code-preview .token.tag,
+.ide-code-preview .token.constant,
+.ide-code-preview .token.symbol,
+.ide-code-preview .token.deleted,
+.ide-code-preview .token.keyword,
+.ide-code-preview .token.atrule {
+  color: #8b3d70;
+}
+
+.ide-code-preview .token.boolean,
+.ide-code-preview .token.number {
+  color: #a45314;
+}
+
+.ide-code-preview .token.selector,
+.ide-code-preview .token.attr-name,
+.ide-code-preview .token.string,
+.ide-code-preview .token.char,
+.ide-code-preview .token.builtin,
+.ide-code-preview .token.inserted {
+  color: #19724b;
+}
+
+.ide-code-preview .token.function,
+.ide-code-preview .token.class-name {
+  color: #1f5fae;
+}
+
+.ide-code-preview .token.variable,
+.ide-code-preview .token.regex,
+.ide-code-preview .token.important {
+  color: #9f4a16;
 }
 
 .markdown-preview {
@@ -3328,7 +3441,8 @@ button.workspace-file-row:hover,
 
 .workspace-file-row,
 .artifact-list-item,
-.workspace-preview-toolbar button {
+.workspace-preview-toolbar button,
+.workspace-preview-toolbar a {
   color: var(--secondary-foreground);
 }
 

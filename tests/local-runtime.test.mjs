@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -96,6 +96,78 @@ test("workspace file listing only shows first-level entries by default", async (
     listing.entries.map((entry) => entry.path),
     ["reports", "readme.md"],
   );
+});
+
+test("workspace previews keep text in JSON and stream images, PDFs, and downloads as assets", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "pi-preview-assets-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const dataDirectory = path.join(temporaryRoot, "data");
+  const workspaceDirectory = path.join(temporaryRoot, "workspace");
+  await mkdir(workspaceDirectory);
+  const image = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const pdf = Buffer.from("%PDF-1.4\npreview fixture\n", "utf8");
+  const binary = Buffer.from([0, 1, 2, 3]);
+  await Promise.all([
+    writeFile(path.join(workspaceDirectory, "chart.png"), image),
+    writeFile(path.join(workspaceDirectory, "report.pdf"), pdf),
+    writeFile(path.join(workspaceDirectory, "script.py"), "print('preview')\n", "utf8"),
+    writeFile(path.join(workspaceDirectory, "app.js"), "export const preview = true;\n", "utf8"),
+    writeFile(path.join(workspaceDirectory, "theme.css"), "body { color: black; }\n", "utf8"),
+    writeFile(path.join(workspaceDirectory, "unknown.bin"), binary),
+    writeFile(path.join(workspaceDirectory, "large.txt"), "x".repeat(1_048_577), "utf8"),
+  ]);
+  const workspace = await registerWorkspace(dataDirectory, workspaceDirectory);
+  const server = createServer(
+    createLocalRuntimeHandler({ dataDirectory, token: "preview-token", mcpManager: { listServers() {} } }),
+  );
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}/workspaces/${workspace.id}/files`;
+  const request = (pathSuffix) =>
+    fetch(`${baseUrl}${pathSuffix}`, { headers: { Authorization: "Bearer preview-token" } });
+
+  const pythonPreview = await request("/content?path=script.py");
+  assert.equal(pythonPreview.status, 200);
+  assert.deepEqual(await pythonPreview.json(), {
+    path: "script.py",
+    name: "script.py",
+    size: 17,
+    modifiedAt: (await stat(path.join(workspaceDirectory, "script.py"))).mtimeMs,
+    extension: ".py",
+    kind: "text",
+    mimeType: "text/plain; charset=utf-8",
+    content: "print('preview')\n",
+  });
+  for (const file of ["app.js", "theme.css"]) {
+    const response = await request(`/content?path=${file}`);
+    assert.equal((await response.json()).kind, "text");
+  }
+
+  const imagePreview = await request("/content?path=chart.png");
+  assert.equal((await imagePreview.json()).kind, "image");
+  const imageAsset = await request("/asset?path=chart.png");
+  assert.equal(imageAsset.headers.get("content-type"), "image/png");
+  assert.match(imageAsset.headers.get("content-disposition") ?? "", /^inline;/);
+  assert.equal(imageAsset.headers.get("x-content-type-options"), "nosniff");
+  assert.deepEqual(Buffer.from(await imageAsset.arrayBuffer()), image);
+
+  const pdfAsset = await request("/asset?path=report.pdf");
+  assert.equal(pdfAsset.headers.get("content-type"), "application/pdf");
+  assert.deepEqual(Buffer.from(await pdfAsset.arrayBuffer()), pdf);
+
+  const unknownPreview = await request("/content?path=unknown.bin");
+  assert.equal((await unknownPreview.json()).kind, "unsupported");
+  assert.equal((await request("/asset?path=unknown.bin")).status, 415);
+  const binaryDownload = await request("/asset?path=unknown.bin&download=1");
+  assert.equal(binaryDownload.headers.get("content-type"), "application/octet-stream");
+  assert.match(binaryDownload.headers.get("content-disposition") ?? "", /^attachment;/);
+  assert.deepEqual(Buffer.from(await binaryDownload.arrayBuffer()), binary);
+
+  const largePreview = await request("/content?path=large.txt");
+  const largePayload = await largePreview.json();
+  assert.equal(largePayload.kind, "too-large");
+  assert.equal(largePayload.previewLimitBytes, 1_048_576);
 });
 
 async function waitForCommand(manager, workspaceId, commandId) {

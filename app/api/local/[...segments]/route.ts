@@ -35,12 +35,19 @@ async function forward(request: Request, context: RouteContext) {
       body,
       cache: "no-store",
     });
+    const headers = new Headers({ "Cache-Control": "no-store" });
+    for (const name of [
+      "content-type",
+      "content-length",
+      "content-disposition",
+      "x-content-type-options",
+    ]) {
+      const value = response.headers.get(name);
+      if (value) headers.set(name, value);
+    }
     return new Response(response.body, {
       status: response.status,
-      headers: {
-        "Content-Type": response.headers.get("content-type") ?? "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-      },
+      headers,
     });
   } catch {
     return Response.json(
