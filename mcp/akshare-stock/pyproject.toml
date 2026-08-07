@@ -1,0 +1,14 @@
+[project]
+name = "pi-research-agent-akshare-stock-mcp"
+version = "0.1.0"
+description = "Locked local runtime for akshare-stock-mcp in Pi Research Agent"
+requires-python = ">=3.12"
+dependencies = [
+  "akshare-stock-mcp==0.1.0",
+  # 上游包只声明 mcp>=1.0.0，但其代码使用 MCP Python SDK 1.x 的
+  # mcp.server.fastmcp 导入路径；MCP 2.x 已移除此路径。
+  "mcp>=1.0.0,<2.0.0",
+]
+
+[tool.uv]
+package = false

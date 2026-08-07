@@ -6,12 +6,13 @@ import {
   BUNDLED_SKILL_NAMES,
   resolveCapabilitySelection,
 } from "../server/agent/capability-policy.ts";
+import { MCP_SERVER_IDS } from "../server/agent/mcp/registry.ts";
 
 test("capability selection enables the complete bundled set by default", () => {
   const selection = resolveCapabilitySelection({});
   assert.deepEqual(selection.enabledSkills, [...BUNDLED_SKILL_NAMES]);
   assert.deepEqual(selection.enabledTools, [...AGENT_TOOL_NAMES]);
-  assert.deepEqual(selection.enabledMcps, ["akshare-one"]);
+  assert.deepEqual(selection.enabledMcps, [...MCP_SERVER_IDS]);
 });
 
 test("capability selection keeps only explicitly enabled known names", () => {

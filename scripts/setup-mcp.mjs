@@ -3,7 +3,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const project = path.join(root, "mcp/akshare-one");
+const projects = [
+  { directory: "akshare-one", label: "AKShare One" },
+  { directory: "akshare-stock", label: "AKShare Stock" },
+];
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
@@ -18,8 +21,18 @@ function run(command, args) {
 
 try {
   await run("uv", ["python", "install", "3.12"]);
-  await run("uv", ["sync", "--project", project, "--locked", "--python", "3.12"]);
-  console.log("AKShare One MCP 安装完成。重新执行 npm run dev 后即可连接。");
+  for (const project of projects) {
+    await run("uv", [
+      "sync",
+      "--project",
+      path.join(root, "mcp", project.directory),
+      "--locked",
+      "--python",
+      "3.12",
+    ]);
+    console.log(`${project.label} MCP 安装完成。`);
+  }
+  console.log("重新执行 npm run dev 后即可连接 MCP 服务。");
 } catch (error) {
   if (error?.code === "ENOENT") {
     console.error("未找到 uv。请先安装 uv：https://docs.astral.sh/uv/getting-started/installation/");

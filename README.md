@@ -1,6 +1,6 @@
 # 知衡 · 本地投研 Agent
 
-一个基于 PI Agent Core、DeepSeek、Tavily、AKShare One MCP 和 React 的本地投研工作台。界面采用三栏布局：左侧按本地项目组织会话，中间执行流式 Agent 任务，右侧浏览和预览项目文件。
+一个基于 PI Agent Core、DeepSeek、Tavily、AKShare MCP 和 React 的本地投研工作台。界面采用三栏布局：左侧按本地项目组织会话，中间执行流式 Agent 任务，右侧浏览和预览项目文件。
 
 ## 当前能力
 
@@ -37,7 +37,7 @@ Skill 文件位于 `.agents/skills/*/SKILL.md`。系统提示词只包含名称�
 
 ## MCP
 
-项目内置免费的 `AKShare One MCP 0.3.9`，提供 A 股历史与实时行情、新闻、三张财务报表、财务指标、内部交易和交易日时间信息。MCP 通过本机 stdio 运行，不进入 Cloudflare Worker，也不需要 API Key。
+项目内置两个免费的本地 stdio MCP：`AKShare One MCP 0.3.9` 提供 A 股历史与实时行情、新闻、三张财务报表、财务指标、内部交易和交易日时间信息；`AKShare Stock MCP 0.1.0` 提供实时行情、K 线、财报、北向资金、龙虎榜和融资融券等工具。它当前实际发现 86 个工具，其中会清空缓存的管理工具被本项目拒绝公开；其子进程会绕过系统代理直连数据源，以避免部分代理拒绝东方财富等来源。两者均不进入 Cloudflare Worker，也不需要 API Key。
 
 首次使用前需要安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)，然后执行一次：
 
@@ -45,7 +45,7 @@ Skill 文件位于 `.agents/skills/*/SKILL.md`。系统提示词只包含名称�
 npm run mcp:setup
 ```
 
-该命令会安装受锁定的 Python 3.12 环境。之后使用 `npm run dev` 启动完整应用，在左侧“MCP”页面查看连接状态和九个可用工具。
+该命令会安装两个受锁定的 Python 3.12 环境。之后使用 `npm run dev` 启动完整应用，在左侧“MCP”页面查看连接状态。AKShare One 首次连接后默认启用；AKShare Stock 为避免同类工具重复，需在该页面手动启用。
 
 ## 启动
 

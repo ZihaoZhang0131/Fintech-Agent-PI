@@ -3,7 +3,7 @@
 import { ArrowLeft, ExternalLink, RefreshCw, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import type { CapabilityItem, CapabilityKind } from "@/lib/capability-types";
+import type { CapabilityItem, CapabilityKind, McpCapabilityTool } from "@/lib/capability-types";
 
 type CapabilityLibraryProps = {
   kind: CapabilityKind;
@@ -187,7 +187,7 @@ export function CapabilityLibrary({
                     {selected.mcpTools?.length ? selected.mcpTools.map((tool) => (
                       <article key={tool.name}>
                         <code>{tool.name}</code>
-                        <p>{mcpToolDescription(tool.name)}</p>
+                        <p>{mcpToolDescription(tool)}</p>
                       </article>
                     )) : <p>连接成功后会自动发现并展示工具。</p>}
                   </div>
@@ -227,7 +227,13 @@ function mcpStatusLabel(status: CapabilityItem["status"]) {
   return "未连接";
 }
 
-function mcpToolDescription(name: string) {
+function mcpToolDescription(tool: McpCapabilityTool) {
+  const discoveredDescription = tool.description
+    ?.replace(/\s*\n\s*/g, " ")
+    .replace(/\bArgs:\s*/i, "参数：")
+    .trim();
+  if (discoveredDescription) return discoveredDescription;
+
   const descriptions: Record<string, string> = {
     get_hist_data: "查询 A 股历史行情，支持 A、B、H 股。",
     get_realtime_data: "查询 A 股实时行情，支持 A、B、H 股。",
@@ -240,5 +246,5 @@ function mcpToolDescription(name: string) {
     get_time_info: "查询交易日与市场时间信息。",
   };
 
-  return descriptions[name] ?? "查询相关的市场与公司数据。";
+  return descriptions[tool.name] ?? "查询相关的市场与公司数据。";
 }

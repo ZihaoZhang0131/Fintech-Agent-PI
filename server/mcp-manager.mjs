@@ -6,6 +6,7 @@ import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotoc
 
 export const MCP_CALL_TIMEOUT_MS = 30_000;
 export const MCP_MAX_RESULT_BYTES = 200 * 1024;
+const MCP_MAX_STDIO_MESSAGE_BYTES = 2 * 1024 * 1024;
 const MCP_MAX_STDERR_BYTES = 16 * 1024;
 
 const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -34,10 +35,26 @@ function publicServer(server, state) {
   };
 }
 
-function safeChildEnvironment() {
+function safeChildEnvironment(server) {
   const env = getDefaultEnvironment();
   for (const name of ["DEEPSEEK_API_KEY", "TAVILY_API_KEY", "LOCAL_RUNTIME_TOKEN"]) {
     delete env[name];
+  }
+  if (server.bypassProxy) {
+    for (const name of [
+      "ALL_PROXY",
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "all_proxy",
+      "http_proxy",
+      "https_proxy",
+    ]) {
+      delete env[name];
+    }
+    // macOS can surface its system proxy through Python even when the proxy
+    // variables are absent. An explicit wildcard disables that fallback.
+    env.NO_PROXY = "*";
+    env.no_proxy = "*";
   }
   env.PYTHONUNBUFFERED = "1";
   return env;
@@ -136,9 +153,11 @@ export function createMcpManager({
         command: executable(server),
         args: server.args ?? [],
         cwd: root,
-        env: safeChildEnvironment(),
+        env: safeChildEnvironment(server),
         stderr: "pipe",
-        maxBufferSize: MCP_MAX_RESULT_BYTES * 2,
+        // The complete MCP message must be read before it can be truncated to
+        // MCP_MAX_RESULT_BYTES. Some financial tables exceed 400 KB.
+        maxBufferSize: MCP_MAX_STDIO_MESSAGE_BYTES,
       });
       const stderr = transport.stderr;
       stderr?.on("data", (chunk) => {
@@ -161,12 +180,15 @@ export function createMcpManager({
       try {
         await withTimeout(client.connect(transport), MCP_CALL_TIMEOUT_MS, "MCP 连接超时。");
         const listed = await withTimeout(client.listTools(), MCP_CALL_TIMEOUT_MS, "MCP 工具发现超时。");
-        state.tools = listed.tools.map((tool) => ({
-          name: tool.name,
-          title: tool.title,
-          description: tool.description,
-          inputSchema: tool.inputSchema ?? { type: "object", properties: {} },
-        }));
+        const blockedTools = new Set(server.blockedTools ?? []);
+        state.tools = listed.tools
+          .filter((tool) => !blockedTools.has(tool.name))
+          .map((tool) => ({
+            name: tool.name,
+            title: tool.title,
+            description: tool.description,
+            inputSchema: tool.inputSchema ?? { type: "object", properties: {} },
+          }));
         state.status = "connected";
         state.error = undefined;
       } catch (error) {

@@ -11,5 +11,20 @@
     "defaultEnabled": true,
     "command": "mcp/akshare-one/.venv/bin/akshare-one-mcp",
     "args": []
+  },
+  {
+    "id": "akshare-stock",
+    "label": "AKShare Stock",
+    "description": "免费获取 A 股实时行情、K 线、财报、北向资金、龙虎榜与融资融券数据。",
+    "version": "0.1.0",
+    "homepage": "https://pypi.org/project/akshare-stock-mcp/",
+    "transport": "stdio",
+    "free": true,
+    "requiresApiKey": false,
+    "defaultEnabled": false,
+    "blockedTools": ["clear_cache"],
+    "bypassProxy": true,
+    "command": "mcp/akshare-stock/.venv/bin/python",
+    "args": ["-m", "akshare_stock_mcp.server"]
   }
 ]

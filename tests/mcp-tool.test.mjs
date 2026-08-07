@@ -25,6 +25,12 @@ test("MCP tools use collision-safe names and bounded input schemas", () => {
   });
   assert.deepEqual(realtime.required, ["symbol"]);
   assert.throws(() => clampMcpArguments("get_realtime_data", { symbol: "" }), /必须提供/);
+  const ranked = adaptMcpInputSchema("get_market_realtime_top", {
+    type: "object",
+    properties: { top_n: { type: "integer" } },
+  });
+  assert.equal(ranked.properties.top_n.maximum, 100);
+  assert.equal(clampMcpArguments("get_market_realtime_top", { top_n: 999 }).top_n, 100);
   assert.equal(clampMcpArguments("get_financial_metrics", { recent_n: 100 }).recent_n, 20);
 });
 
@@ -73,5 +79,6 @@ test("enabled MCP definitions become namespaced PI tools and call the local runt
   assert.equal(result.details.serverId, "akshare-one");
   assert.equal(result.details.externalToolName, "get_hist_data");
   assert.match(result.content[0].text, /外部公开数据源/);
+  assert.match(result.content[0].text, /AKShare One/);
   assert.match(result.content[1].text, /1308\.55/);
 });

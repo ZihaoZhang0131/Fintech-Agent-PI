@@ -49,9 +49,9 @@ test("MCP capabilities expose concise status, setup guidance, refresh, and disco
   assert.match(component, /selected\.status !== "connected"/);
   assert.match(stylesheet, /\.mcp-card-summary/);
   assert.match(stylesheet, /\.mcp-tool-list/);
-  assert.match(component, /mcpToolDescription\(tool\.name\)/);
+  assert.match(component, /mcpToolDescription\(tool\)/);
   assert.match(component, /查询 A 股历史行情/);
   assert.match(stylesheet, /\.mcp-tool-list article/);
   assert.doesNotMatch(component, /<dt>连接状态|<dt>传输方式|<dt>认证/);
-  assert.doesNotMatch(component, /tool\.description/);
+  assert.match(component, /tool\.description/);
 });

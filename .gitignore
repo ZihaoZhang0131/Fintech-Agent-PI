@@ -44,3 +44,4 @@ next-env.d.ts
 /work/
 /.local-data/
 /mcp/akshare-one/.venv/
+/mcp/akshare-stock/.venv/

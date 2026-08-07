@@ -52,3 +52,16 @@ test("MCP manager discovers allowlisted stdio tools, calls them, and strips app 
     /不存在或未被服务公开/,
   );
 });
+
+test("MCP manager does not expose registry-blocked tools", async (t) => {
+  const manager = createMcpManager({
+    root: path.dirname(fixture),
+    servers: [{ ...fakeServer, blockedTools: ["get_hist_data"] }],
+  });
+  t.after(() => manager.close());
+
+  const [server] = await manager.listServers({ connect: true });
+  assert.equal(server.status, "connected");
+  assert.deepEqual(server.tools, []);
+  await assert.rejects(manager.callTool("fake-akshare", "get_hist_data", {}), /不存在或未被服务公开/);
+});
