@@ -3,6 +3,7 @@
 import { ArrowLeft, Bot, ChevronDown, Cpu, Settings2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { AgentProfile, AgentRoleId, ProjectAgentConfig } from "@/lib/agent-profiles";
+import type { AgentPromptConfig } from "@/lib/agent-prompts";
 import type { CapabilityCatalog } from "@/lib/capability-types";
 
 type ModelOption = { providerId: string; providerLabel: string; modelId: string; label: string };
@@ -10,8 +11,10 @@ type ModelOption = { providerId: string; providerLabel: string; modelId: string;
 type AgentLibraryProps = {
   catalog: CapabilityCatalog;
   config: ProjectAgentConfig;
+  prompts: AgentPromptConfig;
   models: ModelOption[];
   onUpdate: (id: AgentRoleId, profile: AgentProfile) => void;
+  onPromptUpdate: (id: AgentRoleId, prompt: string) => void;
   onClose: () => void;
 };
 
@@ -23,7 +26,7 @@ function count(profile: AgentProfile) {
   return profile.enabledSkills.length + profile.enabledTools.length + profile.enabledMcps.length;
 }
 
-export function AgentLibrary({ catalog, config, models, onUpdate, onClose }: AgentLibraryProps) {
+export function AgentLibrary({ catalog, config, prompts, models, onUpdate, onPromptUpdate, onClose }: AgentLibraryProps) {
   const [selectedId, setSelectedId] = useState<AgentRoleId | null>(null);
   const childAgents = useMemo(() => catalog.agents.filter((agent) => !agent.isMain), [catalog.agents]);
   const selected = useMemo(
@@ -44,7 +47,13 @@ export function AgentLibrary({ catalog, config, models, onUpdate, onClose }: Age
           <button type="button" onClick={onClose} aria-label="返回项目" title="返回项目"><ArrowLeft size={16} /></button>
           <div><Bot size={17} /><span>Agent 配置</span></div>
         </div>
-        <p className="agent-page-intro">配置当前项目中主 Agent 可委派的专业角色。主 Agent 的模型、技能、工具与 MCP 继续在现有界面统一管理；每个子 Agent 的能力默认关闭，按需启用。</p>
+        <p className="agent-page-intro">配置主 Agent 与可委派专业角色。系统提示词全局生效；模型、技能、工具和 MCP 仍按项目保存。每个子 Agent 的能力默认关闭，按需启用。</p>
+        <SystemPromptField
+          className="agent-main-prompt"
+          label="主 Agent 系统提示词"
+          value={prompts.main}
+          onChange={(systemPrompt) => onPromptUpdate("main", systemPrompt)}
+        />
         <div className="agent-card-grid">
           {childAgents.map((agent) => {
             const profile = config.profiles[agent.id];
@@ -69,6 +78,11 @@ export function AgentLibrary({ catalog, config, models, onUpdate, onClose }: Age
             <header><div><span>AGENT PROFILE</span><h2 id="agent-dialog-title">{selected.label}</h2></div><button type="button" onClick={() => setSelectedId(null)} aria-label="关闭配置"><X size={18} /></button></header>
             <div className="agent-dialog-content">
               <p>{selected.description}</p>
+              <SystemPromptField
+                label="系统提示词"
+                value={prompts[selected.id]}
+                onChange={(systemPrompt) => onPromptUpdate(selected.id, systemPrompt)}
+              />
               <label className="agent-model-select"><span>模型</span><select value={selectedProfile.model ? modelKey(selectedProfile.model) : "inherit"} onChange={(event) => {
                 const value = event.target.value;
                 const model = models.find((item) => modelKey(item) === value);
@@ -86,6 +100,14 @@ export function AgentLibrary({ catalog, config, models, onUpdate, onClose }: Age
       )}
     </section>
   );
+}
+
+function SystemPromptField({ className, label, value, onChange }: { className?: string; label: string; value: string; onChange: (value: string) => void }) {
+  return <label className={`agent-prompt-field${className ? ` ${className}` : ""}`}>
+    <span>{label}</span>
+    <textarea value={value} maxLength={12_000} rows={7} onChange={(event) => onChange(event.target.value)} />
+    <small>全局保存，并会在下一轮对话中对所有项目生效。</small>
+  </label>;
 }
 
 function CapabilityGroup({ title, names, enabled, onToggle }: { title: string; names: string[]; enabled: string[]; onToggle: (name: string) => void }) {

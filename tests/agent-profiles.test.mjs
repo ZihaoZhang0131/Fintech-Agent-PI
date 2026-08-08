@@ -6,6 +6,7 @@ import {
   createDefaultProjectAgentConfig,
   createProjectAgentConfigFromLegacy,
 } from "../lib/agent-profiles.ts";
+import { DEFAULT_AGENT_SYSTEM_PROMPTS, createDefaultAgentPromptConfig } from "../lib/agent-prompts.ts";
 
 test("new project Agent profiles keep every delegated capability disabled by default", () => {
   const config = createDefaultProjectAgentConfig();
@@ -15,6 +16,17 @@ test("new project Agent profiles keep every delegated capability disabled by def
   assert.deepEqual(config.profiles["market-data"].enabledTools, []);
   assert.equal(config.profiles.main.enabled, true);
   assert.equal(config.profiles["web-evidence"].enabled, true);
+  const prompts = createDefaultAgentPromptConfig();
+  assert.equal(prompts.main, DEFAULT_AGENT_SYSTEM_PROMPTS.main);
+  assert.equal(prompts["market-data"], DEFAULT_AGENT_SYSTEM_PROMPTS["market-data"]);
+});
+
+test("global Agent prompts are independent from project profiles", () => {
+  const prompts = createDefaultAgentPromptConfig();
+  prompts["web-evidence"] = "全局自定义网页核验提示词";
+  const project = createDefaultProjectAgentConfig();
+  assert.equal(prompts["web-evidence"], "全局自定义网页核验提示词");
+  assert.ok(!Object.hasOwn(project.profiles["web-evidence"], "systemPrompt"));
 });
 
 test("legacy main capabilities migrate without sharing mutable profile arrays", () => {
@@ -28,4 +40,5 @@ test("legacy main capabilities migrate without sharing mutable profile arrays", 
   copied.profiles.main.enabledTools.push("bash");
   assert.deepEqual(migrated.profiles.main.enabledTools, ["web_search"]);
   assert.equal(migrated.mainModel.modelId, "deepseek-v4-flash");
+  assert.equal(createDefaultAgentPromptConfig()["web-evidence"], DEFAULT_AGENT_SYSTEM_PROMPTS["web-evidence"]);
 });

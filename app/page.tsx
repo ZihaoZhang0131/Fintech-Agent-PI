@@ -65,6 +65,7 @@ import {
   type AgentRoleId,
   type ProjectAgentConfig,
 } from "@/lib/agent-profiles";
+import { createDefaultAgentPromptConfig, type AgentPromptConfig } from "@/lib/agent-prompts";
 import { shouldSubmitComposerKey } from "@/lib/composer-keyboard";
 import {
   getLoadedFileTreeEntries,
@@ -179,6 +180,7 @@ const FILE_PANEL_VISIBLE_KEY = "pi-research-agent:file-panel-visible:v1";
 const FILE_TABS_KEY = "pi-research-agent:file-tabs:v1";
 const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
 const AGENT_PROFILES_KEY = "pi-research-agent:agent-profiles:v2";
+const AGENT_PROMPTS_KEY = "pi-research-agent:agent-prompts:v1";
 
 type AppView = "workspace" | CapabilityKind | "model" | "agent";
 
@@ -321,6 +323,50 @@ function parseProjectAgentConfigs(value: string | null): Record<string, ProjectA
   }
 }
 
+function normalizeAgentPrompt(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 12_000
+    ? value.trim()
+    : fallback;
+}
+
+function parseGlobalAgentPrompts(value: string | null): AgentPromptConfig {
+  const defaults = createDefaultAgentPromptConfig();
+  if (!value) return defaults;
+  try {
+    const parsed = JSON.parse(value) as Partial<Record<AgentRoleId, unknown>>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return defaults;
+    return Object.fromEntries(
+      (Object.keys(defaults) as AgentRoleId[]).map((id) => [
+        id,
+        normalizeAgentPrompt(parsed[id], defaults[id]),
+      ]),
+    ) as AgentPromptConfig;
+  } catch {
+    return defaults;
+  }
+}
+
+function migrateLegacyProjectAgentPrompts(value: string | null, preferredProjectId: string | undefined): AgentPromptConfig {
+  const defaults = createDefaultAgentPromptConfig();
+  if (!value) return defaults;
+  try {
+    const parsed = JSON.parse(value) as Record<string, { profiles?: Partial<Record<AgentRoleId, { systemPrompt?: unknown }>> }>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return defaults;
+    const project = preferredProjectId && parsed[preferredProjectId]
+      ? parsed[preferredProjectId]
+      : Object.values(parsed).find((candidate) => candidate && typeof candidate === "object");
+    if (!project?.profiles || typeof project.profiles !== "object") return defaults;
+    return Object.fromEntries(
+      (Object.keys(defaults) as AgentRoleId[]).map((id) => [
+        id,
+        normalizeAgentPrompt(project.profiles?.[id]?.systemPrompt, defaults[id]),
+      ]),
+    ) as AgentPromptConfig;
+  } catch {
+    return defaults;
+  }
+}
+
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
 }
@@ -426,6 +472,7 @@ export default function Home() {
   const [enabledTools, setEnabledTools] = useState<string[]>([]);
   const [enabledMcps, setEnabledMcps] = useState<string[]>([]);
   const [agentConfigsByProject, setAgentConfigsByProject] = useState<Record<string, ProjectAgentConfig>>({});
+  const [agentPrompts, setAgentPrompts] = useState<AgentPromptConfig>(createDefaultAgentPromptConfig);
   const [capabilityRefreshVersion, setCapabilityRefreshVersion] = useState(0);
   const [capabilitiesReady, setCapabilitiesReady] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(246);
@@ -639,7 +686,12 @@ export default function Home() {
         const availableFileTabs = Object.fromEntries(
           Object.entries(storedFileTabs).filter(([projectId]) => projectIds.has(projectId)),
         );
-        const storedAgentConfigs = parseProjectAgentConfigs(localStorage.getItem(AGENT_PROFILES_KEY));
+        const storedAgentConfigValue = localStorage.getItem(AGENT_PROFILES_KEY);
+        const storedAgentConfigs = parseProjectAgentConfigs(storedAgentConfigValue);
+        const storedAgentPromptValue = localStorage.getItem(AGENT_PROMPTS_KEY);
+        const storedAgentPrompts = storedAgentPromptValue === null
+          ? migrateLegacyProjectAgentPrompts(storedAgentConfigValue, initialProject?.id)
+          : parseGlobalAgentPrompts(storedAgentPromptValue);
         const legacyAgentConfig = createProjectAgentConfigFromLegacy({
           enabledSkills: parseStoredNames(localStorage.getItem(ENABLED_SKILLS_KEY)) ?? undefined,
           enabledTools: parseStoredNames(localStorage.getItem(ENABLED_TOOLS_KEY) ?? localStorage.getItem(LEGACY_ENABLED_TOOLS_KEY)) ?? undefined,
@@ -676,6 +728,7 @@ export default function Home() {
           : undefined;
         setProjects(available);
         setAgentConfigsByProject(availableAgentConfigs);
+        setAgentPrompts(storedAgentPrompts);
         setConversations(normalized);
         setActiveProjectId(initialProject?.id ?? "");
         setActiveId(firstConversation?.id ?? "");
@@ -757,6 +810,11 @@ export default function Home() {
     if (!hydrated) return;
     localStorage.setItem(AGENT_PROFILES_KEY, JSON.stringify(agentConfigsByProject));
   }, [agentConfigsByProject, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(AGENT_PROMPTS_KEY, JSON.stringify(agentPrompts));
+  }, [agentPrompts, hydrated]);
 
   useEffect(() => {
     if (!activeProjectId || !agentConfigsByProject[activeProjectId]) return;
@@ -1047,6 +1105,11 @@ export default function Home() {
       const config = current[activeProjectId] ?? createDefaultProjectAgentConfig();
       return { ...current, [activeProjectId]: { ...config, profiles: { ...config.profiles, [id]: profile } } };
     });
+  }
+
+  function updateAgentPrompt(id: AgentRoleId, prompt: string) {
+    if (isBusy) return;
+    setAgentPrompts((current) => ({ ...current, [id]: prompt }));
   }
 
   function toggleBashApprovalMode() {
@@ -1380,6 +1443,7 @@ export default function Home() {
               modelId: selectedModel.modelId,
             },
           },
+          agentPrompts,
           bashApprovalMode: activeConversation.bashApprovalMode,
           bashPermissionMode: activeConversation.bashPermissionMode,
           messages: history.map(({ role, content: messageContent }) => ({
@@ -2345,8 +2409,10 @@ export default function Home() {
             ...activeAgentConfig,
             ...(selectedModel ? { mainModel: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
           }}
+          prompts={agentPrompts}
           models={availableModels}
           onUpdate={updateAgentProfile}
+          onPromptUpdate={updateAgentPrompt}
           onClose={() => setActiveView("workspace")}
         />
       ) : activeView === "model" ? (
