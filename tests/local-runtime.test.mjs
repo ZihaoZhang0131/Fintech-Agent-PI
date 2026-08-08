@@ -17,6 +17,44 @@ import {
   resolveWorkspacePath,
   writeWorkspaceFile,
 } from "../server/local-runtime.mjs";
+import { createSkillStore } from "../server/skill-store.mjs";
+
+function encoded(value) {
+  return Buffer.from(value, "utf8").toString("base64");
+}
+
+test("local skill store imports folders, preserves references, overlays bundled skills, and validates paths", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "pi-skill-store-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const store = createSkillStore(temporaryRoot);
+  const imported = await store.importFolder({
+    files: [
+      { path: "SKILL.md", data: encoded("---\nname: custom-skill\ndescription: 用户导入的技能。\nallowed_tools:\n  - web_search\n---\n\n执行自定义流程。") },
+      { path: "references/example.md", data: encoded("保留的参考资料") },
+    ],
+  });
+  assert.equal(imported.name, "custom-skill");
+  await assert.rejects(
+    store.importFolder({ files: [{ path: "../SKILL.md", data: encoded("x") }] }),
+    /路径/,
+  );
+  await assert.rejects(
+    store.importFolder({ files: [{ path: "SKILL.md", data: encoded("---\nname: custom-skill\ndescription: 重名。\n---\n\n内容") }] }),
+    /已存在/,
+  );
+
+  const updated = await store.update("bundled:equity-research", {
+    name: "company-research",
+    description: "本机修改后的内置技能。",
+    instructions: "使用本机流程。",
+  });
+  assert.equal(updated.name, "company-research");
+  const state = await store.list();
+  assert.equal(state.entries.length, 2);
+  assert.ok(state.entries.some((entry) => entry.name === "company-research"));
+  await store.remove("bundled:earnings-review");
+  assert.ok((await store.list()).deletedBundledNames.includes("earnings-review"));
+});
 
 test("local runtime protects MCP discovery and tool-call routes", async (t) => {
   const mcpManager = {

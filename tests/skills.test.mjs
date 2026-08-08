@@ -16,15 +16,17 @@ test("the system prompt catalog exposes metadata but not full Skill instructions
   const registry = {
     list: () => [
       {
+        id: "bundled:equity-research",
+        origin: "bundled",
         name: "equity-research",
         description: "上市公司研究",
-        allowedTools: ["web_search"],
       },
     ],
     get: () => ({
+      id: "bundled:equity-research",
+      origin: "bundled",
       name: "equity-research",
       description: "上市公司研究",
-      allowedTools: ["web_search"],
       instructions: "这是只应在 load_skill 之后出现的秘密执行正文。",
     }),
   };
@@ -50,7 +52,7 @@ test("the three bundled Skill files have valid metadata and instructions", async
     const skill = parseSkill(source);
     assert.equal(skill.name, name);
     assert.ok(skill.description.length > 10);
-    assert.deepEqual(skill.allowedTools, ["web_search"]);
+    assert.equal(skill.origin, "bundled");
     assert.match(skill.instructions, new RegExp(instructionFragment));
     assert.doesNotMatch(skill.instructions, /^---/);
   }
@@ -58,9 +60,10 @@ test("the three bundled Skill files have valid metadata and instructions", async
 
 test("load_skill returns full instructions only for a registry-whitelisted Skill", async () => {
   const skill = {
+    id: "bundled:equity-research",
+    origin: "bundled",
     name: "equity-research",
     description: "上市公司研究",
-    allowedTools: ["web_search"],
     instructions: "先确认公司和时间范围，再输出研究报告。",
   };
   const registry = {
@@ -73,7 +76,7 @@ test("load_skill returns full instructions only for a registry-whitelisted Skill
   assert.equal(result.details.kind, "skill");
   assert.equal(result.details.name, "equity-research");
   assert.match(result.content[0].text, /先确认公司和时间范围/);
-  assert.match(result.content[0].text, /允许使用的业务工具：web_search/);
+  assert.doesNotMatch(result.content[0].text, /允许使用的业务工具/);
 
   await assert.rejects(
     tool.execute("skill-call-2", { name: "../../private-file" }),
@@ -83,9 +86,10 @@ test("load_skill returns full instructions only for a registry-whitelisted Skill
 
 test("load_skill avoids returning the full instructions twice in one Agent run", async () => {
   const skill = {
+    id: "bundled:policy-tracking",
+    origin: "bundled",
     name: "policy-tracking",
     description: "政策追踪",
-    allowedTools: ["web_search"],
     instructions: "必须查找最新官方政策来源。",
   };
   const registry = {
@@ -98,4 +102,10 @@ test("load_skill avoids returning the full instructions twice in one Agent run",
   const repeated = await tool.execute("skill-call-2", { name: skill.name });
   assert.match(repeated.content[0].text, /已在本轮任务中加载/);
   assert.doesNotMatch(repeated.content[0].text, /必须查找最新官方政策来源/);
+});
+
+test("legacy allowed_tools is ignored when parsing uploaded Skill content", () => {
+  const legacy = parseSkill(`---\nname: legacy-skill\ndescription: 兼容旧格式的技能。\nallowed_tools:\n  - web_search\n---\n\n执行旧流程。`);
+  assert.equal(legacy.name, "legacy-skill");
+  assert.equal("allowedTools" in legacy, false);
 });

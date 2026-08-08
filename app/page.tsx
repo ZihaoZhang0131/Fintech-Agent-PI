@@ -56,7 +56,7 @@ import { MarkdownMessage } from "@/components/chat-markdown";
 import { CodePreview } from "@/components/code-preview";
 import { ModelLibrary, type ModelProviderItem } from "@/components/model-library";
 import { ToolRunStack } from "@/components/tool-run-stack";
-import type { CapabilityCatalog, CapabilityKind } from "@/lib/capability-types";
+import type { CapabilityCatalog, CapabilityItem, CapabilityKind } from "@/lib/capability-types";
 import {
   cloneProjectAgentConfig,
   createDefaultProjectAgentConfig,
@@ -399,6 +399,32 @@ async function responseJson<T>(response: Response): Promise<T> {
   const payload = (await response.json().catch(() => null)) as (T & { message?: string }) | null;
   if (!response.ok) throw new Error(payload?.message ?? `请求失败（${response.status}）`);
   return payload as T;
+}
+
+async function fileToBase64(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function skillFolderPath(file: File) {
+  return (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+}
+
+function normalizeSkillFolderFiles(files: File[]) {
+  const paths = files.map(skillFolderPath);
+  const firstSegments = paths.map((path) => path.split("/").filter(Boolean)[0]);
+  const commonRoot = firstSegments.length > 0 && firstSegments.every((segment) => segment === firstSegments[0])
+    ? firstSegments[0]
+    : "";
+  return files.map((file, index) => ({
+    path: commonRoot ? paths[index].slice(commonRoot.length + 1) : paths[index],
+    file,
+  }));
 }
 
 function fileIcon(file: ProjectFile) {
@@ -1097,6 +1123,70 @@ export default function Home() {
         return next;
       });
     }
+  }
+
+  function migrateSkillSelection(previousName: string | null, nextName: string | null, enableInActiveProject = false) {
+    setEnabledSkills((current) => {
+      const retained = previousName ? current.filter((name) => name !== previousName) : [...current];
+      const shouldEnable = enableInActiveProject || Boolean(previousName && current.includes(previousName));
+      const next = nextName && shouldEnable && !retained.includes(nextName) ? [...retained, nextName] : retained;
+      localStorage.setItem(ENABLED_SKILLS_KEY, JSON.stringify(next));
+      return next;
+    });
+    setAgentConfigsByProject((current) => Object.fromEntries(
+      Object.entries(current).map(([projectId, config]) => {
+        const profiles = Object.fromEntries(
+          Object.entries(config.profiles).map(([roleId, profile]) => {
+            const currentNames = profile.enabledSkills;
+            const retained = previousName ? currentNames.filter((name) => name !== previousName) : [...currentNames];
+            const shouldEnable =
+              (previousName !== null && currentNames.includes(previousName)) ||
+              (enableInActiveProject && projectId === activeProjectId && roleId === "main");
+            const enabledSkills = nextName && shouldEnable && !retained.includes(nextName)
+              ? [...retained, nextName]
+              : retained;
+            return [roleId, { ...profile, enabledSkills }];
+          }),
+        ) as ProjectAgentConfig["profiles"];
+        return [projectId, { ...config, profiles }];
+      }),
+    ));
+  }
+
+  async function importSkillFolder(files: File[]) {
+    const normalizedFiles = normalizeSkillFolderFiles(files);
+    const payload = {
+      files: await Promise.all(normalizedFiles.map(async ({ path, file }) => ({ path, data: await fileToBase64(file) }))),
+    };
+    const skill = await responseJson<{ name: string }>(
+      await fetch("/api/local/skills/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    );
+    migrateSkillSelection(null, skill.name, true);
+    setCapabilityRefreshVersion((current) => current + 1);
+  }
+
+  async function updateSkill(item: CapabilityItem, value: { name: string; description: string; instructions: string }) {
+    const skill = await responseJson<{ name: string }>(
+      await fetch(`/api/local/skills/${encodeURIComponent(item.id ?? `bundled:${item.name}`)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(value),
+      }),
+    );
+    migrateSkillSelection(item.name, skill.name);
+    setCapabilityRefreshVersion((current) => current + 1);
+  }
+
+  async function deleteSkill(item: CapabilityItem) {
+    await responseJson<{ removed: string }>(
+      await fetch(`/api/local/skills/${encodeURIComponent(item.id ?? `bundled:${item.name}`)}`, { method: "DELETE" }),
+    );
+    migrateSkillSelection(item.name, null);
+    setCapabilityRefreshVersion((current) => current + 1);
   }
 
   function updateAgentProfile(id: AgentRoleId, profile: AgentProfile) {
@@ -2444,6 +2534,9 @@ export default function Home() {
           }
           onToggle={(name) => toggleCapability(activeView, name)}
           onRefresh={() => setCapabilityRefreshVersion((current) => current + 1)}
+          onSkillImport={activeView === "skill" ? importSkillFolder : undefined}
+          onSkillUpdate={activeView === "skill" ? updateSkill : undefined}
+          onSkillDelete={activeView === "skill" ? deleteSkill : undefined}
           onClose={() => setActiveView("workspace")}
         />
       )}

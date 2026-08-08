@@ -5,7 +5,7 @@ import { parseModelReference, resolveRuntimeModel } from "@/server/model-runtime
 import { AGENT_ROLE_REGISTRY, isSubAgentRoleId, resolveGlobalAgentPrompts, resolveProjectAgentConfig } from "@/server/agent/agent-registry";
 import type { AgentRoleId } from "@/lib/agent-profiles";
 import { formatSkillCatalog } from "@/server/agent/skills/catalog";
-import { loadSkillRegistry } from "@/server/agent/skills/loader";
+import { loadEffectiveSkillRegistry, selectSkillRegistry } from "@/server/agent/skills/loader";
 import { createLoadSkillTool, type LoadSkillDetails } from "@/server/agent/tools/load-skill";
 import {
   createBashTool,
@@ -218,11 +218,13 @@ export async function POST(request: Request) {
     return Response.json({ message: "问题为空、过长或历史消息格式不正确。" }, { status: 400 });
   }
 
+  const allSkills = await loadEffectiveSkillRegistry();
+  const allSkillNames = allSkills.list().map((skill) => skill.name);
   const agentConfig = resolveProjectAgentConfig(payload.agentConfig, {
     enabledSkills: payload.enabledSkills,
     enabledTools: payload.enabledTools,
     enabledMcps: payload.enabledMcps,
-  });
+  }, allSkillNames);
   const agentPrompts = resolveGlobalAgentPrompts(payload.agentPrompts);
   const requestedModelReference = parseModelReference(payload.model);
   if (!agentConfig.mainModel && !requestedModelReference) {
@@ -241,7 +243,8 @@ export async function POST(request: Request) {
 
   const mainProfile = agentConfig.profiles.main;
   const enabledToolNames = new Set<string>(mainProfile.enabledTools);
-  const skillRegistry = loadSkillRegistry(
+  const skillRegistry = selectSkillRegistry(
+    allSkills,
     enabledToolNames.has("load_skill") ? mainProfile.enabledSkills : [],
   );
   const workspaceTools = createWorkspaceTools(workspaceId).filter((tool) =>
@@ -279,7 +282,8 @@ export async function POST(request: Request) {
     const childModel = models.getModel(childResolved.piProviderId, childResolved.modelId);
     if (!childModel) throw new Error("PI 中没有找到专业 Agent 所选模型。");
     const childToolNames = new Set(profile.enabledTools);
-    const childSkills = loadSkillRegistry(
+    const childSkills = selectSkillRegistry(
+      allSkills,
       childToolNames.has("load_skill") ? profile.enabledSkills : [],
     );
     const childWorkspaceTools = createWorkspaceTools(workspaceId).filter((tool) =>

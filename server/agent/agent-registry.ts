@@ -81,14 +81,19 @@ function resolveSystemPrompt(value: unknown, fallback: string) {
   return prompt.length > 0 && prompt.length <= 12_000 ? prompt : fallback;
 }
 
-function resolveProfile(role: AgentRoleDefinition, requested: unknown, fallback: AgentProfile): AgentProfile {
+function resolveProfile(
+  role: AgentRoleDefinition,
+  requested: unknown,
+  fallback: AgentProfile,
+  skillNames: readonly string[],
+): AgentProfile {
   const candidate = requested && typeof requested === "object"
     ? (requested as Partial<AgentProfile>)
     : {};
   return {
     enabled: role.id === "main" ? true : candidate.enabled === undefined ? fallback.enabled : candidate.enabled === true,
     ...(parseModelOverride(candidate.model) ? { model: parseModelOverride(candidate.model) } : {}),
-    enabledSkills: selectKnownNames(candidate.enabledSkills, role.maxSkills, fallback.enabledSkills),
+    enabledSkills: selectKnownNames(candidate.enabledSkills, skillNames, fallback.enabledSkills),
     enabledTools: selectKnownNames(candidate.enabledTools, role.maxTools, fallback.enabledTools),
     enabledMcps: selectKnownNames(candidate.enabledMcps, role.maxMcps, fallback.enabledMcps),
   };
@@ -108,7 +113,7 @@ export function resolveProjectAgentConfig(input: unknown, legacy?: {
   enabledSkills?: unknown;
   enabledTools?: unknown;
   enabledMcps?: unknown;
-}): ProjectAgentConfig {
+}, skillNames: readonly string[] = BUNDLED_SKILL_NAMES): ProjectAgentConfig {
   const defaults = createDefaultProjectAgentConfig();
   const candidate = input && typeof input === "object" ? input as Partial<ProjectAgentConfig> : {};
   const requestedProfiles = candidate.profiles && typeof candidate.profiles === "object"
@@ -118,7 +123,7 @@ export function resolveProjectAgentConfig(input: unknown, legacy?: {
     ...defaults.profiles.main,
     enabledSkills: legacy?.enabledSkills === undefined
       ? defaults.profiles.main.enabledSkills
-      : selectKnownNames(legacy.enabledSkills, AGENT_ROLE_REGISTRY.main.maxSkills, []),
+      : selectKnownNames(legacy.enabledSkills, skillNames, []),
     enabledTools: legacy?.enabledTools === undefined
       ? defaults.profiles.main.enabledTools
       : selectKnownNames(legacy.enabledTools, AGENT_ROLE_REGISTRY.main.maxTools, []),
@@ -133,6 +138,7 @@ export function resolveProjectAgentConfig(input: unknown, legacy?: {
         AGENT_ROLE_REGISTRY[id],
         requestedProfiles[id],
         id === "main" ? fallbackMain : defaults.profiles[id],
+        skillNames,
       ),
     ]),
   ) as ProjectAgentConfig["profiles"];
@@ -140,7 +146,7 @@ export function resolveProjectAgentConfig(input: unknown, legacy?: {
   return { ...(mainModel ? { mainModel } : {}), profiles };
 }
 
-export function publicAgentRoles() {
+export function publicAgentRoles(skillNames: readonly string[] = BUNDLED_SKILL_NAMES) {
   const defaults = createDefaultProjectAgentConfig();
   return AGENT_ROLE_IDS.map((id) => {
     const role = AGENT_ROLE_REGISTRY[id];
@@ -148,7 +154,7 @@ export function publicAgentRoles() {
       id,
       label: role.label,
       description: role.description,
-      maxSkills: [...role.maxSkills],
+      maxSkills: [...skillNames],
       maxTools: [...role.maxTools],
       maxMcps: [...role.maxMcps],
       defaultProfile: defaults.profiles[id],

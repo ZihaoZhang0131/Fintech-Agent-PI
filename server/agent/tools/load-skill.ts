@@ -14,7 +14,6 @@ export type LoadSkillDetails = {
   kind: "skill";
   name: string;
   description: string;
-  allowedTools: string[];
 };
 
 export function createLoadSkillTool(
@@ -45,7 +44,6 @@ export function createLoadSkillTool(
         kind: "skill",
         name: skill.name,
         description: skill.description,
-        allowedTools: [...skill.allowedTools],
       };
 
       if (alreadyLoaded) {
@@ -64,7 +62,6 @@ export function createLoadSkillTool(
               `<skill name="${skill.name}">`,
               skill.instructions,
               "</skill>",
-              `允许使用的业务工具：${skill.allowedTools.join(", ") || "无"}。`,
               "不要再次加载同一个 Skill；请按照以上流程继续完成用户任务。",
             ].join("\n\n"),
           },
@@ -74,4 +71,3 @@ export function createLoadSkillTool(
     },
   };
 }
-

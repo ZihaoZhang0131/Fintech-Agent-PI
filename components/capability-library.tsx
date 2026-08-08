@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowLeft, ExternalLink, RefreshCw, Search, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ExternalLink, FolderUp, Pencil, RefreshCw, Save, Search, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { CapabilityItem, CapabilityKind, McpCapabilityTool } from "@/lib/capability-types";
 
@@ -11,8 +11,13 @@ type CapabilityLibraryProps = {
   enabledNames: string[];
   onToggle: (name: string) => void;
   onRefresh?: () => void;
+  onSkillImport?: (files: File[]) => Promise<void>;
+  onSkillUpdate?: (item: CapabilityItem, value: SkillDraft) => Promise<void>;
+  onSkillDelete?: (item: CapabilityItem) => Promise<void>;
   onClose: () => void;
 };
+
+type SkillDraft = { name: string; description: string; instructions: string };
 
 export function CapabilityLibrary({
   kind,
@@ -20,10 +25,18 @@ export function CapabilityLibrary({
   enabledNames,
   onToggle,
   onRefresh,
+  onSkillImport,
+  onSkillUpdate,
+  onSkillDelete,
   onClose,
 }: CapabilityLibraryProps) {
   const [query, setQuery] = useState("");
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<SkillDraft | null>(null);
+  const [operationError, setOperationError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const enabled = useMemo(() => new Set(enabledNames), [enabledNames]);
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase("zh-CN");
@@ -47,6 +60,59 @@ export function CapabilityLibrary({
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, []);
+
+  function selectItem(item: CapabilityItem) {
+    setSelectedName(item.name);
+    setEditing(false);
+    setOperationError("");
+    setDraft(item.kind === "skill"
+      ? { name: item.name, description: item.description, instructions: item.detail }
+      : null);
+  }
+
+  async function importSkill(files: FileList | null) {
+    if (!files?.length || !onSkillImport) return;
+    setSubmitting(true);
+    setOperationError("");
+    try {
+      await onSkillImport(Array.from(files));
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "导入技能失败。");
+    } finally {
+      setSubmitting(false);
+      if (folderInputRef.current) folderInputRef.current.value = "";
+    }
+  }
+
+  async function saveSkill() {
+    if (!selected || selected.kind !== "skill" || !draft || !onSkillUpdate) return;
+    setSubmitting(true);
+    setOperationError("");
+    try {
+      await onSkillUpdate(selected, draft);
+      setEditing(false);
+      setSelectedName(null);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "保存技能失败。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function deleteSkill() {
+    if (!selected || selected.kind !== "skill" || !onSkillDelete) return;
+    if (!window.confirm(`确定删除技能“${selected.name}”？此操作仅影响本机技能目录。`)) return;
+    setSubmitting(true);
+    setOperationError("");
+    try {
+      await onSkillDelete(selected);
+      setSelectedName(null);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "删除技能失败。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <section className="capability-page">
@@ -86,7 +152,29 @@ export function CapabilityLibrary({
               <RefreshCw size={15} />
             </button>
           )}
+          {isSkill && onSkillImport && (
+            <>
+              <input
+                ref={folderInputRef}
+                className="capability-folder-input"
+                type="file"
+                multiple
+                {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+                onChange={(event) => void importSkill(event.target.files)}
+              />
+              <button
+                className="capability-import"
+                type="button"
+                onClick={() => folderInputRef.current?.click()}
+                disabled={submitting}
+              >
+                <FolderUp size={15} /> 导入技能
+              </button>
+            </>
+          )}
         </div>
+
+        {isSkill && operationError && !selected && <div className="capability-operation-error">{operationError}</div>}
 
         {filtered.length > 0 ? (
           <div className="capability-grid">
@@ -100,11 +188,6 @@ export function CapabilityLibrary({
                     {!isMcp && item.label !== item.name && <code>{item.name}</code>}
                     <p>{item.description}</p>
                   </div>
-                  {isSkill && Boolean(item.allowedTools?.length) && (
-                    <div className="capability-dependencies">
-                      依赖工具：{item.allowedTools?.join("、")}
-                    </div>
-                  )}
                   {isMcp && (
                     <div className={`mcp-card-summary ${item.status ?? "stopped"}`}>
                       <span>{mcpStatusLabel(item.status)}</span>
@@ -113,7 +196,7 @@ export function CapabilityLibrary({
                     </div>
                   )}
                   <footer className="capability-card-actions">
-                    <button className="capability-view-button" type="button" onClick={() => setSelectedName(item.name)}>
+                    <button className="capability-view-button" type="button" onClick={() => selectItem(item)}>
                       查看详情
                     </button>
                     <label className="capability-toggle">
@@ -166,7 +249,14 @@ export function CapabilityLibrary({
               </button>
             </header>
             <div className={`capability-modal-content ${selected.kind}`}>
-              {selected.kind === "skill" ? (
+              {selected.kind === "skill" ? editing && draft ? (
+                <div className="skill-editor">
+                  <label>名称<input value={draft.name} maxLength={80} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
+                  <label>Skill 描述（Agent 看到的）<textarea value={draft.description} maxLength={300} rows={3} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
+                  <label>Skill 内容<textarea value={draft.instructions} maxLength={20_000} rows={16} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} /></label>
+                  {operationError && <div className="capability-operation-error">{operationError}</div>}
+                </div>
+              ) : (
                 <ReactMarkdown>{selected.detail}</ReactMarkdown>
               ) : selected.kind === "mcp" ? (
                 <div className="mcp-detail">
@@ -204,13 +294,26 @@ export function CapabilityLibrary({
               )}
             </div>
             <footer className={`capability-modal-footer ${selected.kind === "mcp" ? "mcp" : ""}`}>
-              <button
-                type="button"
-                onClick={() => onToggle(selected.name)}
-                disabled={selected.kind === "mcp" && selected.status !== "connected"}
-              >
-                {enabled.has(selected.name) ? "停用" : "启用"}
-              </button>
+              {selected.kind === "skill" && editing ? (
+                <>
+                  <button type="button" className="capability-secondary-button" disabled={submitting} onClick={() => setEditing(false)}>取消</button>
+                  <button type="button" disabled={submitting} onClick={() => void saveSkill()}><Save size={13} /> 保存</button>
+                </>
+              ) : selected.kind === "skill" ? (
+                <>
+                  <button type="button" className="capability-danger-button" disabled={submitting} onClick={() => void deleteSkill()}><Trash2 size={13} /> 删除</button>
+                  <button type="button" className="capability-secondary-button" disabled={submitting} onClick={() => setEditing(true)}><Pencil size={13} /> 编辑</button>
+                  <button type="button" onClick={() => onToggle(selected.name)}>{enabled.has(selected.name) ? "停用" : "启用"}</button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onToggle(selected.name)}
+                  disabled={selected.kind === "mcp" && selected.status !== "connected"}
+                >
+                  {enabled.has(selected.name) ? "停用" : "启用"}
+                </button>
+              )}
             </footer>
           </section>
         </div>

@@ -1,7 +1,8 @@
 export type SkillMetadata = {
+  id: string;
+  origin: "bundled" | "custom";
   name: string;
   description: string;
-  allowedTools: string[];
 };
 
 export type SkillDefinition = SkillMetadata & {
@@ -9,7 +10,6 @@ export type SkillDefinition = SkillMetadata & {
 };
 
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const TOOL_NAME_PATTERN = /^[a-z0-9]+(?:_[a-z0-9]+)*$/;
 const MAX_SKILL_SOURCE_LENGTH = 20_000;
 
 function parseFrontmatter(source: string) {
@@ -58,20 +58,15 @@ function parseFrontmatter(source: string) {
 }
 
 export function parseSkill(source: string): SkillDefinition {
-  const { scalar, lists, body } = parseFrontmatter(source);
+  const { scalar, body } = parseFrontmatter(source);
   const name = scalar.get("name") ?? "";
   const description = scalar.get("description") ?? "";
-  const allowedTools = lists.get("allowed_tools") ?? [];
+  // `allowed_tools` is intentionally ignored for compatibility with older Skill folders.
 
   if (!SKILL_NAME_PATTERN.test(name)) throw new Error(`Invalid Skill name: ${name}`);
   if (!description || description.length > 300) {
     throw new Error(`Invalid description for Skill ${name}`);
   }
   if (!body) throw new Error(`Skill ${name} has no instructions`);
-  if (!allowedTools.every((toolName) => TOOL_NAME_PATTERN.test(toolName))) {
-    throw new Error(`Skill ${name} contains an invalid allowed_tools entry`);
-  }
-
-  return { name, description, allowedTools, instructions: body };
+  return { id: `bundled:${name}`, origin: "bundled", name, description, instructions: body };
 }
-

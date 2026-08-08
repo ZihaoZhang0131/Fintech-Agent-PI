@@ -8,6 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { createMcpManager } from "./mcp-manager.mjs";
+import { createSkillStore } from "./skill-store.mjs";
 import {
   deleteModelProvider,
   listPublicModelProviders,
@@ -716,6 +717,7 @@ async function readJsonBody(request) {
 
 export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = createMcpManager() }) {
   const commandManager = createCommandManager({ dataDirectory });
+  const skillStore = createSkillStore(dataDirectory);
   return async function handle(request, response) {
     try {
       if (!token || request.headers.authorization !== `Bearer ${token}`) {
@@ -739,6 +741,20 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
         return sendJson(response, 200, {
           providers: await listPublicModelProviders(dataDirectory),
         });
+      }
+      if (request.method === "GET" && url.pathname === "/skills") {
+        return sendJson(response, 200, await skillStore.list());
+      }
+      if (request.method === "POST" && url.pathname === "/skills/import") {
+        return sendJson(response, 201, await skillStore.importFolder(await readJsonBody(request)));
+      }
+      if (segments[0] === "skills" && segments[1] && segments.length === 2) {
+        if (request.method === "POST") {
+          return sendJson(response, 200, await skillStore.update(segments[1], await readJsonBody(request)));
+        }
+        if (request.method === "DELETE") {
+          return sendJson(response, 200, await skillStore.remove(segments[1]));
+        }
       }
       if (segments[0] === "models" && segments[1]) {
         const providerId = segments[1];

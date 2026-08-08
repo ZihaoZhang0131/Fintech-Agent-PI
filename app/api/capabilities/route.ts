@@ -4,7 +4,7 @@ import workspaceFilesSource from "../../../server/agent/tools/workspace-files.ts
 import bashSource from "../../../server/agent/tools/bash.ts?raw";
 import { AGENT_TOOL_NAMES } from "@/server/agent/capability-policy";
 import { publicAgentRoles } from "@/server/agent/agent-registry";
-import { loadSkillRegistry } from "@/server/agent/skills/loader";
+import { loadEffectiveSkillRegistry } from "@/server/agent/skills/loader";
 import { MCP_SERVERS, type McpServerStatus, type McpToolDefinition } from "@/server/agent/mcp/registry";
 
 type RuntimeMcpServer = {
@@ -72,15 +72,16 @@ const toolMetadata = {
 
 export async function GET() {
   const runtimeMcps = await loadRuntimeMcps();
-  const registry = loadSkillRegistry();
+  const registry = await loadEffectiveSkillRegistry();
   const skills = registry.list().map((metadata) => ({
     kind: "skill" as const,
+    id: metadata.id,
+    origin: metadata.origin,
     name: metadata.name,
     label: metadata.name,
     description: metadata.description,
-    allowedTools: metadata.allowedTools,
     detail: registry.get(metadata.name)?.instructions ?? "",
-    sourcePath: `.agents/skills/${metadata.name}/SKILL.md`,
+    sourcePath: metadata.origin === "bundled" ? `.agents/skills/${metadata.name}/SKILL.md` : ".local-data/skills",
     defaultEnabled: true,
   }));
   const tools = AGENT_TOOL_NAMES.map((name) => ({
@@ -112,7 +113,7 @@ export async function GET() {
   });
 
   return Response.json(
-    { skills, tools, mcps, agents: publicAgentRoles() },
+    { skills, tools, mcps, agents: publicAgentRoles(skills.map((skill) => skill.name)) },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

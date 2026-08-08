@@ -18,13 +18,14 @@ export type McpCapabilityTool = {
 
 export type CapabilityItem = {
   kind: CapabilityKind;
+  id?: string;
+  origin?: "bundled" | "custom";
   name: string;
   label: string;
   description: string;
   detail: string;
   sourcePath: string;
   defaultEnabled: boolean;
-  allowedTools?: string[];
   version?: string;
   homepage?: string;
   transport?: "stdio";
