@@ -11,6 +11,7 @@
 - 右侧实时浏览项目目录，预览 Markdown、代码、文本、图片和 PDF
 - Agent 将可复用的报告、代码和数据保存到项目 `outputs/` 目录
 - 左侧能力入口提供独立的技能、工具与 MCP 管理页面，支持搜索、连接状态和详情查看
+- 左侧“模型”页面可配置 DeepSeek、OpenAI、Anthropic、Gemini、通义千问、Kimi 与智谱 AI；完成连接测试后可在对话框切换
 - 技能、工具与 MCP 开关保存在浏览器本地，并真实限制下一轮 Agent 可加载和调用的能力
 - 左右侧栏支持拖动调宽、单独隐藏和恢复，布局状态会在本机保留
 - 右侧文件目录与文件预览支持上下拖动调整比例，也可以分别隐藏和展开
@@ -57,7 +58,7 @@ npm run mcp:setup
    cp .env.example .env
    ```
 
-2. 在 `.env` 中填写 DeepSeek API Key 和 Tavily API Key。Tavily SDK 可在未配置 Key 时使用受限的 keyless 模式，但稳定使用建议配置自己的 Key。
+2. 在 `.env` 中填写 Tavily API Key；DeepSeek API Key 仍可作为兼容配置。模型服务商的 API Key 也可以在启动后从左侧“模型”页面保存到本机 Runtime，完成测试后才会进入对话模型列表。Tavily SDK 可在未配置 Key 时使用受限的 keyless 模式，但稳定使用建议配置自己的 Key。
 
 3. 安装依赖、安装 MCP 并启动完整的本地应用：
 
@@ -97,7 +98,7 @@ npm test
 
 ## 数据位置
 
-- API Key：仅保存在本地 `.env`，该文件已被 Git 忽略。
+- API Key：可保存在本地 `.env`（兼容 DeepSeek）或由“模型”页面保存到 `.local-data/model-providers.json`；两者均被 Git 忽略，后者以本机文件权限保护且接口不会返回明文密钥。
 - 对话记录：保存在当前浏览器的 `localStorage` 中。
 - 技能、工具与 MCP 开关：保存在当前浏览器的 `localStorage` 中；MCP 首次连接成功后默认启用。
 - 项目绑定关系：保存在应用目录下的 `.local-data/workspaces.json`，该目录已被 Git 忽略。

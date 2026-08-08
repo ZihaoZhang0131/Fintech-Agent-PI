@@ -35,10 +35,11 @@ test("model, Bash execution, and Agent permission controls share one composer ro
   assert.match(styleSource, /\.composer-options[\s\S]*?overflow-x: auto;/);
 });
 
-test("selected model is persisted and sent with the chat request", () => {
+test("selected model reference is persisted and sent with the chat request", () => {
   assert.match(pageSource, /SELECTED_MODEL_KEY/);
   assert.match(pageSource, /localStorage\.setItem\(SELECTED_MODEL_KEY, modelId\)/);
-  assert.match(pageSource, /modelId: selectedModelId \|\| health\?\.model/);
+  assert.match(pageSource, /providerId: selectedModel\.providerId/);
+  assert.match(pageSource, /modelId: selectedModel\.modelId/);
 });
 
 test("Bash approval events are rendered with allow and reject actions", () => {

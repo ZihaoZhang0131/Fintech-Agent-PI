@@ -52,6 +52,7 @@ import ReactMarkdown from "react-markdown";
 import { CapabilityLibrary } from "@/components/capability-library";
 import { MarkdownMessage } from "@/components/chat-markdown";
 import { CodePreview } from "@/components/code-preview";
+import { ModelLibrary, type ModelProviderItem } from "@/components/model-library";
 import { ToolRunStack } from "@/components/tool-run-stack";
 import type { CapabilityCatalog, CapabilityKind } from "@/lib/capability-types";
 import { shouldSubmitComposerKey } from "@/lib/composer-keyboard";
@@ -131,12 +132,11 @@ type FilePreview = {
   previewLimitBytes?: number;
 };
 
-type HealthInfo = {
-  status: "ok";
-  provider: string;
-  model: string;
-  models: Array<{ id: string; label: string }>;
-  keyConfigured: boolean;
+type AvailableModel = {
+  providerId: string;
+  providerLabel: string;
+  modelId: string;
+  label: string;
 };
 
 type AgentStatus = "idle" | "connecting" | "streaming" | "done" | "stopped" | "error";
@@ -169,7 +169,7 @@ const FILE_PANEL_VISIBLE_KEY = "pi-research-agent:file-panel-visible:v1";
 const FILE_TABS_KEY = "pi-research-agent:file-tabs:v1";
 const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
 
-type AppView = "workspace" | CapabilityKind;
+type AppView = "workspace" | CapabilityKind | "model";
 
 const SUGGESTIONS = [
   {
@@ -362,7 +362,10 @@ export default function Home() {
   const [copiedProjectPath, setCopiedProjectPath] = useState(false);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<AgentStatus>("idle");
-  const [health, setHealth] = useState<HealthInfo | null>(null);
+  const [modelProviders, setModelProviders] = useState<ModelProviderItem[]>([]);
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState("");
   const [selectedModelId, setSelectedModelId] = useState("");
   const [durationMs, setDurationMs] = useState<number | null>(null);
   const [tokenUsage, setTokenUsage] = useState<number | null>(null);
@@ -405,6 +408,10 @@ export default function Home() {
         (conversation) => conversation.id === activeId && conversation.projectId === activeProjectId,
       ),
     [activeId, activeProjectId, conversations],
+  );
+  const selectedModel = useMemo(
+    () => availableModels.find((model) => `${model.providerId}:${model.modelId}` === selectedModelId),
+    [availableModels, selectedModelId],
   );
   const isBusy = status === "connecting" || status === "streaming";
   const activeFileTabs = getProjectFileTabs(fileTabsByProject, activeProjectId);
@@ -528,6 +535,37 @@ export default function Home() {
     [loadProjectDirectory],
   );
 
+  const loadModelCatalog = useCallback(async () => {
+    setModelsLoading(true);
+    setModelsError("");
+    try {
+      const payload = await responseJson<{
+        providers: ModelProviderItem[];
+        models: AvailableModel[];
+      }>(await fetch("/api/models", { cache: "no-store" }));
+      setModelProviders(payload.providers);
+      setAvailableModels(payload.models);
+      const storedModelId = localStorage.getItem(SELECTED_MODEL_KEY) ?? "";
+      const legacyDeepSeek = payload.models.find(
+        (model) => model.providerId === "deepseek" && model.modelId === storedModelId,
+      );
+      const chosen = payload.models.find(
+        (model) => `${model.providerId}:${model.modelId}` === storedModelId,
+      ) ?? legacyDeepSeek ?? payload.models[0];
+      const nextId = chosen ? `${chosen.providerId}:${chosen.modelId}` : "";
+      setSelectedModelId(nextId);
+      if (nextId) localStorage.setItem(SELECTED_MODEL_KEY, nextId);
+      else localStorage.removeItem(SELECTED_MODEL_KEY);
+    } catch (error) {
+      setModelProviders([]);
+      setAvailableModels([]);
+      setSelectedModelId("");
+      setModelsError(error instanceof Error ? error.message : "无法读取本机模型配置。");
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     async function initialize() {
       setSidebarWidth(storedNumber(localStorage.getItem(SIDEBAR_WIDTH_KEY), 246, 190, 380));
@@ -605,19 +643,8 @@ export default function Home() {
     }
 
     void initialize();
-    fetch("/api/health")
-      .then((response) => responseJson<HealthInfo>(response))
-      .then((info) => {
-        setHealth(info);
-        const storedModelId = localStorage.getItem(SELECTED_MODEL_KEY);
-        setSelectedModelId(
-          storedModelId && info.models.some((model) => model.id === storedModelId)
-            ? storedModelId
-            : info.model,
-        );
-      })
-      .catch(() => setHealth(null));
-  }, []);
+    void loadModelCatalog();
+  }, [loadModelCatalog]);
 
   useEffect(() => {
     async function loadCapabilities() {
@@ -944,9 +971,40 @@ export default function Home() {
   }
 
   function selectModel(modelId: string) {
-    if (!health?.models.some((model) => model.id === modelId) || isBusy) return;
+    if (!availableModels.some((model) => `${model.providerId}:${model.modelId}` === modelId) || isBusy) return;
     setSelectedModelId(modelId);
     localStorage.setItem(SELECTED_MODEL_KEY, modelId);
+  }
+
+  async function saveAndTestModelProvider(
+    providerId: string,
+    payload: { apiKey?: string; enabledModelIds: string[]; modelId: string },
+  ) {
+    setModelsError("");
+    await responseJson(
+      await fetch(`/api/local/models/${providerId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: payload.apiKey, enabledModelIds: payload.enabledModelIds }),
+      }),
+    );
+    try {
+      await responseJson(
+        await fetch(`/api/models/${providerId}/test`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ modelId: payload.modelId }),
+        }),
+      );
+    } finally {
+      await loadModelCatalog();
+    }
+  }
+
+  async function deleteModelProvider(providerId: string) {
+    setModelsError("");
+    await responseJson(await fetch(`/api/local/models/${providerId}`, { method: "DELETE" }));
+    await loadModelCatalog();
   }
 
   function confirmFullBashPermission() {
@@ -1006,6 +1064,13 @@ export default function Home() {
     setActiveView(kind);
     setSidebarOpen(false);
     setFilePanelOpen(false);
+  }
+
+  function openModelView() {
+    setActiveView("model");
+    setSidebarOpen(false);
+    setFilePanelOpen(false);
+    void loadModelCatalog();
   }
 
   function toggleSidebarVisibility() {
@@ -1146,7 +1211,7 @@ export default function Home() {
 
   async function sendMessage(rawInput = input) {
     const content = rawInput.trim();
-    if (!content || !activeConversation || !activeProject || !capabilitiesReady || isBusy) return;
+    if (!content || !activeConversation || !activeProject || !capabilitiesReady || isBusy || !selectedModel) return;
 
     const conversationId = activeConversation.id;
     const history = activeConversation.messages;
@@ -1187,7 +1252,10 @@ export default function Home() {
           conversationId,
           workspaceId: activeProject.id,
           workspaceName: activeProject.name,
-          modelId: selectedModelId || health?.model,
+          model: {
+            providerId: selectedModel.providerId,
+            modelId: selectedModel.modelId,
+          },
           enabledSkills,
           enabledTools,
           enabledMcps,
@@ -1544,6 +1612,15 @@ export default function Home() {
             <span>MCP</span>
             <small>{enabledMcps.length}/{capabilityCatalog.mcps.length}</small>
           </button>
+          <button
+            className={activeView === "model" ? "active" : ""}
+            type="button"
+            onClick={openModelView}
+          >
+            <Cpu size={15} />
+            <span>模型</span>
+            <small>{availableModels.length}</small>
+          </button>
         </nav>
       </aside>
 
@@ -1698,15 +1775,24 @@ export default function Home() {
                   <span>模型</span>
                   <select
                     aria-label="模型选择"
-                    value={selectedModelId || health?.model || ""}
+                    value={selectedModelId}
                     onChange={(event) => selectModel(event.target.value)}
-                    disabled={!health || isBusy}
+                    disabled={!availableModels.length || isBusy}
                   >
-                    {(health?.models ?? []).map((model) => (
-                      <option value={model.id} key={model.id}>
-                        {model.label}
-                      </option>
-                    ))}
+                    {!availableModels.length && <option value="">暂无可用模型</option>}
+                    {modelProviders
+                      .filter((provider) => provider.verified)
+                      .map((provider) => (
+                        <optgroup label={provider.label} key={provider.id}>
+                          {availableModels
+                            .filter((model) => model.providerId === provider.id)
+                            .map((model) => (
+                              <option value={`${model.providerId}:${model.modelId}`} key={`${model.providerId}:${model.modelId}`}>
+                                {model.label}
+                              </option>
+                            ))}
+                        </optgroup>
+                      ))}
                   </select>
                   <ChevronDown size={11} />
                 </label>
@@ -1749,7 +1835,7 @@ export default function Home() {
                 <button
                   className="send-button"
                   type="submit"
-                  disabled={!input.trim() || !activeProject || !capabilitiesReady}
+                  disabled={!input.trim() || !activeProject || !capabilitiesReady || !selectedModel}
                 >
                   <Send size={17} />
                 </button>
@@ -2122,6 +2208,15 @@ export default function Home() {
         </button>
       )}
         </>
+      ) : activeView === "model" ? (
+        <ModelLibrary
+          providers={modelProviders}
+          loading={modelsLoading}
+          error={modelsError}
+          onSaveAndTest={saveAndTestModelProvider}
+          onDelete={deleteModelProvider}
+          onClose={() => setActiveView("workspace")}
+        />
       ) : (
         <CapabilityLibrary
           key={activeView}

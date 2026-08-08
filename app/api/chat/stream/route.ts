@@ -1,7 +1,7 @@
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
-import { createModels, type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
-import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
-import { resolveModelId } from "@/lib/model-options";
+import { type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
+import { createConfiguredModels } from "@/server/model-registry";
+import { parseModelReference, resolveRuntimeModel } from "@/server/model-runtime";
 import { resolveCapabilitySelection } from "@/server/agent/capability-policy";
 import { formatSkillCatalog } from "@/server/agent/skills/catalog";
 import { loadSkillRegistry } from "@/server/agent/skills/loader";
@@ -32,7 +32,7 @@ type ChatRequest = {
   conversationId?: string;
   workspaceId?: string;
   workspaceName?: string;
-  modelId?: unknown;
+  model?: unknown;
   enabledSkills?: unknown;
   enabledTools?: unknown;
   enabledMcps?: unknown;
@@ -89,7 +89,12 @@ function isInputMessage(value: unknown): value is InputMessage {
   );
 }
 
-function toAgentMessage(message: InputMessage, modelId: string, index: number): AgentMessage {
+function toAgentMessage(
+  message: InputMessage,
+  piProviderId: string,
+  modelId: string,
+  index: number,
+): AgentMessage {
   const timestamp = Date.now() - Math.max(0, 1_000 - index);
   if (message.role === "user") {
     return { role: "user", content: message.content, timestamp };
@@ -99,7 +104,7 @@ function toAgentMessage(message: InputMessage, modelId: string, index: number): 
     role: "assistant",
     content: [{ type: "text", text: message.content }],
     api: "openai-completions",
-    provider: "deepseek",
+    provider: piProviderId,
     model: modelId,
     usage: EMPTY_USAGE,
     stopReason: "stop",
@@ -114,13 +119,13 @@ function formatSse(payload: object) {
 function safeErrorMessage(error: unknown) {
   const raw = error instanceof Error ? error.message : "unknown error";
   if (/401|unauthorized|api.?key/i.test(raw)) {
-    return "DeepSeek 鉴权失败，请检查本地 API Key。";
+    return "模型鉴权失败，请检查该服务商的 API Key。";
   }
   if (/402|balance|insufficient/i.test(raw)) {
-    return "DeepSeek 账户余额不足，请充值后重试。";
+    return "模型账户余额不足或没有使用权限。";
   }
   if (/429|rate.?limit/i.test(raw)) {
-    return "DeepSeek 请求过于频繁，请稍后再试。";
+    return "模型请求过于频繁，请稍后再试。";
   }
   return "模型调用失败，请检查网络或稍后重试。";
 }
@@ -197,20 +202,25 @@ function getToolInput(args: unknown) {
 }
 
 export async function POST(request: Request) {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  const configuredModelId = process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash";
-
-  if (!apiKey) {
-    return Response.json({ message: "本地服务尚未配置 DeepSeek API Key。" }, { status: 503 });
-  }
-
   let payload: ChatRequest;
   try {
     payload = (await request.json()) as ChatRequest;
   } catch {
     return Response.json({ message: "请求内容不是有效的 JSON。" }, { status: 400 });
   }
-  const modelId = resolveModelId(payload.modelId, configuredModelId);
+  const modelReference = parseModelReference(payload.model);
+  if (!modelReference) {
+    return Response.json({ message: "请选择一个可用模型。" }, { status: 400 });
+  }
+  let resolvedModel;
+  try {
+    resolvedModel = await resolveRuntimeModel(modelReference);
+  } catch (error) {
+    return Response.json(
+      { message: error instanceof Error ? error.message : "模型尚未完成配置。" },
+      { status: 409 },
+    );
+  }
 
   const input = payload.input?.trim() ?? "";
   const history = Array.isArray(payload.messages) ? payload.messages : [];
@@ -278,11 +288,10 @@ export async function POST(request: Request) {
     "只处理当前项目和用户任务相关的内容，不覆盖不相关文件。",
   ].join("\n");
 
-  const models = createModels();
-  models.setProvider(deepseekProvider());
-  const model = models.getModel("deepseek", modelId);
+  const models = createConfiguredModels();
+  const model = models.getModel(resolvedModel.piProviderId, resolvedModel.modelId);
   if (!model) {
-    return Response.json({ message: `PI 中没有找到模型 ${modelId}。` }, { status: 500 });
+    return Response.json({ message: "PI 中没有找到所选模型。" }, { status: 500 });
   }
 
   const agent = new Agent({
@@ -291,10 +300,12 @@ export async function POST(request: Request) {
       model,
       thinkingLevel: "off",
       tools: agentTools,
-      messages: history.map((message, index) => toAgentMessage(message, modelId, index)),
+      messages: history.map((message, index) =>
+        toAgentMessage(message, resolvedModel.piProviderId, resolvedModel.modelId, index),
+      ),
     },
     streamFn: models.streamSimple.bind(models),
-    getApiKey: () => apiKey,
+    getApiKey: () => resolvedModel.apiKey,
     sessionId: payload.conversationId,
   });
 

@@ -8,6 +8,13 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { createMcpManager } from "./mcp-manager.mjs";
+import {
+  deleteModelProvider,
+  listPublicModelProviders,
+  resolveConfiguredModel,
+  saveModelProvider,
+  updateModelVerification,
+} from "./model-providers.mjs";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_PORT = 4318;
@@ -727,6 +734,44 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
         return sendJson(response, 200, {
           servers: await mcpManager.listServers({ connect: url.searchParams.get("connect") !== "0" }),
         });
+      }
+      if (request.method === "GET" && url.pathname === "/models") {
+        return sendJson(response, 200, {
+          providers: await listPublicModelProviders(dataDirectory),
+        });
+      }
+      if (segments[0] === "models" && segments[1]) {
+        const providerId = segments[1];
+        if (request.method === "POST" && segments.length === 2) {
+          return sendJson(
+            response,
+            200,
+            await saveModelProvider(dataDirectory, providerId, await readJsonBody(request)),
+          );
+        }
+        if (request.method === "DELETE" && segments.length === 2) {
+          return sendJson(response, 200, await deleteModelProvider(dataDirectory, providerId));
+        }
+        if (request.method === "GET" && segments[2] === "resolve" && segments.length === 3) {
+          return sendJson(
+            response,
+            200,
+            await resolveConfiguredModel(
+              dataDirectory,
+              providerId,
+              url.searchParams.get("modelId") ?? "",
+              process.env,
+              { allowUnverified: url.searchParams.get("forTest") === "1" },
+            ),
+          );
+        }
+        if (request.method === "POST" && segments[2] === "verification" && segments.length === 3) {
+          return sendJson(
+            response,
+            200,
+            await updateModelVerification(dataDirectory, providerId, await readJsonBody(request)),
+          );
+        }
       }
       if (
         request.method === "POST" &&
