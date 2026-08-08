@@ -1,7 +1,8 @@
 "use client";
 
 import { ArrowLeft, CheckCircle2, CircleAlert, Cpu, LoaderCircle, X } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import Image from "next/image";
+import { type CSSProperties, FormEvent, useMemo, useState } from "react";
 
 export type ModelProviderItem = {
   id: string;
@@ -18,6 +19,76 @@ export type ModelProviderItem = {
     error?: string;
   };
 };
+
+type ProviderBrand = {
+  logo: string;
+  accent: string;
+  soft: string;
+  border: string;
+  gradient?: string;
+};
+
+const PROVIDER_BRANDS: Record<string, ProviderBrand> = {
+  deepseek: {
+    logo: "/provider-logos/deepseek.svg",
+    accent: "#3a82f7",
+    soft: "#edf5ff",
+    border: "#bedbff",
+  },
+  openai: {
+    logo: "/provider-logos/openai.svg",
+    accent: "#141413",
+    soft: "#f3f3f0",
+    border: "#d9d9d2",
+  },
+  anthropic: {
+    logo: "/provider-logos/anthropic.svg",
+    accent: "#d97757",
+    soft: "#fff3ed",
+    border: "#f1cab9",
+  },
+  gemini: {
+    logo: "/provider-logos/gemini.svg",
+    accent: "#4285f4",
+    soft: "#f4f6ff",
+    border: "#cad7ff",
+    gradient: "linear-gradient(90deg, #4285f4 0%, #8b75e5 40%, #d96570 70%, #f9ab00 100%)",
+  },
+  qwen: {
+    logo: "/provider-logos/qwen.svg",
+    accent: "#1677ff",
+    soft: "#edf5ff",
+    border: "#bdd9ff",
+  },
+  kimi: {
+    logo: "/provider-logos/kimi.svg",
+    accent: "#1a88ff",
+    soft: "#edf7ff",
+    border: "#bde0ff",
+  },
+  zhipu: {
+    logo: "/provider-logos/zhipu.svg",
+    accent: "#2f6bff",
+    soft: "#eff3ff",
+    border: "#c5d5ff",
+  },
+};
+
+const DEFAULT_PROVIDER_BRAND: ProviderBrand = {
+  logo: "",
+  accent: "#5f5f5f",
+  soft: "#f6f6f3",
+  border: "#dfdfd8",
+};
+
+function providerCardStyle(brand: ProviderBrand): CSSProperties {
+  return {
+    "--provider-accent": brand.accent,
+    "--provider-soft": brand.soft,
+    "--provider-border": brand.border,
+    "--provider-accent-fill": brand.gradient ?? brand.accent,
+  } as CSSProperties;
+}
 
 type ModelLibraryProps = {
   providers: ModelProviderItem[];
@@ -111,12 +182,23 @@ export function ModelLibrary({
         {error && <p className="model-page-error">{error}</p>}
         <div className="model-provider-grid" aria-label="模型服务商">
           {providers.map((provider) => (
-            <article className="model-provider-card" key={provider.id}>
-              <div>
-                <h2>{provider.label}</h2>
-                <p className={provider.verified ? "verified" : provider.configured ? "configured" : ""}>
-                  {provider.verified ? "已验证" : provider.configured ? "待验证" : "未配置"}
-                </p>
+            <article
+              className="model-provider-card"
+              key={provider.id}
+              style={providerCardStyle(PROVIDER_BRANDS[provider.id] ?? DEFAULT_PROVIDER_BRAND)}
+            >
+              <div className="model-provider-card-heading">
+                {PROVIDER_BRANDS[provider.id]?.logo && (
+                  <span className="model-provider-logo" aria-hidden="true">
+                    <Image src={PROVIDER_BRANDS[provider.id].logo} alt="" width={22} height={22} unoptimized />
+                  </span>
+                )}
+                <div>
+                  <h2>{provider.label}</h2>
+                  <p className={provider.verified ? "verified" : provider.configured ? "configured" : ""}>
+                    {provider.verified ? "已验证" : provider.configured ? "待验证" : "未配置"}
+                  </p>
+                </div>
               </div>
               <footer>
                 <span>{provider.enabledModelIds.length} 个模型</span>
