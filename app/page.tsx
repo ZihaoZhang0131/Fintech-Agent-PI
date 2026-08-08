@@ -2,6 +2,7 @@
 
 import {
   BookOpenCheck,
+  Bot,
   Braces,
   ChevronDown,
   ChevronRight,
@@ -50,11 +51,20 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import { CapabilityLibrary } from "@/components/capability-library";
+import { AgentLibrary } from "@/components/agent-library";
 import { MarkdownMessage } from "@/components/chat-markdown";
 import { CodePreview } from "@/components/code-preview";
 import { ModelLibrary, type ModelProviderItem } from "@/components/model-library";
 import { ToolRunStack } from "@/components/tool-run-stack";
 import type { CapabilityCatalog, CapabilityKind } from "@/lib/capability-types";
+import {
+  cloneProjectAgentConfig,
+  createDefaultProjectAgentConfig,
+  createProjectAgentConfigFromLegacy,
+  type AgentProfile,
+  type AgentRoleId,
+  type ProjectAgentConfig,
+} from "@/lib/agent-profiles";
 import { shouldSubmitComposerKey } from "@/lib/composer-keyboard";
 import {
   getLoadedFileTreeEntries,
@@ -168,8 +178,9 @@ const SIDEBAR_VISIBLE_KEY = "pi-research-agent:sidebar-visible:v1";
 const FILE_PANEL_VISIBLE_KEY = "pi-research-agent:file-panel-visible:v1";
 const FILE_TABS_KEY = "pi-research-agent:file-tabs:v1";
 const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
+const AGENT_PROFILES_KEY = "pi-research-agent:agent-profiles:v2";
 
-type AppView = "workspace" | CapabilityKind | "model";
+type AppView = "workspace" | CapabilityKind | "model" | "agent";
 
 const SUGGESTIONS = [
   {
@@ -281,6 +292,35 @@ function parseStoredNames(value: string | null) {
   }
 }
 
+function parseProjectAgentConfigs(value: string | null): Record<string, ProjectAgentConfig> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as Record<string, ProjectAgentConfig>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([projectId, config]) => {
+        if (!config || typeof config !== "object" || !config.profiles || typeof config.profiles !== "object") return [];
+        const base = createDefaultProjectAgentConfig();
+        for (const id of ["main", "market-data", "web-evidence", "financial-analysis"] as AgentRoleId[]) {
+          const profile = config.profiles[id];
+          if (!profile || typeof profile !== "object") continue;
+          base.profiles[id] = {
+            enabled: id === "main" ? true : profile.enabled === true,
+            ...(profile.model ? { model: profile.model } : {}),
+            enabledSkills: Array.isArray(profile.enabledSkills) ? profile.enabledSkills.filter((name): name is string => typeof name === "string") : [],
+            enabledTools: Array.isArray(profile.enabledTools) ? profile.enabledTools.filter((name): name is string => typeof name === "string") : [],
+            enabledMcps: Array.isArray(profile.enabledMcps) ? profile.enabledMcps.filter((name): name is string => typeof name === "string") : [],
+          };
+        }
+        if (config.mainModel) base.mainModel = config.mainModel;
+        return [[projectId, base] as const];
+      }),
+    );
+  } catch {
+    return {};
+  }
+}
+
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
 }
@@ -380,10 +420,12 @@ export default function Home() {
     skills: [],
     tools: [],
     mcps: [],
+    agents: [],
   });
   const [enabledSkills, setEnabledSkills] = useState<string[]>([]);
   const [enabledTools, setEnabledTools] = useState<string[]>([]);
   const [enabledMcps, setEnabledMcps] = useState<string[]>([]);
+  const [agentConfigsByProject, setAgentConfigsByProject] = useState<Record<string, ProjectAgentConfig>>({});
   const [capabilityRefreshVersion, setCapabilityRefreshVersion] = useState(0);
   const [capabilitiesReady, setCapabilitiesReady] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(246);
@@ -412,6 +454,10 @@ export default function Home() {
   const selectedModel = useMemo(
     () => availableModels.find((model) => `${model.providerId}:${model.modelId}` === selectedModelId),
     [availableModels, selectedModelId],
+  );
+  const activeAgentConfig = useMemo(
+    () => agentConfigsByProject[activeProjectId] ?? createDefaultProjectAgentConfig(),
+    [activeProjectId, agentConfigsByProject],
   );
   const isBusy = status === "connecting" || status === "streaming";
   const activeFileTabs = getProjectFileTabs(fileTabsByProject, activeProjectId);
@@ -593,6 +639,15 @@ export default function Home() {
         const availableFileTabs = Object.fromEntries(
           Object.entries(storedFileTabs).filter(([projectId]) => projectIds.has(projectId)),
         );
+        const storedAgentConfigs = parseProjectAgentConfigs(localStorage.getItem(AGENT_PROFILES_KEY));
+        const legacyAgentConfig = createProjectAgentConfigFromLegacy({
+          enabledSkills: parseStoredNames(localStorage.getItem(ENABLED_SKILLS_KEY)) ?? undefined,
+          enabledTools: parseStoredNames(localStorage.getItem(ENABLED_TOOLS_KEY) ?? localStorage.getItem(LEGACY_ENABLED_TOOLS_KEY)) ?? undefined,
+          enabledMcps: parseStoredNames(localStorage.getItem(ENABLED_MCPS_KEY)) ?? undefined,
+        });
+        const availableAgentConfigs = Object.fromEntries(
+          available.map((project) => [project.id, storedAgentConfigs[project.id] ?? cloneProjectAgentConfig(legacyAgentConfig)]),
+        );
         let normalized = stored.flatMap((conversation) => {
           const projectId =
             conversation.projectId && projectIds.has(conversation.projectId)
@@ -620,6 +675,7 @@ export default function Home() {
           ? normalized.find((item) => item.projectId === initialProject.id)
           : undefined;
         setProjects(available);
+        setAgentConfigsByProject(availableAgentConfigs);
         setConversations(normalized);
         setActiveProjectId(initialProject?.id ?? "");
         setActiveId(firstConversation?.id ?? "");
@@ -696,6 +752,21 @@ export default function Home() {
     if (!hydrated) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
   }, [conversations, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(AGENT_PROFILES_KEY, JSON.stringify(agentConfigsByProject));
+  }, [agentConfigsByProject, hydrated]);
+
+  useEffect(() => {
+    if (!activeProjectId || !agentConfigsByProject[activeProjectId]) return;
+    const main = agentConfigsByProject[activeProjectId].profiles.main;
+    setEnabledSkills(main.enabledSkills);
+    setEnabledTools(main.enabledTools);
+    setEnabledMcps(main.enabledMcps);
+    const mainModel = agentConfigsByProject[activeProjectId].mainModel;
+    if (mainModel) setSelectedModelId(`${mainModel.providerId}:${mainModel.modelId}`);
+  }, [activeProjectId, agentConfigsByProject]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -784,6 +855,11 @@ export default function Home() {
       setProjects((current) =>
         current.some((item) => item.id === project.id) ? current : [project, ...current],
       );
+      setAgentConfigsByProject((current) =>
+        current[project.id]
+          ? current
+          : { ...current, [project.id]: createDefaultProjectAgentConfig() },
+      );
       const existing = conversations.find((item) => item.projectId === project.id);
       if (existing) {
         setExpandedProjectIds((current) =>
@@ -847,6 +923,11 @@ export default function Home() {
       }
 
       setProjects(remainingProjects);
+      setAgentConfigsByProject((current) => {
+        const next = { ...current };
+        delete next[project.id];
+        return next;
+      });
       setConversations(remainingConversations);
       const projectPrefix = `${project.id}\u0000`;
       for (const key of Object.keys(directoryRequestRef.current)) {
@@ -940,12 +1021,32 @@ export default function Home() {
       return next;
     };
     if (kind === "skill") {
-      setEnabledSkills((current) => update(current, ENABLED_SKILLS_KEY));
+      setEnabledSkills((current) => {
+        const next = update(current, ENABLED_SKILLS_KEY);
+        updateAgentProfile("main", { ...activeAgentConfig.profiles.main, enabledSkills: next });
+        return next;
+      });
     } else if (kind === "tool") {
-      setEnabledTools((current) => update(current, ENABLED_TOOLS_KEY));
+      setEnabledTools((current) => {
+        const next = update(current, ENABLED_TOOLS_KEY);
+        updateAgentProfile("main", { ...activeAgentConfig.profiles.main, enabledTools: next });
+        return next;
+      });
     } else {
-      setEnabledMcps((current) => update(current, ENABLED_MCPS_KEY));
+      setEnabledMcps((current) => {
+        const next = update(current, ENABLED_MCPS_KEY);
+        updateAgentProfile("main", { ...activeAgentConfig.profiles.main, enabledMcps: next });
+        return next;
+      });
     }
+  }
+
+  function updateAgentProfile(id: AgentRoleId, profile: AgentProfile) {
+    if (!activeProjectId || isBusy) return;
+    setAgentConfigsByProject((current) => {
+      const config = current[activeProjectId] ?? createDefaultProjectAgentConfig();
+      return { ...current, [activeProjectId]: { ...config, profiles: { ...config.profiles, [id]: profile } } };
+    });
   }
 
   function toggleBashApprovalMode() {
@@ -974,6 +1075,19 @@ export default function Home() {
     if (!availableModels.some((model) => `${model.providerId}:${model.modelId}` === modelId) || isBusy) return;
     setSelectedModelId(modelId);
     localStorage.setItem(SELECTED_MODEL_KEY, modelId);
+    const model = availableModels.find((item) => `${item.providerId}:${item.modelId}` === modelId);
+    if (model && activeProjectId) {
+      setAgentConfigsByProject((current) => {
+        const config = current[activeProjectId] ?? createDefaultProjectAgentConfig();
+        return {
+          ...current,
+          [activeProjectId]: {
+            ...config,
+            mainModel: { providerId: model.providerId, modelId: model.modelId },
+          },
+        };
+      });
+    }
   }
 
   async function saveAndTestModelProvider(
@@ -1259,6 +1373,13 @@ export default function Home() {
           enabledSkills,
           enabledTools,
           enabledMcps,
+          agentConfig: {
+            ...activeAgentConfig,
+            mainModel: {
+              providerId: selectedModel.providerId,
+              modelId: selectedModel.modelId,
+            },
+          },
           bashApprovalMode: activeConversation.bashApprovalMode,
           bashPermissionMode: activeConversation.bashPermissionMode,
           messages: history.map(({ role, content: messageContent }) => ({
@@ -1585,6 +1706,15 @@ export default function Home() {
 
         {projectError && <div className="sidebar-error">{projectError}</div>}
         <nav className="sidebar-capability-nav" aria-label="Agent 能力管理">
+          <button
+            className={activeView === "agent" ? "active" : ""}
+            type="button"
+            onClick={() => setActiveView("agent")}
+          >
+            <Bot size={15} />
+            <span>Agent</span>
+            <small>{Object.entries(activeAgentConfig.profiles).filter(([id, profile]) => id !== "main" && profile.enabled).length}/3</small>
+          </button>
           <button
             className={activeView === "skill" ? "active" : ""}
             type="button"
@@ -2208,6 +2338,17 @@ export default function Home() {
         </button>
       )}
         </>
+      ) : activeView === "agent" ? (
+        <AgentLibrary
+          catalog={capabilityCatalog}
+          config={{
+            ...activeAgentConfig,
+            ...(selectedModel ? { mainModel: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
+          }}
+          models={availableModels}
+          onUpdate={updateAgentProfile}
+          onClose={() => setActiveView("workspace")}
+        />
       ) : activeView === "model" ? (
         <ModelLibrary
           providers={modelProviders}

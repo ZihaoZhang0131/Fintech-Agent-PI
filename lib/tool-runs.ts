@@ -28,6 +28,9 @@ export type ToolRun = {
   mcpServerId?: string;
   mcpServerLabel?: string;
   externalToolName?: string;
+  subAgentId?: string;
+  subAgentLabel?: string;
+  subAgentModel?: string;
 };
 
 export type ToolStartEvent = {
@@ -62,6 +65,9 @@ export type ToolEndEvent = {
   mcpServerId?: string;
   mcpServerLabel?: string;
   externalToolName?: string;
+  subAgentId?: string;
+  subAgentLabel?: string;
+  subAgentModel?: string;
 };
 
 export type ToolApprovalEvent = {
@@ -119,6 +125,9 @@ export function applyToolEnd(runs: ToolRun[] | undefined, event: ToolEndEvent): 
     mcpServerId: event.mcpServerId,
     mcpServerLabel: event.mcpServerLabel,
     externalToolName: event.externalToolName,
+    subAgentId: event.subAgentId,
+    subAgentLabel: event.subAgentLabel,
+    subAgentModel: event.subAgentModel,
   };
 
   if (!existing) return [...current, completed];

@@ -3,6 +3,7 @@ import webSearchSource from "../../../server/agent/tools/web-search.ts?raw";
 import workspaceFilesSource from "../../../server/agent/tools/workspace-files.ts?raw";
 import bashSource from "../../../server/agent/tools/bash.ts?raw";
 import { AGENT_TOOL_NAMES } from "@/server/agent/capability-policy";
+import { publicAgentRoles } from "@/server/agent/agent-registry";
 import { loadSkillRegistry } from "@/server/agent/skills/loader";
 import { MCP_SERVERS, type McpServerStatus, type McpToolDefinition } from "@/server/agent/mcp/registry";
 
@@ -111,7 +112,7 @@ export async function GET() {
   });
 
   return Response.json(
-    { skills, tools, mcps },
+    { skills, tools, mcps, agents: publicAgentRoles() },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

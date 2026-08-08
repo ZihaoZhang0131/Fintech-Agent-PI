@@ -3,6 +3,7 @@ import {
   ChevronDown,
   CircleCheck,
   CircleX,
+  Cpu,
   ExternalLink,
   Plug,
   Save,
@@ -35,6 +36,7 @@ function formatRunDuration(durationMs: number) {
 }
 
 function ToolRunGlyph({ run }: { run: ToolRun }) {
+  if (run.toolName === "delegate_agent") return <Cpu size={14} />;
   if (run.toolName === "bash") return <Terminal size={14} />;
   if (run.toolName.startsWith("mcp__")) return <Plug size={14} />;
   if (run.toolName === "load_skill") return <BookOpenCheck size={14} />;
@@ -55,6 +57,14 @@ function ToolRunDetail({
     <div className="tool-run-detail">
       {run.toolName === "bash" && run.query && (
         <code className="tool-run-command">{run.query}</code>
+      )}
+      {run.toolName === "delegate_agent" && (
+        <div className="tool-run-subagent">
+          <strong>{run.subAgentLabel ?? "专业 Agent"}</strong>
+          {run.subAgentModel && <code>{run.subAgentModel}</code>}
+          {run.summary && <p>{run.summary}</p>}
+          {run.truncated && <p>回传超过 12,000 字符，后续内容已截断。</p>}
+        </div>
       )}
       {run.status === "awaiting_approval" && run.commandId && (
         <div className="tool-run-approval-wrap">

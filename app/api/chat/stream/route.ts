@@ -2,7 +2,8 @@ import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-age
 import { type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
 import { createConfiguredModels } from "@/server/model-registry";
 import { parseModelReference, resolveRuntimeModel } from "@/server/model-runtime";
-import { resolveCapabilitySelection } from "@/server/agent/capability-policy";
+import { AGENT_ROLE_REGISTRY, isSubAgentRoleId, resolveProjectAgentConfig } from "@/server/agent/agent-registry";
+import type { AgentRoleId } from "@/lib/agent-profiles";
 import { formatSkillCatalog } from "@/server/agent/skills/catalog";
 import { loadSkillRegistry } from "@/server/agent/skills/loader";
 import { createLoadSkillTool, type LoadSkillDetails } from "@/server/agent/tools/load-skill";
@@ -18,6 +19,7 @@ import {
   discoverMcpServers,
   type McpToolDetails,
 } from "@/server/agent/tools/mcp";
+import { createDelegateAgentTool, type SubAgentDetails } from "@/server/agent/tools/delegate-agent";
 import {
   createWorkspaceTools,
   type WorkspaceToolDetails,
@@ -36,6 +38,7 @@ type ChatRequest = {
   enabledSkills?: unknown;
   enabledTools?: unknown;
   enabledMcps?: unknown;
+  agentConfig?: unknown;
   bashApprovalMode?: unknown;
   bashPermissionMode?: unknown;
   messages?: InputMessage[];
@@ -177,6 +180,15 @@ function getMcpDetails(value: unknown): McpToolDetails | undefined {
   return details as McpToolDetails;
 }
 
+function getSubAgentDetails(value: unknown): SubAgentDetails | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const details = value as Partial<SubAgentDetails>;
+  if (details.kind !== "subagent" || typeof details.agentId !== "string" || typeof details.agentLabel !== "string") {
+    return undefined;
+  }
+  return details as SubAgentDetails;
+}
+
 function getToolLabel(toolName: string, labels?: Map<string, string>) {
   if (labels?.has(toolName)) return labels.get(toolName)!;
   if (toolName === "web_search") return "Tavily 网络搜索";
@@ -185,6 +197,7 @@ function getToolLabel(toolName: string, labels?: Map<string, string>) {
   if (toolName === "read_project_file") return "读取项目文件";
   if (toolName === "write_project_file") return "保存项目产出";
   if (toolName === "bash") return "执行 Bash";
+  if (toolName === "delegate_agent") return "委派专业 Agent";
   return toolName;
 }
 
@@ -194,6 +207,7 @@ function getToolInput(args: unknown) {
   if ("name" in args) return String(args.name);
   if ("path" in args) return String(args.path);
   if ("command" in args) return String(args.command);
+  if ("task" in args) return String(args.task);
   const summary = Object.entries(args)
     .slice(0, 4)
     .map(([key, value]) => `${key}=${String(value)}`)
@@ -208,20 +222,6 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ message: "请求内容不是有效的 JSON。" }, { status: 400 });
   }
-  const modelReference = parseModelReference(payload.model);
-  if (!modelReference) {
-    return Response.json({ message: "请选择一个可用模型。" }, { status: 400 });
-  }
-  let resolvedModel;
-  try {
-    resolvedModel = await resolveRuntimeModel(modelReference);
-  } catch (error) {
-    return Response.json(
-      { message: error instanceof Error ? error.message : "模型尚未完成配置。" },
-      { status: 409 },
-    );
-  }
-
   const input = payload.input?.trim() ?? "";
   const history = Array.isArray(payload.messages) ? payload.messages : [];
   const workspaceId = payload.workspaceId?.trim() ?? "";
@@ -239,20 +239,152 @@ export async function POST(request: Request) {
     return Response.json({ message: "问题为空、过长或历史消息格式不正确。" }, { status: 400 });
   }
 
-  const capabilitySelection = resolveCapabilitySelection({
+  const agentConfig = resolveProjectAgentConfig(payload.agentConfig, {
     enabledSkills: payload.enabledSkills,
     enabledTools: payload.enabledTools,
     enabledMcps: payload.enabledMcps,
   });
-  const enabledToolNames = new Set<string>(capabilitySelection.enabledTools);
+  const requestedModelReference = parseModelReference(payload.model);
+  if (!agentConfig.mainModel && !requestedModelReference) {
+    return Response.json({ message: "请选择一个可用模型。" }, { status: 400 });
+  }
+  const modelReference = agentConfig.mainModel ?? requestedModelReference!;
+  let resolvedModel;
+  try {
+    resolvedModel = await resolveRuntimeModel(modelReference);
+  } catch (error) {
+    return Response.json(
+      { message: error instanceof Error ? error.message : "模型尚未完成配置。" },
+      { status: 409 },
+    );
+  }
+
+  const mainProfile = agentConfig.profiles.main;
+  const enabledToolNames = new Set<string>(mainProfile.enabledTools);
   const skillRegistry = loadSkillRegistry(
-    enabledToolNames.has("load_skill") ? capabilitySelection.enabledSkills : [],
+    enabledToolNames.has("load_skill") ? mainProfile.enabledSkills : [],
   );
   const workspaceTools = createWorkspaceTools(workspaceId).filter((tool) =>
     enabledToolNames.has(tool.name),
   );
-  const connectedMcpServers = await discoverMcpServers(capabilitySelection.enabledMcps);
+  const connectedMcpServers = await discoverMcpServers(mainProfile.enabledMcps);
   const mcpTools = createMcpAgentTools(connectedMcpServers);
+  const models = createConfiguredModels();
+  const model = models.getModel(resolvedModel.piProviderId, resolvedModel.modelId);
+  if (!model) {
+    return Response.json({ message: "PI 中没有找到所选模型。" }, { status: 500 });
+  }
+  let emitChildBashApproval: ((value: {
+    parentToolCallId: string;
+    commandId: string;
+    command: string;
+    permissionMode: BashPermissionMode;
+  }) => void) | undefined;
+
+  async function runSubAgent(
+    agentId: Exclude<AgentRoleId, "main">,
+    task: string,
+    parentSignal?: AbortSignal,
+    parentToolCallId?: string,
+  ) {
+    const profile = agentConfig.profiles[agentId];
+    const role = AGENT_ROLE_REGISTRY[agentId];
+    if (!profile.enabled || !isSubAgentRoleId(agentId)) throw new Error("该专业 Agent 本轮未启用。");
+    const reference = profile.model ?? modelReference;
+    let childResolved;
+    try {
+      childResolved = await resolveRuntimeModel(reference);
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : "专业 Agent 模型不可用。");
+    }
+    const childModel = models.getModel(childResolved.piProviderId, childResolved.modelId);
+    if (!childModel) throw new Error("PI 中没有找到专业 Agent 所选模型。");
+    const childToolNames = new Set(profile.enabledTools);
+    const childSkills = loadSkillRegistry(
+      childToolNames.has("load_skill") ? profile.enabledSkills : [],
+    );
+    const childWorkspaceTools = createWorkspaceTools(workspaceId).filter((tool) =>
+      childToolNames.has(tool.name),
+    );
+    // MCP discovery is deliberately delayed until this specialized worker is actually invoked.
+    const childMcps = await discoverMcpServers(profile.enabledMcps);
+    const childTools: AgentTool[] = [
+      ...(childToolNames.has("load_skill") && childSkills.list().length > 0
+        ? [createLoadSkillTool(childSkills)]
+        : []),
+      ...(childToolNames.has("web_search")
+        ? [createWebSearchTool({ apiKey: process.env.TAVILY_API_KEY })]
+        : []),
+      ...childWorkspaceTools,
+      ...(childToolNames.has("bash")
+        ? [createBashTool(workspaceId, { approvalMode: bashApprovalMode, permissionMode: bashPermissionMode })]
+        : []),
+      ...createMcpAgentTools(childMcps),
+    ];
+    const childPrompt = [
+      role.systemPrompt,
+      `当前项目名称：${JSON.stringify(workspaceName)}。`,
+      "你是被主 Agent 委派的专业研究员，只能使用本角色已配置的能力，不能再次委派 Agent，也不能假设自己看过主 Agent 的聊天记录。",
+      "用简洁 Markdown 返回：1. 摘要；2. 事实和来源/数据日期；3. 风险、限制或待验证项。",
+      childMcps.length
+        ? `本次可使用的 MCP：${childMcps.map((server) => server.label).join("、")}。`
+        : "本次没有可用 MCP；不要声称调用过 MCP。",
+      formatSkillCatalog(childSkills),
+    ].join("\n\n");
+    const child = new Agent({
+      initialState: {
+        systemPrompt: childPrompt,
+        model: childModel,
+        thinkingLevel: "off",
+        tools: childTools,
+        messages: [],
+      },
+      streamFn: models.streamSimple.bind(models),
+      getApiKey: () => childResolved.apiKey,
+      sessionId: `${payload.conversationId ?? "conversation"}:${agentId}:${crypto.randomUUID()}`,
+    });
+    let finalText = "";
+    child.subscribe((event) => {
+      if (event.type === "tool_execution_update" && parentToolCallId) {
+        const bashDetails = getBashDetails(event.partialResult?.details);
+        if (bashDetails?.status === "pending_approval") {
+          emitChildBashApproval?.({
+            parentToolCallId,
+            commandId: bashDetails.commandId,
+            command: bashDetails.command,
+            permissionMode: bashDetails.permissionMode,
+          });
+        }
+      }
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        finalText = event.message.content
+          .filter((item) => item.type === "text")
+          .map((item) => item.text)
+          .join("\n");
+      }
+    });
+    const timeout = setTimeout(() => child.abort(), 60_000);
+    const abort = () => child.abort();
+    parentSignal?.addEventListener("abort", abort, { once: true });
+    try {
+      await child.prompt(task);
+    } finally {
+      clearTimeout(timeout);
+      parentSignal?.removeEventListener("abort", abort);
+    }
+    if (!finalText) throw new Error("专业 Agent 未返回可用研究结果。");
+    const limit = 12_000;
+    return {
+      text: finalText.length > limit ? `${finalText.slice(0, limit)}\n\n（子 Agent 回传已截断）` : finalText,
+      model: { providerId: reference.providerId, modelId: reference.modelId },
+      truncated: finalText.length > limit,
+    };
+  }
+
+  const enabledSubAgents = (Object.keys(agentConfig.profiles) as AgentRoleId[])
+    .filter((id): id is Exclude<AgentRoleId, "main"> => id !== "main" && agentConfig.profiles[id].enabled)
+    .map((id) => ({ id, label: AGENT_ROLE_REGISTRY[id].label }));
+  const delegateAgentTool = createDelegateAgentTool({ agents: enabledSubAgents, run: runSubAgent });
   const agentTools: AgentTool[] = [
     ...(enabledToolNames.has("load_skill") && skillRegistry.list().length > 0
       ? [createLoadSkillTool(skillRegistry)]
@@ -265,15 +397,16 @@ export async function POST(request: Request) {
       ? [createBashTool(workspaceId, { approvalMode: bashApprovalMode, permissionMode: bashPermissionMode })]
       : []),
     ...mcpTools,
+    ...(delegateAgentTool ? [delegateAgentTool] : []),
   ];
   const toolLabels = new Map(agentTools.map((tool) => [tool.name, tool.label]));
   const projectCapabilityPrompt = [
     `当前项目名称：${JSON.stringify(workspaceName)}。`,
-    `本轮已启用工具：${capabilitySelection.enabledTools.join(", ") || "无"}。只能使用这个列表中的工具。`,
-    `本轮已启用 MCP：${capabilitySelection.enabledMcps.join(", ") || "无"}。实际已连接：${connectedMcpServers.map((server) => server.label).join(", ") || "无"}。`,
+    `本轮已启用工具：${mainProfile.enabledTools.join(", ") || "无"}。只能使用这个列表中的工具。`,
+    `本轮已启用 MCP：${mainProfile.enabledMcps.join(", ") || "无"}。实际已连接：${connectedMcpServers.map((server) => server.label).join(", ") || "无"}。`,
     connectedMcpServers.length > 0
       ? "查询 A 股结构化行情或财务数据时优先使用已连接 MCP；需要新闻、公告原文和可点击引用时使用 web_search。"
-      : capabilitySelection.enabledMcps.length > 0
+      : mainProfile.enabledMcps.length > 0
         ? "用户启用了 MCP，但本机服务当前不可用。本轮继续使用其他工具，不要声称已经调用 MCP。"
         : "本轮没有启用 MCP，不要声称已经查询结构化 MCP 数据。",
     enabledToolNames.has("list_project_files") || enabledToolNames.has("read_project_file")
@@ -285,14 +418,11 @@ export async function POST(request: Request) {
     enabledToolNames.has("bash")
       ? `Bash 已启用，执行模式为 ${bashApprovalMode === "ask" ? "每条确认" : "自动执行"}，权限模式为 ${bashPermissionMode === "full" ? "完整本机权限" : "项目沙箱"}。只有任务确实需要运行脚本、测试、构建或命令行操作时才调用 bash。`
       : "本轮没有启用 Bash，不要声称执行过脚本、测试、构建或命令。",
+    enabledSubAgents.length
+      ? `已启用专业 Agent：${enabledSubAgents.map((agent) => agent.label).join("、")}。当需要其专门的结构化数据、网页证据或财务分析时，可调用 delegate_agent；收到回传后由你整合最终回答。`
+      : "本轮没有启用专业 Agent，不要声称委派过子 Agent。",
     "只处理当前项目和用户任务相关的内容，不覆盖不相关文件。",
   ].join("\n");
-
-  const models = createConfiguredModels();
-  const model = models.getModel(resolvedModel.piProviderId, resolvedModel.modelId);
-  if (!model) {
-    return Response.json({ message: "PI 中没有找到所选模型。" }, { status: 500 });
-  }
 
   const agent = new Agent({
     initialState: {
@@ -317,6 +447,17 @@ export async function POST(request: Request) {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const send = (value: object) => controller.enqueue(encoder.encode(formatSse(value)));
+      emitChildBashApproval = ({ parentToolCallId, commandId, command, permissionMode }) => {
+        send({
+          type: "tool_approval_required",
+          toolCallId: parentToolCallId,
+          toolName: "delegate_agent",
+          label: "委派专业 Agent",
+          query: command,
+          commandId,
+          permissionMode,
+        });
+      };
 
       agent.subscribe((event) => {
         if (event.type === "tool_execution_start") {
@@ -339,6 +480,7 @@ export async function POST(request: Request) {
           const workspaceDetails = getWorkspaceDetails(event.result?.details);
           const bashDetails = getBashDetails(event.result?.details);
           const mcpDetails = getMcpDetails(event.result?.details);
+          const subAgentDetails = getSubAgentDetails(event.result?.details);
           send({
             type: "tool_end",
             toolCallId: event.toolCallId,
@@ -350,7 +492,8 @@ export async function POST(request: Request) {
               skillDetails?.name ??
               workspaceDetails?.path ??
               bashDetails?.command ??
-              mcpDetails?.summary,
+              mcpDetails?.summary ??
+              subAgentDetails?.task,
             summary: skillDetails
               ? `已加载 ${skillDetails.name}`
               : workspaceDetails?.action === "write"
@@ -363,6 +506,8 @@ export async function POST(request: Request) {
                       ? `退出码 ${bashDetails.exitCode ?? "无"}`
                       : mcpDetails
                         ? `${mcpDetails.serverLabel} · ${mcpDetails.externalToolName}`
+                        : subAgentDetails
+                          ? `已收到${subAgentDetails.agentLabel}的研究回传`
                         : undefined,
             completedAt,
             durationMs:
@@ -375,13 +520,18 @@ export async function POST(request: Request) {
             mcpServerId: mcpDetails?.serverId,
             mcpServerLabel: mcpDetails?.serverLabel,
             externalToolName: mcpDetails?.externalToolName,
+            subAgentId: subAgentDetails?.agentId,
+            subAgentLabel: subAgentDetails?.agentLabel,
+            subAgentModel: subAgentDetails
+              ? `${subAgentDetails.model.providerId}:${subAgentDetails.model.modelId}`
+              : undefined,
             commandId: bashDetails?.commandId,
             permissionMode: bashDetails?.permissionMode,
             commandStatus: bashDetails?.status,
             exitCode: bashDetails?.exitCode,
             stdout: bashDetails?.stdout,
             stderr: bashDetails?.stderr,
-            truncated: bashDetails?.truncated ?? mcpDetails?.truncated,
+            truncated: bashDetails?.truncated ?? mcpDetails?.truncated ?? subAgentDetails?.truncated,
             timedOut: bashDetails?.timedOut,
             sources: searchDetails?.sources.map((source) => ({
               title: source.title,
@@ -438,6 +588,7 @@ export async function POST(request: Request) {
         console.error("PI Agent request failed", error);
         send({ type: "error", message: safeErrorMessage(error) });
       } finally {
+        emitChildBashApproval = undefined;
         controller.close();
       }
     },

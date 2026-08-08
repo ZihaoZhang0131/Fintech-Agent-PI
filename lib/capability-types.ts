@@ -1,3 +1,5 @@
+import type { AgentProfile, AgentRoleId } from "@/lib/agent-profiles";
+
 export type CapabilityKind = "skill" | "tool" | "mcp";
 
 export type McpConnectionStatus =
@@ -37,4 +39,16 @@ export type CapabilityCatalog = {
   skills: CapabilityItem[];
   tools: CapabilityItem[];
   mcps: CapabilityItem[];
+  agents: AgentRoleCapability[];
+};
+
+export type AgentRoleCapability = {
+  id: AgentRoleId;
+  label: string;
+  description: string;
+  maxSkills: string[];
+  maxTools: string[];
+  maxMcps: string[];
+  defaultProfile: AgentProfile;
+  isMain: boolean;
 };
