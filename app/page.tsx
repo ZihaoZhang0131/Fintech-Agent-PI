@@ -5,13 +5,11 @@ import {
   Braces,
   ChevronDown,
   ChevronRight,
-  CircleCheck,
   CircleStop,
   CircleX,
   Copy,
   Cpu,
   Download,
-  ExternalLink,
   File,
   FileChartColumn,
   FileCode2,
@@ -31,11 +29,8 @@ import {
   Plug,
   Plus,
   RefreshCw,
-  Save,
-  Search,
   Send,
   Sparkles,
-  Terminal,
   Trash2,
   TrendingUp,
   Wrench,
@@ -54,9 +49,10 @@ import {
   useState,
 } from "react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { CapabilityLibrary } from "@/components/capability-library";
+import { MarkdownMessage } from "@/components/chat-markdown";
 import { CodePreview } from "@/components/code-preview";
+import { ToolRunStack } from "@/components/tool-run-stack";
 import type { CapabilityCatalog, CapabilityKind } from "@/lib/capability-types";
 import { shouldSubmitComposerKey } from "@/lib/composer-keyboard";
 import {
@@ -236,14 +232,6 @@ function makeConversation(projectId: string): Conversation {
   };
 }
 
-function formatRunDuration(durationMs: number) {
-  const totalSeconds = Math.max(1, Math.round(durationMs / 1_000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes === 0) return `${seconds}秒`;
-  return seconds === 0 ? `${minutes}分` : `${minutes}分${seconds}秒`;
-}
-
 function getMessageDuration(message: ChatMessage) {
   if (message.durationMs !== undefined) return message.durationMs;
   const lastToolCompletedAt = Math.max(
@@ -355,147 +343,6 @@ type PreviewCacheEntry =
   | { status: "loading" }
   | { status: "ready"; preview: FilePreview }
   | { status: "error"; message: string };
-
-function ToolRunGlyph({ run }: { run: ToolRun }) {
-  if (run.toolName === "bash") return <Terminal size={14} />;
-  if (run.toolName.startsWith("mcp__")) return <Plug size={14} />;
-  if (run.toolName === "load_skill") return <BookOpenCheck size={14} />;
-  if (run.toolName === "write_project_file") return <Save size={14} />;
-  if (run.status === "running") return <Search size={14} />;
-  if (run.status === "success") return <CircleCheck size={14} />;
-  return <CircleX size={14} />;
-}
-
-type ToolRunDetailProps = {
-  messageId: string;
-  run: ToolRun;
-  projectPath?: string;
-  approvalSubmittingIds: string[];
-  onDecision: (messageId: string, run: ToolRun, decision: "approve" | "reject") => void;
-};
-
-function ToolRunDetail({
-  messageId,
-  run,
-  projectPath,
-  approvalSubmittingIds,
-  onDecision,
-}: ToolRunDetailProps) {
-  return (
-    <div className="tool-run-detail">
-      {run.toolName === "bash" && run.query && (
-        <code className="tool-run-command">{run.query}</code>
-      )}
-      {run.status === "awaiting_approval" && run.commandId && (
-        <div className="tool-run-approval-wrap">
-          <code>{projectPath}</code>
-          <div className="tool-run-approval">
-            <button
-              type="button"
-              className="secondary"
-              disabled={approvalSubmittingIds.includes(run.commandId)}
-              onClick={() => onDecision(messageId, run, "reject")}
-            >
-              拒绝
-            </button>
-            <button
-              type="button"
-              disabled={approvalSubmittingIds.includes(run.commandId)}
-              onClick={() => onDecision(messageId, run, "approve")}
-            >
-              允许
-            </button>
-          </div>
-        </div>
-      )}
-      {run.toolName === "bash" && (run.stdout || run.stderr || run.truncated) && (
-        <details className="tool-run-output">
-          <summary>查看命令输出</summary>
-          {run.stdout && <pre>{run.stdout}</pre>}
-          {run.stderr && (
-            <pre>
-              <strong>STDERR</strong>{"\n"}
-              {run.stderr}
-            </pre>
-          )}
-          {run.truncated && <p>输出超过 200KB，后续内容已截断。</p>}
-        </details>
-      )}
-      {Boolean(run.sources?.length) && (
-        <div className="tool-run-sources">
-          {run.sources?.map((source) => (
-            <a href={source.url} target="_blank" rel="noreferrer" key={source.url}>
-              <span>{source.title}</span>
-              <ExternalLink size={11} />
-            </a>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-type ToolRunStackProps = Omit<ToolRunDetailProps, "run"> & {
-  runs: ToolRun[];
-  durationMs?: number;
-  expanded: boolean;
-  onToggle: () => void;
-};
-
-function ToolRunStack({
-  runs,
-  durationMs,
-  expanded,
-  onToggle,
-  ...detailProps
-}: ToolRunStackProps) {
-  const latestRun = runs.reduce((latest, run) =>
-    run.startedAt >= latest.startedAt ? run : latest,
-  );
-
-  return (
-    <div className="tool-run-disclosure">
-      <button
-        className="tool-run-summary"
-        type="button"
-        aria-expanded={expanded}
-        onClick={onToggle}
-      >
-        <span>{durationMs === undefined ? "正在运行…" : `本次运行 ${formatRunDuration(durationMs)}`}</span>
-        <ChevronDown className="tool-run-chevron" size={14} />
-      </button>
-      {expanded && (
-        <div className="tool-run-expanded">
-          <div className="tool-run-history-list" aria-label="工具调用记录">
-            {runs.map((run) => (
-              <div className="tool-run-history-row" key={run.toolCallId}>
-                <span className="tool-run-history-glyph">
-                  <ToolRunGlyph run={run} />
-                </span>
-                <strong>{run.label}</strong>
-                {run.query && <span>{run.query}</span>}
-              </div>
-            ))}
-          </div>
-          <ToolRunDetail run={latestRun} {...detailProps} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MarkdownMessage({ content }: { content: string }) {
-  const normalizedContent = content.replace(
-    /([。！？.!?：:])\s*(#{1,6}\s+)/g,
-    "$1\n\n$2",
-  );
-
-  return (
-    <div className="markdown-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizedContent}</ReactMarkdown>
-    </div>
-  );
-}
 
 export default function Home() {
   const [projects, setProjects] = useState<LocalProject[]>([]);

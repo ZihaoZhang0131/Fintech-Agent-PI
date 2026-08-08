@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const toolRunSource = await readFile(new URL("../components/tool-run-stack.tsx", import.meta.url), "utf8");
 const styleSource = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
 test("new and legacy conversations default to automatic project-sandbox Bash", () => {
@@ -42,8 +43,8 @@ test("selected model is persisted and sent with the chat request", () => {
 
 test("Bash approval events are rendered with allow and reject actions", () => {
   assert.match(pageSource, /tool_approval_required/);
-  assert.match(pageSource, /onDecision\(messageId, run, "approve"\)/);
-  assert.match(pageSource, /onDecision\(messageId, run, "reject"\)/);
+  assert.match(toolRunSource, /onDecision\(messageId, run, "approve"\)/);
+  assert.match(toolRunSource, /onDecision\(messageId, run, "reject"\)/);
   assert.match(pageSource, /void decideBashCommand\(messageId, run, decision\)/);
-  assert.match(pageSource, /查看命令输出/);
+  assert.match(toolRunSource, /查看命令输出/);
 });
