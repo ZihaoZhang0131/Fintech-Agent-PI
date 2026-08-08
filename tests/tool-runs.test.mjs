@@ -98,12 +98,12 @@ test("tool run reducer records an end event even if its start event was missed",
   assert.equal(runs[0].startedAt, 1_700);
 });
 
-test("tool run reducer retains the concise delegated Agent card metadata", () => {
+test("tool run reducer retains delegated Agent metadata for its history row", () => {
   const runs = applyToolEnd(undefined, {
     type: "tool_end",
     toolCallId: "delegate-1",
     toolName: "delegate_agent",
-    label: "委派专业 Agent",
+    label: "委派数据研究员 Agent",
     isError: false,
     completedAt: 5_000,
     durationMs: 800,
@@ -114,4 +114,5 @@ test("tool run reducer retains the concise delegated Agent card metadata", () =>
   });
   assert.equal(runs[0].subAgentLabel, "数据研究员");
   assert.equal(runs[0].subAgentModel, "deepseek:deepseek-v4-flash");
+  assert.equal(runs[0].label, "委派数据研究员 Agent");
 });

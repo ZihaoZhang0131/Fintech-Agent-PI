@@ -5,12 +5,16 @@ import {
   CircleX,
   Cpu,
   ExternalLink,
+  LoaderCircle,
   Plug,
   Save,
   Search,
   Terminal,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { ToolRun } from "@/lib/tool-runs";
+
+const LONG_RUNNING_THRESHOLD_MS = 3_000;
 
 type ToolRunDetailProps = {
   messageId: string;
@@ -35,7 +39,10 @@ function formatRunDuration(durationMs: number) {
   return seconds === 0 ? `${minutes}分` : `${minutes}分${seconds}秒`;
 }
 
-function ToolRunGlyph({ run }: { run: ToolRun }) {
+function ToolRunGlyph({ run, now }: { run: ToolRun; now: number }) {
+  if (run.status === "running" && now - run.startedAt >= LONG_RUNNING_THRESHOLD_MS) {
+    return <LoaderCircle className="tool-run-running-glyph" size={14} aria-label="正在执行" />;
+  }
   if (run.toolName === "delegate_agent") return <Cpu size={14} />;
   if (run.toolName === "bash") return <Terminal size={14} />;
   if (run.toolName.startsWith("mcp__")) return <Plug size={14} />;
@@ -57,14 +64,6 @@ function ToolRunDetail({
     <div className="tool-run-detail">
       {run.toolName === "bash" && run.query && (
         <code className="tool-run-command">{run.query}</code>
-      )}
-      {run.toolName === "delegate_agent" && (
-        <div className="tool-run-subagent">
-          <strong>{run.subAgentLabel ?? "专业 Agent"}</strong>
-          {run.subAgentModel && <code>{run.subAgentModel}</code>}
-          {run.summary && <p>{run.summary}</p>}
-          {run.truncated && <p>回传超过 12,000 字符，后续内容已截断。</p>}
-        </div>
       )}
       {run.status === "awaiting_approval" && run.commandId && (
         <div className="tool-run-approval-wrap">
@@ -122,9 +121,22 @@ export function ToolRunStack({
   onToggle,
   ...detailProps
 }: ToolRunStackProps) {
+  const [now, setNow] = useState(() => Date.now());
   const latestRun = runs.reduce((latest, run) =>
     run.startedAt >= latest.startedAt ? run : latest,
   );
+  const hasRunningRun = runs.some((run) => run.status === "running");
+  const hasLatestDetail =
+    (latestRun.toolName === "bash" && Boolean(latestRun.query)) ||
+    (latestRun.status === "awaiting_approval" && Boolean(latestRun.commandId)) ||
+    (latestRun.toolName === "bash" && Boolean(latestRun.stdout || latestRun.stderr || latestRun.truncated)) ||
+    Boolean(latestRun.sources?.length);
+
+  useEffect(() => {
+    if (!hasRunningRun) return undefined;
+    const interval = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(interval);
+  }, [hasRunningRun]);
 
   return (
     <div className="tool-run-disclosure">
@@ -139,18 +151,21 @@ export function ToolRunStack({
       </button>
       {expanded && (
         <div className="tool-run-expanded">
-          <div className="tool-run-history-list" aria-label="工具调用记录">
+          <div
+            className={`tool-run-history-list${hasLatestDetail ? " has-detail" : ""}`}
+            aria-label="工具调用记录"
+          >
             {runs.map((run) => (
               <div className="tool-run-history-row" key={run.toolCallId}>
                 <span className="tool-run-history-glyph">
-                  <ToolRunGlyph run={run} />
+                  <ToolRunGlyph run={run} now={now} />
                 </span>
                 <strong>{run.label}</strong>
                 {run.query && <span>{run.query}</span>}
               </div>
             ))}
           </div>
-          <ToolRunDetail run={latestRun} {...detailProps} />
+          {hasLatestDetail && <ToolRunDetail run={latestRun} {...detailProps} />}
         </div>
       )}
     </div>

@@ -40,3 +40,11 @@ test("latest tool card preserves Bash approval controls and execution details", 
   assert.match(toolRunSource, /className="tool-run-output"/);
   assert.match(toolRunSource, /className="tool-run-sources"/);
 });
+
+test("delegated Agent runs stay in the history list and long-running tools show a spinner", () => {
+  assert.doesNotMatch(toolRunSource, /tool-run-subagent/);
+  assert.match(toolRunSource, /LONG_RUNNING_THRESHOLD_MS = 3_000/);
+  assert.match(toolRunSource, /now - run\.startedAt >= LONG_RUNNING_THRESHOLD_MS/);
+  assert.match(toolRunSource, /<LoaderCircle className="tool-run-running-glyph"/);
+  assert.match(styleSource, /\.tool-run-running-glyph\s*\{[^}]*animation:\s*spin/s);
+});

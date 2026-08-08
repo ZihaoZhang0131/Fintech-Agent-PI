@@ -168,7 +168,22 @@ function getSubAgentDetails(value: unknown): SubAgentDetails | undefined {
   return details as SubAgentDetails;
 }
 
-function getToolLabel(toolName: string, labels?: Map<string, string>) {
+function getDelegatedAgentId(args: unknown) {
+  if (!args || typeof args !== "object" || !("agentId" in args)) return undefined;
+  const agentId = args.agentId;
+  return typeof agentId === "string" && isSubAgentRoleId(agentId) ? agentId : undefined;
+}
+
+function getToolLabel(
+  toolName: string,
+  labels?: Map<string, string>,
+  delegatedAgentId?: Exclude<AgentRoleId, "main">,
+) {
+  if (toolName === "delegate_agent") {
+    return delegatedAgentId
+      ? `委派${AGENT_ROLE_REGISTRY[delegatedAgentId].label} Agent`
+      : "委派 Agent";
+  }
   if (labels?.has(toolName)) return labels.get(toolName)!;
   if (toolName === "web_search") return "Tavily 网络搜索";
   if (toolName === "load_skill") return "加载 Skill";
@@ -176,7 +191,6 @@ function getToolLabel(toolName: string, labels?: Map<string, string>) {
   if (toolName === "read_project_file") return "读取项目文件";
   if (toolName === "write_project_file") return "保存项目产出";
   if (toolName === "bash") return "执行 Bash";
-  if (toolName === "delegate_agent") return "委派专业 Agent";
   return toolName;
 }
 
@@ -425,6 +439,7 @@ export async function POST(request: Request) {
   const encoder = new TextEncoder();
   const startedAt = Date.now();
   const toolStartedAt = new Map<string, number>();
+  const delegatedAgentIds = new Map<string, Exclude<AgentRoleId, "main">>();
   let finalMessage: AssistantMessage | undefined;
 
   const stream = new ReadableStream<Uint8Array>({
@@ -435,7 +450,7 @@ export async function POST(request: Request) {
           type: "tool_approval_required",
           toolCallId: parentToolCallId,
           toolName: "delegate_agent",
-          label: "委派专业 Agent",
+          label: getToolLabel("delegate_agent", toolLabels, delegatedAgentIds.get(parentToolCallId)),
           query: command,
           commandId,
           permissionMode,
@@ -445,12 +460,16 @@ export async function POST(request: Request) {
       agent.subscribe((event) => {
         if (event.type === "tool_execution_start") {
           const toolStartTime = Date.now();
+          const delegatedAgentId = getDelegatedAgentId(event.args);
           toolStartedAt.set(event.toolCallId, toolStartTime);
+          if (event.toolName === "delegate_agent" && delegatedAgentId) {
+            delegatedAgentIds.set(event.toolCallId, delegatedAgentId);
+          }
           send({
             type: "tool_start",
             toolCallId: event.toolCallId,
             toolName: event.toolName,
-            label: getToolLabel(event.toolName, toolLabels),
+            label: getToolLabel(event.toolName, toolLabels, delegatedAgentId),
             query: getToolInput(event.args),
             startedAt: toolStartTime,
           });
@@ -464,11 +483,12 @@ export async function POST(request: Request) {
           const bashDetails = getBashDetails(event.result?.details);
           const mcpDetails = getMcpDetails(event.result?.details);
           const subAgentDetails = getSubAgentDetails(event.result?.details);
+          const delegatedAgentId = subAgentDetails?.agentId ?? delegatedAgentIds.get(event.toolCallId);
           send({
             type: "tool_end",
             toolCallId: event.toolCallId,
             toolName: event.toolName,
-            label: getToolLabel(event.toolName, toolLabels),
+            label: getToolLabel(event.toolName, toolLabels, delegatedAgentId),
             isError: event.isError,
             query:
               searchDetails?.query ??
@@ -523,6 +543,7 @@ export async function POST(request: Request) {
             })),
           });
           toolStartedAt.delete(event.toolCallId);
+          delegatedAgentIds.delete(event.toolCallId);
         }
 
         if (event.type === "tool_execution_update") {

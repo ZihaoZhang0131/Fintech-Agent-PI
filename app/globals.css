@@ -1013,6 +1013,10 @@ body.is-resizing-column * {
 
 .tool-run-history-list {
   display: grid;
+  margin-bottom: 0;
+}
+
+.tool-run-history-list.has-detail {
   margin-bottom: 6px;
 }
 
@@ -1047,6 +1051,10 @@ body.is-resizing-column * {
   display: grid;
   place-items: center;
   color: #9b968c;
+}
+
+.tool-run-running-glyph {
+  animation: spin 900ms linear infinite;
 }
 
 .message-content .tool-run-command {
@@ -1178,19 +1186,6 @@ body.is-resizing-column * {
   color: #6f6f6f;
   font-size: 8px;
 }
-
-.tool-run-subagent {
-  display: grid;
-  gap: 5px;
-  padding: 8px 9px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--accent);
-  font-size: 11px;
-}
-
-.tool-run-subagent code { color: var(--muted-foreground); font-size: 10px; }
-.tool-run-subagent p { margin: 0; color: var(--muted-foreground); }
 
 @keyframes toolPulse {
   0%,

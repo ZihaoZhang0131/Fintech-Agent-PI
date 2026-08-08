@@ -36,3 +36,10 @@ test("chat route lazy-loads MCP only inside a delegated specialized Agent", () =
   assert.match(route, /resolveGlobalAgentPrompts/);
   assert.doesNotMatch(route, /const SYSTEM_PROMPT/);
 });
+
+test("delegated Agent events use the selected Agent name in their display label", () => {
+  assert.match(route, /委派\$\{AGENT_ROLE_REGISTRY\[delegatedAgentId\]\.label\} Agent/);
+  assert.match(route, /getDelegatedAgentId\(event\.args\)/);
+  assert.match(route, /delegatedAgentIds\.set\(event\.toolCallId, delegatedAgentId\)/);
+  assert.doesNotMatch(route, /委派专业 Agent/);
+});
