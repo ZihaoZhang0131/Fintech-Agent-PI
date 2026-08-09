@@ -796,7 +796,7 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
           approvalMode: payload.approvalMode,
           permissionMode: payload.permissionMode,
           timeoutMs: payload.timeoutMs,
-        }, { extraReadableRoots: [script.readableRoot] }));
+        }, { extraReadableRoots: [script.readableRoot, script.interpreterReadableRoot].filter(Boolean) }));
       }
       if (segments[0] === "skills" && segments[1] && segments.length === 2) {
         if (request.method === "POST") {

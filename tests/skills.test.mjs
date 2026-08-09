@@ -145,6 +145,57 @@ test("large Skill folders expose topic entrypoints instead of an unhelpful full 
   assert.doesNotMatch(result.content[0].text, /topic-30\.md/);
 });
 
+test("cancelling a Skill script also cancels its local Runtime command", async (t) => {
+  const previousUrl = process.env.LOCAL_RUNTIME_URL;
+  const previousToken = process.env.LOCAL_RUNTIME_TOKEN;
+  process.env.LOCAL_RUNTIME_URL = "http://runtime.test";
+  process.env.LOCAL_RUNTIME_TOKEN = "runtime-secret";
+  t.after(() => {
+    if (previousUrl === undefined) delete process.env.LOCAL_RUNTIME_URL;
+    else process.env.LOCAL_RUNTIME_URL = previousUrl;
+    if (previousToken === undefined) delete process.env.LOCAL_RUNTIME_TOKEN;
+    else process.env.LOCAL_RUNTIME_TOKEN = previousToken;
+  });
+  const skill = {
+    id: "bundled:script-skill",
+    origin: "bundled",
+    name: "script-skill",
+    description: "运行可取消的脚本。",
+    instructions: "运行 scripts/report.py。",
+    resources: [{ path: "scripts/report.py", name: "report.py", size: 12, extension: ".py", category: "script", isText: true }],
+  };
+  const registry = { list: () => [skill], get: () => skill };
+  const tracker = createLoadedSkillTracker();
+  await createLoadSkillTool(registry, tracker).execute("load-script", { name: skill.name });
+  const requests = [];
+  const fetchImpl = async (url, init = {}) => {
+    requests.push({ url: String(url), method: init.method ?? "GET" });
+    return Response.json({
+      id: "skill-command-123",
+      workspaceId: "workspace-123",
+      command: "/opt/python/bin/python3 report.py",
+      status: init.method === "DELETE" ? "cancelled" : "running",
+    }, { status: init.method === "POST" ? 201 : 200 });
+  };
+  const [, run] = createSkillResourceTools(registry, tracker, "workspace-123", {
+    approvalMode: "auto",
+    permissionMode: "sandbox",
+    pollIntervalMs: 50,
+    fetchImpl,
+  });
+  const controller = new AbortController();
+  const execution = run.execute(
+    "run-script",
+    { name: skill.name, path: "scripts/report.py", args: [] },
+    controller.signal,
+  );
+  setTimeout(() => controller.abort(), 5);
+
+  await assert.rejects(execution, (caught) => caught?.name === "AbortError");
+  assert.deepEqual(requests.map(({ method }) => method), ["POST", "DELETE"]);
+  assert.match(requests[1].url, /\/workspaces\/workspace-123\/commands\/skill-command-123$/);
+});
+
 test("legacy allowed_tools is ignored when parsing uploaded Skill content", () => {
   const legacy = parseSkill(`---\nname: legacy-skill\ndescription: 兼容旧格式的技能。\nallowed_tools:\n  - web_search\n---\n\n执行旧流程。`);
   assert.equal(legacy.name, "legacy-skill");

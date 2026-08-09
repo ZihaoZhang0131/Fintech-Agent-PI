@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Unzip, UnzipInflate, zipSync } from "fflate";
@@ -22,6 +23,10 @@ const IMAGE_TYPES = new Map([
   [".png", "image/png"], [".webp", "image/webp"],
 ]);
 const BUNDLED_SKILLS_DIRECTORY = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.agents/skills");
+const MACOS_PYTHON_TOOL_SHIMS = new Set([
+  "/usr/bin/python3",
+  "/System/Cryptexes/App/usr/bin/python3",
+]);
 
 function error(message, status = 400) {
   return Object.assign(new Error(message), { status });
@@ -260,7 +265,55 @@ function assetType(extension) {
   return { kind: "binary", mimeType: "application/octet-stream" };
 }
 
-export function createSkillStore(dataDirectory) {
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+export async function resolvePythonInterpreter({
+  environment = process.env,
+  platform = process.platform,
+  fallbackCandidates,
+} = {}) {
+  const configured = environment.SKILL_PYTHON_PATH;
+  if (configured && !path.isAbsolute(configured)) {
+    throw error("SKILL_PYTHON_PATH 必须是 Python 解释器的绝对路径。", 503);
+  }
+  const pathCandidates = (environment.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .map((directory) => path.resolve(directory, "python3"));
+  const defaults = platform === "darwin"
+    ? [
+        environment.DEVELOPER_DIR && path.join(environment.DEVELOPER_DIR, "usr/bin/python3"),
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
+      ]
+    : [];
+  const candidates = unique([configured, ...pathCandidates, ...(fallbackCandidates ?? defaults)]);
+
+  for (const candidate of candidates) {
+    if (platform === "darwin" && MACOS_PYTHON_TOOL_SHIMS.has(candidate)) continue;
+    const canonical = await realpath(candidate).catch(() => null);
+    if (!canonical || (platform === "darwin" && MACOS_PYTHON_TOOL_SHIMS.has(canonical))) continue;
+    const info = await stat(canonical).catch(() => null);
+    if (!info?.isFile()) continue;
+    const executable = await access(canonical, constants.X_OK).then(() => true).catch(() => false);
+    if (!executable) continue;
+    const readableRoot = path.resolve(path.dirname(canonical), "..");
+    if (readableRoot === path.parse(readableRoot).root) continue;
+    return {
+      executable: canonical,
+      readableRoot,
+    };
+  }
+
+  throw error(
+    "未找到可运行的 Python 3。请安装独立 Python，或通过 SKILL_PYTHON_PATH 指定解释器；为避免系统安装弹窗，不会调用 macOS 的 /usr/bin/python3 工具链代理。",
+    503,
+  );
+}
+
+export function createSkillStore(dataDirectory, { resolvePython = resolvePythonInterpreter } = {}) {
   async function resolveEntry(id, providedStore) {
     const store = providedStore ?? await readStore(dataDirectory);
     const existing = store.entries.find((entry) => entry.id === id);
@@ -398,12 +451,18 @@ export function createSkillStore(dataDirectory) {
     const normalized = normalizeRelativePath(relativePath);
     if (!normalized.startsWith("scripts/")) throw error("只能运行 Skill 的 scripts/ 目录中的脚本。", 403);
     const extension = path.extname(normalized).toLowerCase();
-    const interpreters = { ".sh": "/bin/bash", ".py": "python3", ".js": "node", ".mjs": "node" };
-    const interpreter = interpreters[extension];
+    const interpreters = { ".sh": "/bin/bash", ".js": process.execPath, ".mjs": process.execPath };
+    let interpreter = interpreters[extension];
+    let interpreterReadableRoot;
+    if (extension === ".py") {
+      const python = await resolvePython();
+      interpreter = python.executable;
+      interpreterReadableRoot = python.readableRoot;
+    }
     if (!interpreter) throw error("仅支持运行 .sh、.py、.js 和 .mjs Skill 脚本。", 415);
     const root = skillRoot(dataDirectory, entry);
     const file = await inspectFile(root, normalized);
-    return { interpreter, scriptPath: file.canonicalTarget, readableRoot: root, path: file.path };
+    return { interpreter, interpreterReadableRoot, scriptPath: file.canonicalTarget, readableRoot: root, path: file.path };
   }
 
   async function remove(id) {
