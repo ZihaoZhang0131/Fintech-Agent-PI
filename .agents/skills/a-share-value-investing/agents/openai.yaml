@@ -1,0 +1,4 @@
+interface:
+  display_name: "A 股质量价值投资"
+  short_description: "全市场筛选并深挖核验高质量且估值合理的 A 股候选"
+  default_prompt: "使用 $a-share-value-investing 从全部 A 股中寻找质量价值候选并给出可核验理由。"

@@ -16,6 +16,7 @@ test("new project Agent profiles keep every delegated capability disabled by def
     "earnings-review",
     "policy-tracking",
     "akshare-http-data",
+    "a-share-value-investing",
   ]);
   assert.deepEqual(config.profiles.main.enabledMcps, []);
   assert.deepEqual(config.profiles["market-data"].enabledMcps, []);
@@ -50,10 +51,14 @@ test("legacy main capabilities migrate without sharing mutable profile arrays", 
   assert.equal(createDefaultAgentPromptConfig()["web-evidence"], DEFAULT_AGENT_SYSTEM_PROMPTS["web-evidence"]);
 });
 
-test("the former complete default Skill selection gains the new AKShare Skill", () => {
+test("former complete default Skill selections gain every newly bundled default", () => {
   assert.deepEqual(
     upgradeLegacyDefaultSkillSelection(["equity-research", "earnings-review", "policy-tracking"]),
-    ["equity-research", "earnings-review", "policy-tracking", "akshare-http-data"],
+    ["equity-research", "earnings-review", "policy-tracking", "akshare-http-data", "a-share-value-investing"],
+  );
+  assert.deepEqual(
+    upgradeLegacyDefaultSkillSelection(["equity-research", "earnings-review", "policy-tracking", "akshare-http-data"]),
+    ["equity-research", "earnings-review", "policy-tracking", "akshare-http-data", "a-share-value-investing"],
   );
   assert.deepEqual(upgradeLegacyDefaultSkillSelection(["equity-research"]), ["equity-research"]);
 });

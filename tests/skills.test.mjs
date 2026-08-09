@@ -12,6 +12,7 @@ const skillCases = [
   ["earnings-review", "财报解读"],
   ["policy-tracking", "政策"],
   ["akshare-http-data", "AKShare"],
+  ["a-share-value-investing", "质量价值"],
 ];
 
 test("the system prompt catalog exposes metadata but not full Skill instructions", () => {

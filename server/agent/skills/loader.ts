@@ -2,6 +2,7 @@ import earningsReviewSource from "../../../.agents/skills/earnings-review/SKILL.
 import equityResearchSource from "../../../.agents/skills/equity-research/SKILL.md?raw";
 import policyTrackingSource from "../../../.agents/skills/policy-tracking/SKILL.md?raw";
 import akshareHttpDataSource from "../../../.agents/skills/akshare-http-data/SKILL.md?raw";
+import aShareValueInvestingSource from "../../../.agents/skills/a-share-value-investing/SKILL.md?raw";
 import { parseSkill, type SkillDefinition, type SkillMetadata, type SkillResource } from "./parser";
 import { loadLocalSkillState } from "./local";
 
@@ -10,6 +11,7 @@ const BUNDLED_SKILL_SOURCES = [
   earningsReviewSource,
   policyTrackingSource,
   akshareHttpDataSource,
+  aShareValueInvestingSource,
 ] as const;
 
 export type SkillRegistry = {

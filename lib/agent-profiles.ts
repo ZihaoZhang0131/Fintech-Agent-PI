@@ -27,9 +27,14 @@ const LEGACY_DEFAULT_MAIN_SKILL_NAMES = [
   "policy-tracking",
 ] as const;
 
-export const DEFAULT_MAIN_SKILL_NAMES = [
+const AKSHARE_DEFAULT_MAIN_SKILL_NAMES = [
   ...LEGACY_DEFAULT_MAIN_SKILL_NAMES,
   "akshare-http-data",
+] as const;
+
+export const DEFAULT_MAIN_SKILL_NAMES = [
+  ...AKSHARE_DEFAULT_MAIN_SKILL_NAMES,
+  "a-share-value-investing",
 ] as const;
 
 /**
@@ -38,10 +43,14 @@ export const DEFAULT_MAIN_SKILL_NAMES = [
  * partial selections made by the user.
  */
 export function upgradeLegacyDefaultSkillSelection(names: readonly string[]) {
-  const isLegacyDefault =
-    names.length === LEGACY_DEFAULT_MAIN_SKILL_NAMES.length &&
-    LEGACY_DEFAULT_MAIN_SKILL_NAMES.every((name) => names.includes(name));
-  return isLegacyDefault ? [...DEFAULT_MAIN_SKILL_NAMES] : [...names];
+  const previousDefaults: readonly (readonly string[])[] = [
+    LEGACY_DEFAULT_MAIN_SKILL_NAMES,
+    AKSHARE_DEFAULT_MAIN_SKILL_NAMES,
+  ];
+  const isPreviousCompleteDefault = previousDefaults.some(
+    (defaults) => names.length === defaults.length && defaults.every((name) => names.includes(name)),
+  );
+  return isPreviousCompleteDefault ? [...DEFAULT_MAIN_SKILL_NAMES] : [...names];
 }
 
 const DEFAULT_PROFILES: Record<AgentRoleId, AgentProfile> = {
