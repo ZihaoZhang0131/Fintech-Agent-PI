@@ -24,6 +24,14 @@ export type CapabilityItem = {
   label: string;
   description: string;
   detail: string;
+  resources?: Array<{
+    path: string;
+    name: string;
+    size: number;
+    extension: string;
+    category: "script" | "reference" | "asset" | "file";
+    isText: boolean;
+  }>;
   sourcePath: string;
   defaultEnabled: boolean;
   version?: string;

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ExternalLink, FolderUp, Pencil, RefreshCw, Save, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, FileCode, FileText, FolderUp, Image as ImageIcon, Pencil, RefreshCw, Save, Search, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { CapabilityItem, CapabilityKind, McpCapabilityTool } from "@/lib/capability-types";
@@ -11,13 +11,25 @@ type CapabilityLibraryProps = {
   enabledNames: string[];
   onToggle: (name: string) => void;
   onRefresh?: () => void;
-  onSkillImport?: (files: File[]) => Promise<void>;
+  onSkillImport?: (source: { kind: "folder"; files: File[] } | { kind: "zip"; file: File }) => Promise<void>;
   onSkillUpdate?: (item: CapabilityItem, value: SkillDraft) => Promise<void>;
   onSkillDelete?: (item: CapabilityItem) => Promise<void>;
+  onSkillReadResource?: (item: CapabilityItem, path: string) => Promise<SkillResourcePreview>;
+  onSkillWriteResource?: (item: CapabilityItem, path: string, file: File) => Promise<void>;
+  onSkillDeleteResource?: (item: CapabilityItem, path: string) => Promise<void>;
+  onSkillExport?: (item: CapabilityItem) => Promise<void>;
   onClose: () => void;
 };
 
 type SkillDraft = { name: string; description: string; instructions: string };
+export type SkillResourcePreview = {
+  path: string;
+  size: number;
+  kind: "text" | "image" | "pdf" | "binary";
+  mimeType: string;
+  content?: string;
+  data?: string;
+};
 
 export function CapabilityLibrary({
   kind,
@@ -28,6 +40,10 @@ export function CapabilityLibrary({
   onSkillImport,
   onSkillUpdate,
   onSkillDelete,
+  onSkillReadResource,
+  onSkillWriteResource,
+  onSkillDeleteResource,
+  onSkillExport,
   onClose,
 }: CapabilityLibraryProps) {
   const [query, setQuery] = useState("");
@@ -36,7 +52,15 @@ export function CapabilityLibrary({
   const [draft, setDraft] = useState<SkillDraft | null>(null);
   const [operationError, setOperationError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [skillTab, setSkillTab] = useState<"instructions" | "files">("instructions");
+  const [showImportMenu, setShowImportMenu] = useState(false);
+  const [selectedResourcePath, setSelectedResourcePath] = useState("");
+  const [resourcePreview, setResourcePreview] = useState<SkillResourcePreview | null>(null);
+  const [resourceDraft, setResourceDraft] = useState("");
+  const [resourceEditing, setResourceEditing] = useState(false);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
+  const resourceInputRef = useRef<HTMLInputElement>(null);
   const enabled = useMemo(() => new Set(enabledNames), [enabledNames]);
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase("zh-CN");
@@ -64,23 +88,105 @@ export function CapabilityLibrary({
   function selectItem(item: CapabilityItem) {
     setSelectedName(item.name);
     setEditing(false);
+    setSkillTab("instructions");
+    setSelectedResourcePath("");
+    setResourcePreview(null);
+    setResourceEditing(false);
     setOperationError("");
     setDraft(item.kind === "skill"
       ? { name: item.name, description: item.description, instructions: item.detail }
       : null);
   }
 
-  async function importSkill(files: FileList | null) {
+  async function importSkillFolder(files: FileList | null) {
     if (!files?.length || !onSkillImport) return;
     setSubmitting(true);
     setOperationError("");
     try {
-      await onSkillImport(Array.from(files));
+      await onSkillImport({ kind: "folder", files: Array.from(files) });
     } catch (error) {
       setOperationError(error instanceof Error ? error.message : "导入技能失败。");
     } finally {
       setSubmitting(false);
       if (folderInputRef.current) folderInputRef.current.value = "";
+    }
+  }
+
+  async function importSkillZip(file: File | null) {
+    if (!file || !onSkillImport) return;
+    setSubmitting(true);
+    setOperationError("");
+    try {
+      await onSkillImport({ kind: "zip", file });
+      setShowImportMenu(false);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "导入技能失败。");
+    } finally {
+      setSubmitting(false);
+      if (zipInputRef.current) zipInputRef.current.value = "";
+    }
+  }
+
+  async function selectResource(resource: NonNullable<CapabilityItem["resources"]>[number]) {
+    if (!selected || !onSkillReadResource) return;
+    setSelectedResourcePath(resource.path);
+    setResourcePreview(null);
+    setResourceEditing(false);
+    setOperationError("");
+    try {
+      const preview = await onSkillReadResource(selected, resource.path);
+      setResourcePreview(preview);
+      setResourceDraft(preview.content ?? "");
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "读取技能文件失败。");
+    }
+  }
+
+  async function saveResource() {
+    if (!selected || !resourcePreview || !onSkillWriteResource) return;
+    setSubmitting(true);
+    setOperationError("");
+    try {
+      await onSkillWriteResource(selected, resourcePreview.path, new File([resourceDraft], resourcePreview.path.split("/").at(-1) || "resource.txt", { type: "text/plain" }));
+      setResourcePreview({ ...resourcePreview, content: resourceDraft, size: new Blob([resourceDraft]).size });
+      setResourceEditing(false);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "保存技能文件失败。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function uploadResource(file: File | null) {
+    if (!selected || !file || !onSkillWriteResource) return;
+    const targetPath = window.prompt("输入文件在 Skill 内的路径：", selectedResourcePath || file.name);
+    if (!targetPath) return;
+    setSubmitting(true);
+    setOperationError("");
+    try {
+      await onSkillWriteResource(selected, targetPath, file);
+      await selectResource({ path: targetPath, name: targetPath.split("/").at(-1) || targetPath, size: file.size, extension: `.${file.name.split(".").at(-1) ?? ""}`, category: targetPath.startsWith("scripts/") ? "script" : "file", isText: file.type.startsWith("text/") || /\.(md|txt|json|js|mjs|py|sh)$/i.test(file.name) });
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "上传技能文件失败。");
+    } finally {
+      setSubmitting(false);
+      if (resourceInputRef.current) resourceInputRef.current.value = "";
+    }
+  }
+
+  async function deleteResource() {
+    if (!selected || !selectedResourcePath || selectedResourcePath === "SKILL.md" || !onSkillDeleteResource) return;
+    if (!window.confirm(`确定删除文件“${selectedResourcePath}”？`)) return;
+    setSubmitting(true);
+    setOperationError("");
+    try {
+      await onSkillDeleteResource(selected, selectedResourcePath);
+      setSelectedResourcePath("");
+      setResourcePreview(null);
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "删除技能文件失败。");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -160,16 +266,23 @@ export function CapabilityLibrary({
                 type="file"
                 multiple
                 {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
-                onChange={(event) => void importSkill(event.target.files)}
+                onChange={(event) => void importSkillFolder(event.target.files)}
               />
+              <input ref={zipInputRef} className="capability-folder-input" type="file" accept=".zip,application/zip" onChange={(event) => void importSkillZip(event.target.files?.[0] ?? null)} />
               <button
                 className="capability-import"
                 type="button"
-                onClick={() => folderInputRef.current?.click()}
+                onClick={() => setShowImportMenu((current) => !current)}
                 disabled={submitting}
               >
                 <FolderUp size={15} /> 导入技能
               </button>
+              {showImportMenu && (
+                <div className="capability-import-menu">
+                  <button type="button" onClick={() => folderInputRef.current?.click()}>选择文件夹</button>
+                  <button type="button" onClick={() => zipInputRef.current?.click()}>选择 ZIP 包</button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -187,6 +300,7 @@ export function CapabilityLibrary({
                     <h2>{item.label}</h2>
                     {!isMcp && item.label !== item.name && <code>{item.name}</code>}
                     <p>{item.description}</p>
+                    {isSkill && <SkillResourceSummary resources={item.resources ?? []} />}
                   </div>
                   {isMcp && (
                     <div className={`mcp-card-summary ${item.status ?? "stopped"}`}>
@@ -257,7 +371,42 @@ export function CapabilityLibrary({
                   {operationError && <div className="capability-operation-error">{operationError}</div>}
                 </div>
               ) : (
-                <ReactMarkdown>{selected.detail}</ReactMarkdown>
+                <div className="skill-detail">
+                  <div className="skill-detail-tabs" role="tablist" aria-label="Skill 详情页签">
+                    <button type="button" className={skillTab === "instructions" ? "active" : ""} onClick={() => setSkillTab("instructions")}>说明</button>
+                    <button type="button" className={skillTab === "files" ? "active" : ""} onClick={() => setSkillTab("files")}>文件 <span>{selected.resources?.length ?? 0}</span></button>
+                  </div>
+                  {skillTab === "instructions" ? <ReactMarkdown>{selected.detail}</ReactMarkdown> : (
+                    <div className="skill-file-manager">
+                      <aside className="skill-file-tree">
+                        <div className="skill-file-tree-heading"><span>完整目录</span><SkillResourceSummary resources={selected.resources ?? []} /></div>
+                        {(selected.resources ?? []).map((resource) => (
+                          <button key={resource.path} type="button" className={selectedResourcePath === resource.path ? "active" : ""} style={{ paddingInlineStart: `${10 + Math.max(0, resource.path.split("/").length - 1) * 12}px` }} onClick={() => void selectResource(resource)}>
+                            {resource.category === "script" ? <FileCode size={13} /> : resource.category === "asset" ? <ImageIcon size={13} /> : <FileText size={13} />}
+                            <span>{resource.name}</span>
+                          </button>
+                        ))}
+                      </aside>
+                      <section className="skill-file-preview">
+                        {!resourcePreview && <p>从左侧选择文件以预览或编辑。</p>}
+                        {resourcePreview?.kind === "text" && (resourceEditing ? <textarea value={resourceDraft} rows={18} onChange={(event) => setResourceDraft(event.target.value)} /> : <pre><code>{resourcePreview.content}</code></pre>)}
+                        {resourcePreview?.kind === "image" && resourcePreview.data && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={`data:${resourcePreview.mimeType};base64,${resourcePreview.data}`} alt={resourcePreview.path} />
+                        )}
+                        {resourcePreview?.kind === "pdf" && resourcePreview.data && <iframe title={resourcePreview.path} src={`data:${resourcePreview.mimeType};base64,${resourcePreview.data}`} />}
+                        {resourcePreview?.kind === "binary" && resourcePreview.data && <a download={resourcePreview.path.split("/").at(-1)} href={`data:${resourcePreview.mimeType};base64,${resourcePreview.data}`}>下载二进制文件</a>}
+                        {resourcePreview && <div className="skill-file-preview-actions">
+                          <span>{resourcePreview.path} · {resourcePreview.size} bytes</span>
+                          {resourcePreview.kind === "text" && resourcePreview.path !== "SKILL.md" && (resourceEditing ? <button type="button" onClick={() => void saveResource()} disabled={submitting}><Save size={13} /> 保存</button> : <button type="button" onClick={() => setResourceEditing(true)}><Pencil size={13} /> 编辑</button>)}
+                          {resourcePreview.data && <a download={resourcePreview.path.split("/").at(-1)} href={`data:${resourcePreview.mimeType};base64,${resourcePreview.data}`}><Download size={13} /> 下载</a>}
+                          {resourcePreview.path !== "SKILL.md" && <button type="button" className="skill-file-delete" onClick={() => void deleteResource()} disabled={submitting}><Trash2 size={13} /> 删除</button>}
+                        </div>}
+                      </section>
+                    </div>
+                  )}
+                  {operationError && <div className="capability-operation-error">{operationError}</div>}
+                </div>
               ) : selected.kind === "mcp" ? (
                 <div className="mcp-detail">
                   <p>{selected.description}</p>
@@ -302,6 +451,9 @@ export function CapabilityLibrary({
               ) : selected.kind === "skill" ? (
                 <>
                   <button type="button" className="capability-danger-button" disabled={submitting} onClick={() => void deleteSkill()}><Trash2 size={13} /> 删除</button>
+                  <input ref={resourceInputRef} className="capability-folder-input" type="file" onChange={(event) => void uploadResource(event.target.files?.[0] ?? null)} />
+                  <button type="button" className="capability-secondary-button" disabled={submitting} onClick={() => resourceInputRef.current?.click()}><Upload size={13} /> 添加文件</button>
+                  {onSkillExport && <button type="button" className="capability-secondary-button" disabled={submitting} onClick={() => void onSkillExport(selected)}><Download size={13} /> 导出 ZIP</button>}
                   <button type="button" className="capability-secondary-button" disabled={submitting} onClick={() => setEditing(true)}><Pencil size={13} /> 编辑</button>
                   <button type="button" onClick={() => onToggle(selected.name)}>{enabled.has(selected.name) ? "停用" : "启用"}</button>
                 </>
@@ -320,6 +472,12 @@ export function CapabilityLibrary({
       )}
     </section>
   );
+}
+
+function SkillResourceSummary({ resources }: { resources: NonNullable<CapabilityItem["resources"]> }) {
+  const scripts = resources.filter((resource) => resource.category === "script").length;
+  const references = resources.filter((resource) => resource.category === "reference").length;
+  return <span className="skill-resource-summary">{resources.length} 文件 · {scripts} 脚本 · {references} 资料</span>;
 }
 
 function mcpStatusLabel(status: CapabilityItem["status"]) {

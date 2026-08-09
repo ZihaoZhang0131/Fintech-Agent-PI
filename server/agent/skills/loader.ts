@@ -1,7 +1,7 @@
 import earningsReviewSource from "../../../.agents/skills/earnings-review/SKILL.md?raw";
 import equityResearchSource from "../../../.agents/skills/equity-research/SKILL.md?raw";
 import policyTrackingSource from "../../../.agents/skills/policy-tracking/SKILL.md?raw";
-import { parseSkill, type SkillDefinition, type SkillMetadata } from "./parser";
+import { parseSkill, type SkillDefinition, type SkillMetadata, type SkillResource } from "./parser";
 import { loadLocalSkillState } from "./local";
 
 const BUNDLED_SKILL_SOURCES = [
@@ -18,6 +18,7 @@ export type SkillRegistry = {
 export type LocalSkillState = {
   entries: Array<SkillDefinition & { baseName?: string }>;
   deletedBundledNames: string[];
+  resourceFilesByName: Record<string, SkillResource[]>;
 };
 
 export function loadSkillRegistry(
@@ -32,9 +33,8 @@ export function loadSkillRegistry(
     .filter((skill) => !deleted.has(skill.name))
     .map((skill) => overrides.get(skill.id) ?? skill)
     .concat((localState?.entries ?? []).filter((skill) => skill.origin === "custom"))
-    .filter(
-    (skill) => !enabled || enabled.has(skill.name),
-  );
+    .filter((skill) => !enabled || enabled.has(skill.name))
+    .map((skill) => ({ ...skill, resources: localState?.resourceFilesByName?.[skill.name] ?? skill.resources }));
   const byName = new Map(skills.map((skill) => [skill.name, skill]));
   if (byName.size !== skills.length) throw new Error("Duplicate Skill names are not allowed");
 

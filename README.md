@@ -34,7 +34,9 @@
 - `earnings-review`：财报、业绩预告、电话会与盈利质量解读
 - `policy-tracking`：政策、监管和产业事件影响追踪
 
-Skill 文件位于 `.agents/skills/*/SKILL.md`。系统提示词只包含名称和描述；模型判断任务匹配后，通过白名单工具 `load_skill` 获取完整执行说明。Skill 负责工作流程，`web_search` 负责获取网络信息。
+Skill 以 `.agents/skills/<skill-name>/SKILL.md` 为入口，完整目录可以包含 `scripts/`、`references/`、`assets/` 与更深层的资源文件。系统提示词只包含名称和描述；模型判断任务匹配后，通过白名单工具 `load_skill` 获取执行说明和资源索引，再按需读取资料或运行受支持的脚本。Skill 负责工作流程，`web_search` 负责获取网络信息。
+
+在“技能”页可从本机文件夹或 ZIP 导入完整 Skill，也可浏览、编辑、添加、删除和导出其资源文件。导入的脚本仅会在 Agent 已加载该 Skill、当前 Bash 已启用时执行，并继承会话的审批与项目沙箱/完全权限设置。
 
 ## MCP
 

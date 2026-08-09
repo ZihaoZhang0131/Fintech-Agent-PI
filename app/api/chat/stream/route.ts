@@ -6,7 +6,8 @@ import { AGENT_ROLE_REGISTRY, isSubAgentRoleId, resolveGlobalAgentPrompts, resol
 import type { AgentRoleId } from "@/lib/agent-profiles";
 import { formatSkillCatalog } from "@/server/agent/skills/catalog";
 import { loadEffectiveSkillRegistry, selectSkillRegistry } from "@/server/agent/skills/loader";
-import { createLoadSkillTool, type LoadSkillDetails } from "@/server/agent/tools/load-skill";
+import { createLoadSkillTool, createLoadedSkillTracker, type LoadSkillDetails } from "@/server/agent/tools/load-skill";
+import { createSkillResourceTools, type SkillResourceDetails } from "@/server/agent/tools/skill-resources";
 import {
   createBashTool,
   type BashApprovalMode,
@@ -131,6 +132,13 @@ function getWorkspaceDetails(value: unknown): WorkspaceToolDetails | undefined {
   const details = value as Partial<WorkspaceToolDetails>;
   if (details.kind !== "workspace" || typeof details.action !== "string") return undefined;
   return details as WorkspaceToolDetails;
+}
+
+function getSkillResourceDetails(value: unknown): SkillResourceDetails | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const details = value as Partial<SkillResourceDetails>;
+  if (details.kind !== "skill_resource" || typeof details.skillName !== "string" || typeof details.path !== "string") return undefined;
+  return details as SkillResourceDetails;
 }
 
 function getBashDetails(value: unknown): BashToolDetails | undefined {
@@ -305,9 +313,16 @@ export async function POST(request: Request) {
     );
     // MCP discovery is deliberately delayed until this specialized worker is actually invoked.
     const childMcps = await discoverMcpServers(profile.enabledMcps);
+    const childSkillTracker = createLoadedSkillTracker();
     const childTools: AgentTool[] = [
       ...(childToolNames.has("load_skill") && childSkills.list().length > 0
-        ? [createLoadSkillTool(childSkills)]
+        ? [
+            createLoadSkillTool(childSkills, childSkillTracker),
+            ...createSkillResourceTools(childSkills, childSkillTracker, workspaceId, {
+              approvalMode: bashApprovalMode,
+              permissionMode: bashPermissionMode,
+            }).filter((tool) => tool.name !== "run_skill_script" || childToolNames.has("bash")),
+          ]
         : []),
       ...(childToolNames.has("web_search")
         ? [createWebSearchTool({ apiKey: process.env.TAVILY_API_KEY })]
@@ -382,9 +397,16 @@ export async function POST(request: Request) {
     .filter((id): id is Exclude<AgentRoleId, "main"> => id !== "main" && agentConfig.profiles[id].enabled)
     .map((id) => ({ id, label: AGENT_ROLE_REGISTRY[id].label }));
   const delegateAgentTool = createDelegateAgentTool({ agents: enabledSubAgents, run: runSubAgent });
+  const skillTracker = createLoadedSkillTracker();
   const agentTools: AgentTool[] = [
     ...(enabledToolNames.has("load_skill") && skillRegistry.list().length > 0
-      ? [createLoadSkillTool(skillRegistry)]
+      ? [
+          createLoadSkillTool(skillRegistry, skillTracker),
+          ...createSkillResourceTools(skillRegistry, skillTracker, workspaceId, {
+            approvalMode: bashApprovalMode,
+            permissionMode: bashPermissionMode,
+          }).filter((tool) => tool.name !== "run_skill_script" || enabledToolNames.has("bash")),
+        ]
       : []),
     ...(enabledToolNames.has("web_search")
       ? [createWebSearchTool({ apiKey: process.env.TAVILY_API_KEY })]
@@ -479,6 +501,7 @@ export async function POST(request: Request) {
           const completedAt = Date.now();
           const searchDetails = getWebSearchDetails(event.result?.details);
           const skillDetails = getLoadSkillDetails(event.result?.details);
+          const skillResourceDetails = getSkillResourceDetails(event.result?.details);
           const workspaceDetails = getWorkspaceDetails(event.result?.details);
           const bashDetails = getBashDetails(event.result?.details);
           const mcpDetails = getMcpDetails(event.result?.details);
@@ -493,12 +516,19 @@ export async function POST(request: Request) {
             query:
               searchDetails?.query ??
               skillDetails?.name ??
+              skillResourceDetails?.path ??
               workspaceDetails?.path ??
               bashDetails?.command ??
               mcpDetails?.summary ??
               subAgentDetails?.task,
             summary: skillDetails
               ? `已加载 ${skillDetails.name}`
+              : skillResourceDetails?.action === "read"
+                ? `已读取 ${skillResourceDetails.path}`
+                : skillResourceDetails?.status === "rejected"
+                  ? "用户已拒绝，脚本未执行"
+                  : skillResourceDetails?.action === "run"
+                    ? `退出码 ${skillResourceDetails.exitCode ?? "无"}`
               : workspaceDetails?.action === "write"
                 ? `已保存 ${workspaceDetails.path}`
                 : workspaceDetails?.action === "read"
@@ -515,6 +545,7 @@ export async function POST(request: Request) {
             completedAt,
             durationMs:
               bashDetails?.durationMs ??
+              skillResourceDetails?.durationMs ??
               (toolStartedAt.has(event.toolCallId)
                 ? completedAt - toolStartedAt.get(event.toolCallId)!
                 : undefined),
@@ -528,14 +559,14 @@ export async function POST(request: Request) {
             subAgentModel: subAgentDetails
               ? `${subAgentDetails.model.providerId}:${subAgentDetails.model.modelId}`
               : undefined,
-            commandId: bashDetails?.commandId,
-            permissionMode: bashDetails?.permissionMode,
-            commandStatus: bashDetails?.status,
-            exitCode: bashDetails?.exitCode,
-            stdout: bashDetails?.stdout,
-            stderr: bashDetails?.stderr,
-            truncated: bashDetails?.truncated ?? mcpDetails?.truncated ?? subAgentDetails?.truncated,
-            timedOut: bashDetails?.timedOut,
+            commandId: bashDetails?.commandId ?? skillResourceDetails?.commandId,
+            permissionMode: bashDetails?.permissionMode ?? skillResourceDetails?.permissionMode,
+            commandStatus: bashDetails?.status ?? skillResourceDetails?.status,
+            exitCode: bashDetails?.exitCode ?? skillResourceDetails?.exitCode,
+            stdout: bashDetails?.stdout ?? skillResourceDetails?.stdout,
+            stderr: bashDetails?.stderr ?? skillResourceDetails?.stderr,
+            truncated: bashDetails?.truncated ?? skillResourceDetails?.truncated ?? mcpDetails?.truncated ?? subAgentDetails?.truncated,
+            timedOut: bashDetails?.timedOut ?? skillResourceDetails?.timedOut,
             sources: searchDetails?.sources.map((source) => ({
               title: source.title,
               url: source.url,
@@ -548,15 +579,21 @@ export async function POST(request: Request) {
 
         if (event.type === "tool_execution_update") {
           const bashDetails = getBashDetails(event.partialResult?.details);
-          if (bashDetails?.status === "pending_approval") {
+          const skillResourceDetails = getSkillResourceDetails(event.partialResult?.details);
+          const approval = bashDetails?.status === "pending_approval"
+            ? { command: bashDetails.command, commandId: bashDetails.commandId, permissionMode: bashDetails.permissionMode }
+            : skillResourceDetails?.status === "pending_approval" && skillResourceDetails.command && skillResourceDetails.commandId && skillResourceDetails.permissionMode
+              ? { command: skillResourceDetails.command, commandId: skillResourceDetails.commandId, permissionMode: skillResourceDetails.permissionMode }
+              : undefined;
+          if (approval) {
             send({
               type: "tool_approval_required",
               toolCallId: event.toolCallId,
               toolName: event.toolName,
               label: getToolLabel(event.toolName, toolLabels),
-              query: bashDetails.command,
-              commandId: bashDetails.commandId,
-              permissionMode: bashDetails.permissionMode,
+              query: approval.command,
+              commandId: approval.commandId,
+              permissionMode: approval.permissionMode,
             });
           }
         }

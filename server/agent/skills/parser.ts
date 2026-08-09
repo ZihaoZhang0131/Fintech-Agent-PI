@@ -5,8 +5,18 @@ export type SkillMetadata = {
   description: string;
 };
 
+export type SkillResource = {
+  path: string;
+  name: string;
+  size: number;
+  extension: string;
+  category: "script" | "reference" | "asset" | "file";
+  isText: boolean;
+};
+
 export type SkillDefinition = SkillMetadata & {
   instructions: string;
+  resources: SkillResource[];
 };
 
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -68,5 +78,5 @@ export function parseSkill(source: string): SkillDefinition {
     throw new Error(`Invalid description for Skill ${name}`);
   }
   if (!body) throw new Error(`Skill ${name} has no instructions`);
-  return { id: `bundled:${name}`, origin: "bundled", name, description, instructions: body };
+  return { id: `bundled:${name}`, origin: "bundled", name, description, instructions: body, resources: [] };
 }

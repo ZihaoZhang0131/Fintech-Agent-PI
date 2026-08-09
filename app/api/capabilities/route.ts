@@ -81,6 +81,7 @@ export async function GET() {
     label: metadata.name,
     description: metadata.description,
     detail: registry.get(metadata.name)?.instructions ?? "",
+    resources: registry.get(metadata.name)?.resources ?? [],
     sourcePath: metadata.origin === "bundled" ? `.agents/skills/${metadata.name}/SKILL.md` : ".local-data/skills",
     defaultEnabled: true,
   }));

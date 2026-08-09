@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import path from "node:path";
 import test from "node:test";
+import { unzipSync, zipSync } from "fflate";
 
 import {
   listWorkspaceFiles,
@@ -54,6 +55,74 @@ test("local skill store imports folders, preserves references, overlays bundled 
   assert.ok(state.entries.some((entry) => entry.name === "company-research"));
   await store.remove("bundled:earnings-review");
   assert.ok((await store.list()).deletedBundledNames.includes("earnings-review"));
+});
+
+test("local skill store keeps a complete ZIP folder, exposes resources, and exports it again", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "pi-skill-zip-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const store = createSkillStore(temporaryRoot);
+  const archive = Buffer.from(zipSync({
+    "complete-skill/SKILL.md": Buffer.from("---\nname: complete-skill\ndescription: 完整目录技能。\n---\n\n按需读取资料。\n"),
+    "complete-skill/references/rules.md": Buffer.from("# 规则\n"),
+    "complete-skill/scripts/report.py": Buffer.from("print('report')\n"),
+    "complete-skill/assets/logo.bin": Buffer.from([0, 1, 2]),
+  }));
+  const imported = await store.importFolder({ kind: "zip", data: archive.toString("base64") });
+  const listed = await store.list();
+  const resources = listed.resourceFilesByName[imported.name];
+  assert.deepEqual(resources.map((file) => file.path), ["SKILL.md", "assets/logo.bin", "references/rules.md", "scripts/report.py"]);
+  assert.equal(resources.find((file) => file.path === "scripts/report.py").category, "script");
+  assert.equal((await store.readResource(imported.id, "references/rules.md")).content, "# 规则\n");
+  assert.equal((await store.resolveScript(imported.id, "scripts/report.py")).interpreter, "python3");
+
+  await store.writeResource(imported.id, { path: "references/extra.txt", data: encoded("补充资料") });
+  await store.removeResource(imported.id, "assets/logo.bin");
+  const exported = unzipSync(await store.exportZip(imported.id));
+  assert.ok(exported["SKILL.md"]);
+  assert.equal(Buffer.from(exported["references/extra.txt"]).toString("utf8"), "补充资料");
+  assert.equal(exported["assets/logo.bin"], undefined);
+
+  await assert.rejects(
+    store.importFolder({ kind: "zip", data: Buffer.alloc(5 * 1024 * 1024 + 1).toString("base64") }),
+    /5 MB/,
+  );
+});
+
+test("local runtime runs a Skill script with the current Bash sandbox and only grants its folder read access", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "pi-skill-script-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const dataDirectory = path.join(temporaryRoot, "data");
+  const workspaceDirectory = path.join(temporaryRoot, "workspace");
+  await mkdir(workspaceDirectory);
+  const workspace = await registerWorkspace(dataDirectory, workspaceDirectory);
+  const store = createSkillStore(dataDirectory);
+  const imported = await store.importFolder({
+    files: [
+      { path: "SKILL.md", data: encoded("---\nname: script-skill\ndescription: 可运行的本机脚本。\n---\n\n运行 scripts/hello.sh。") },
+      { path: "scripts/hello.sh", data: encoded("printf 'skill script works\\n'\n") },
+    ],
+  });
+  const server = createServer(createLocalRuntimeHandler({ dataDirectory, token: "script-token", mcpManager: { listServers() {} } }));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const headers = { Authorization: "Bearer script-token", "Content-Type": "application/json" };
+  const started = await fetch(`${baseUrl}/skills/${encodeURIComponent(imported.id)}/scripts/run`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ workspaceId: workspace.id, path: "scripts/hello.sh", args: [], approvalMode: "auto", permissionMode: "sandbox" }),
+  });
+  assert.equal(started.status, 201);
+  const job = await started.json();
+  let finished = job;
+  for (let attempt = 0; attempt < 30 && ["created", "approved", "running"].includes(finished.status); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    finished = await fetch(`${baseUrl}/workspaces/${workspace.id}/commands/${job.id}`, { headers: { Authorization: "Bearer script-token" } }).then((response) => response.json());
+  }
+  assert.equal(finished.status, "completed");
+  assert.equal(finished.result.exitCode, 0, finished.result.stderr);
+  assert.match(finished.result.stdout, /skill script works/);
 });
 
 test("local runtime protects MCP discovery and tool-call routes", async (t) => {

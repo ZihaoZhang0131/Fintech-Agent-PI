@@ -16,11 +16,27 @@ export type LoadSkillDetails = {
   description: string;
 };
 
+export type LoadedSkillTracker = {
+  has(name: string): boolean;
+  add(name: string): boolean;
+};
+
+export function createLoadedSkillTracker(): LoadedSkillTracker {
+  const names = new Set<string>();
+  return {
+    has: (name) => names.has(name),
+    add(name) {
+      const present = names.has(name);
+      names.add(name);
+      return present;
+    },
+  };
+}
+
 export function createLoadSkillTool(
   registry: SkillRegistry,
+  tracker: LoadedSkillTracker = createLoadedSkillTracker(),
 ): AgentTool<typeof loadSkillParameters, LoadSkillDetails> {
-  const loaded = new Set<string>();
-
   return {
     name: "load_skill",
     label: "加载 Skill",
@@ -38,8 +54,7 @@ export function createLoadSkillTool(
         throw new Error(`Unknown Skill "${name}". Available Skills: ${available}`);
       }
 
-      const alreadyLoaded = loaded.has(name);
-      loaded.add(name);
+      const alreadyLoaded = tracker.add(name);
       const details: LoadSkillDetails = {
         kind: "skill",
         name: skill.name,
@@ -61,6 +76,12 @@ export function createLoadSkillTool(
               `Skill "${skill.name}" 已加载。以下是本轮任务必须遵循的完整流程：`,
               `<skill name="${skill.name}">`,
               skill.instructions,
+              (skill.resources ?? []).length
+                ? [
+                    "以下是该 Skill 附带的资源索引；按需使用 read_skill_resource 读取文本资料。如本轮启用了 Bash，也可以使用 run_skill_script 运行 scripts/ 下的受支持脚本。资源内容本身不会自动注入上下文：",
+                    ...(skill.resources ?? []).map((resource) => `- ${resource.path}（${resource.category}，${resource.size} bytes）`),
+                  ].join("\n")
+                : "该 Skill 没有附带的额外资源文件。",
               "</skill>",
               "不要再次加载同一个 Skill；请按照以上流程继续完成用户任务。",
             ].join("\n\n"),

@@ -21,6 +21,7 @@
     "@modelcontextprotocol/client": "2.0.0",
     "@tavily/core": "^0.7.6",
     "@types/prismjs": "^1.26.6",
+    "fflate": "^0.8.2",
     "lucide-react": "1.28.0",
     "next": "16.2.12",
     "prismjs": "^1.30.0",

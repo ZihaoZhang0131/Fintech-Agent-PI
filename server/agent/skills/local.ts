@@ -1,6 +1,7 @@
 import type { LocalSkillState } from "./loader";
+import type { SkillResource } from "./parser";
 
-const EMPTY_STATE: LocalSkillState = { entries: [], deletedBundledNames: [] };
+const EMPTY_STATE: LocalSkillState = { entries: [], deletedBundledNames: [], resourceFilesByName: {} };
 
 export async function loadLocalSkillState(): Promise<LocalSkillState> {
   const runtimeUrl = process.env.LOCAL_RUNTIME_URL;
@@ -27,7 +28,23 @@ export async function loadLocalSkillState(): Promise<LocalSkillState> {
     const deletedBundledNames = Array.isArray(value.deletedBundledNames)
       ? value.deletedBundledNames.filter((name): name is string => typeof name === "string")
       : [];
-    return { entries, deletedBundledNames };
+    const resourceFilesByName = Object.fromEntries(
+      Object.entries(value.resourceFilesByName ?? {}).flatMap(([name, files]) => {
+        if (!Array.isArray(files)) return [];
+        const valid = files.filter((file): file is SkillResource =>
+          Boolean(file) &&
+          typeof file === "object" &&
+          typeof file.path === "string" &&
+          typeof file.name === "string" &&
+          typeof file.size === "number" &&
+          typeof file.extension === "string" &&
+          ["script", "reference", "asset", "file"].includes(file.category as string) &&
+          typeof file.isText === "boolean",
+        );
+        return typeof name === "string" ? [[name, valid]] : [];
+      }),
+    );
+    return { entries, deletedBundledNames, resourceFilesByName };
   } catch {
     return EMPTY_STATE;
   }

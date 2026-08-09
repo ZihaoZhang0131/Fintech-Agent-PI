@@ -4,7 +4,8 @@ import test from "node:test";
 
 import { formatSkillCatalog } from "../server/agent/skills/catalog.ts";
 import { parseSkill } from "../server/agent/skills/parser.ts";
-import { createLoadSkillTool } from "../server/agent/tools/load-skill.ts";
+import { createLoadSkillTool, createLoadedSkillTracker } from "../server/agent/tools/load-skill.ts";
+import { createSkillResourceTools } from "../server/agent/tools/skill-resources.ts";
 
 const skillCases = [
   ["equity-research", "公司研究"],
@@ -102,6 +103,24 @@ test("load_skill avoids returning the full instructions twice in one Agent run",
   const repeated = await tool.execute("skill-call-2", { name: skill.name });
   assert.match(repeated.content[0].text, /已在本轮任务中加载/);
   assert.doesNotMatch(repeated.content[0].text, /必须查找最新官方政策来源/);
+});
+
+test("Skill resources are listed only after load and cannot be read before their Skill is loaded", async () => {
+  const skill = {
+    id: "custom:skill",
+    origin: "custom",
+    name: "resource-skill",
+    description: "包含按需资料。",
+    instructions: "读取 references/rules.md。",
+    resources: [{ path: "references/rules.md", name: "rules.md", size: 12, extension: ".md", category: "reference", isText: true }],
+  };
+  const registry = { list: () => [skill], get: (name) => name === skill.name ? skill : undefined };
+  const tracker = createLoadedSkillTracker();
+  const [read] = createSkillResourceTools(registry, tracker, "workspace-123", { approvalMode: "auto", permissionMode: "sandbox" });
+  await assert.rejects(read.execute("resource-call", { name: skill.name, path: "references/rules.md" }), /先调用 load_skill/);
+  const loaded = createLoadSkillTool(registry, tracker);
+  const result = await loaded.execute("load-resource", { name: skill.name });
+  assert.match(result.content[0].text, /references\/rules\.md/);
 });
 
 test("legacy allowed_tools is ignored when parsing uploaded Skill content", () => {

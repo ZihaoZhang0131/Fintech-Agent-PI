@@ -55,3 +55,15 @@ test("MCP capabilities expose concise status, setup guidance, refresh, and disco
   assert.doesNotMatch(component, /<dt>连接状态|<dt>传输方式|<dt>认证/);
   assert.match(component, /tool\.description/);
 });
+
+test("Skill management supports full folders, ZIP import, and compact resource browsing", () => {
+  assert.match(component, /选择文件夹/);
+  assert.match(component, /选择 ZIP 包/);
+  assert.match(component, /完整目录/);
+  assert.match(component, /导出 ZIP/);
+  assert.match(component, /skill-file-manager/);
+  assert.match(component, /skill-resource-summary/);
+  assert.match(component, /添加文件/);
+  assert.match(stylesheet, /\.skill-file-manager/);
+  assert.match(stylesheet, /\.capability-import-menu/);
+});

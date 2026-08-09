@@ -51,7 +51,7 @@ import {
   useState,
 } from "react";
 import ReactMarkdown from "react-markdown";
-import { CapabilityLibrary } from "@/components/capability-library";
+import { CapabilityLibrary, type SkillResourcePreview } from "@/components/capability-library";
 import { AgentLibrary } from "@/components/agent-library";
 import { MarkdownMessage } from "@/components/chat-markdown";
 import { CodePreview } from "@/components/code-preview";
@@ -1158,11 +1158,13 @@ export default function Home() {
     ));
   }
 
-  async function importSkillFolder(files: File[]) {
-    const normalizedFiles = normalizeSkillFolderFiles(files);
-    const payload = {
-      files: await Promise.all(normalizedFiles.map(async ({ path, file }) => ({ path, data: await fileToBase64(file) }))),
-    };
+  async function importSkillFolder(source: { kind: "folder"; files: File[] } | { kind: "zip"; file: File }) {
+    const payload = source.kind === "zip"
+      ? { kind: "zip", data: await fileToBase64(source.file) }
+      : {
+          kind: "folder",
+          files: await Promise.all(normalizeSkillFolderFiles(source.files).map(async ({ path, file }) => ({ path, data: await fileToBase64(file) }))),
+        };
     const skill = await responseJson<{ name: string }>(
       await fetch("/api/local/skills/import", {
         method: "POST",
@@ -1192,6 +1194,44 @@ export default function Home() {
     );
     migrateSkillSelection(item.name, null);
     setCapabilityRefreshVersion((current) => current + 1);
+  }
+
+  async function readSkillResource(item: CapabilityItem, filePath: string): Promise<SkillResourcePreview> {
+    return responseJson<SkillResourcePreview>(
+      await fetch(`/api/local/skills/${encodeURIComponent(item.id ?? `bundled:${item.name}`)}/files/content?path=${encodeURIComponent(filePath)}`),
+    );
+  }
+
+  async function writeSkillResource(item: CapabilityItem, filePath: string, file: File) {
+    await responseJson(
+      await fetch(`/api/local/skills/${encodeURIComponent(item.id ?? `bundled:${item.name}`)}/files`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: filePath, data: await fileToBase64(file) }),
+      }),
+    );
+    setCapabilityRefreshVersion((current) => current + 1);
+  }
+
+  async function deleteSkillResource(item: CapabilityItem, filePath: string) {
+    await responseJson(
+      await fetch(`/api/local/skills/${encodeURIComponent(item.id ?? `bundled:${item.name}`)}/files?path=${encodeURIComponent(filePath)}`, { method: "DELETE" }),
+    );
+    setCapabilityRefreshVersion((current) => current + 1);
+  }
+
+  async function exportSkill(item: CapabilityItem) {
+    const response = await fetch(`/api/local/skills/${encodeURIComponent(item.id ?? `bundled:${item.name}`)}/export`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { message?: string } | null;
+      throw new Error(payload?.message ?? "导出 Skill 失败。");
+    }
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = `${item.name}.zip`;
+    anchor.click();
+    URL.revokeObjectURL(objectUrl);
   }
 
   function updateAgentProfile(id: AgentRoleId, profile: AgentProfile) {
@@ -2561,6 +2601,10 @@ export default function Home() {
           onSkillImport={activeView === "skill" ? importSkillFolder : undefined}
           onSkillUpdate={activeView === "skill" ? updateSkill : undefined}
           onSkillDelete={activeView === "skill" ? deleteSkill : undefined}
+          onSkillReadResource={activeView === "skill" ? readSkillResource : undefined}
+          onSkillWriteResource={activeView === "skill" ? writeSkillResource : undefined}
+          onSkillDeleteResource={activeView === "skill" ? deleteSkillResource : undefined}
+          onSkillExport={activeView === "skill" ? exportSkill : undefined}
           onClose={() => setActiveView("workspace")}
         />
       )}

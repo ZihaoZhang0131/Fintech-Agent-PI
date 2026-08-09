@@ -20,6 +20,7 @@ import {
 const execFileAsync = promisify(execFile);
 const DEFAULT_PORT = 4318;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_SKILL_BODY_BYTES = 12 * 1024 * 1024;
 const MAX_TEXT_PREVIEW_BYTES = 1 * 1024 * 1024;
 const MAX_ASSET_PREVIEW_BYTES = 20 * 1024 * 1024;
 const MAX_FILE_ENTRIES = 800;
@@ -377,7 +378,7 @@ function sandboxString(value) {
   return JSON.stringify(value);
 }
 
-function createSandboxProfile(workspaceRoot, commandHome, commandTemporaryDirectory) {
+function createSandboxProfile(workspaceRoot, commandHome, commandTemporaryDirectory, extraReadableRoots = []) {
   const readableRoots = [
     "/System",
     "/Library",
@@ -391,6 +392,7 @@ function createSandboxProfile(workspaceRoot, commandHome, commandTemporaryDirect
     workspaceRoot,
     commandHome,
     commandTemporaryDirectory,
+    ...extraReadableRoots,
   ];
   const writableRoots = [workspaceRoot, commandHome, commandTemporaryDirectory];
   const readable = readableRoots.map((root) => `(subpath ${sandboxString(root)})`).join(" ");
@@ -454,6 +456,7 @@ export async function executeWorkspaceCommand({
   command,
   permissionMode = "sandbox",
   timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+  extraReadableRoots = [],
   signal,
 }) {
   if (typeof command !== "string" || !command.trim()) throw new Error("Bash 命令不能为空。");
@@ -466,6 +469,7 @@ export async function executeWorkspaceCommand({
   }
 
   const canonicalRoot = await realpath(root);
+  const canonicalExtraReadableRoots = await Promise.all(extraReadableRoots.map((directory) => realpath(directory)));
   const boundedTimeout = Math.max(
     1_000,
     Math.min(Number(timeoutMs) || DEFAULT_COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS),
@@ -480,7 +484,7 @@ export async function executeWorkspaceCommand({
     permissionMode === "sandbox"
       ? [
           "-p",
-          createSandboxProfile(canonicalRoot, commandHome, commandTemporaryDirectory),
+          createSandboxProfile(canonicalRoot, commandHome, commandTemporaryDirectory, canonicalExtraReadableRoots),
           "/bin/bash",
           "-c",
           command,
@@ -600,6 +604,7 @@ export function createCommandManager({ dataDirectory }) {
         command: job.command,
         permissionMode: job.permissionMode,
         timeoutMs: job.timeoutMs,
+        extraReadableRoots: job.extraReadableRoots,
         signal: job.controller.signal,
       });
       job.status = job.result.cancelled ? "cancelled" : "completed";
@@ -612,7 +617,7 @@ export function createCommandManager({ dataDirectory }) {
     }
   }
 
-  function create(workspace, payload) {
+  function create(workspace, payload, { extraReadableRoots = [] } = {}) {
     const command = typeof payload.command === "string" ? payload.command.trim() : "";
     if (!command || Buffer.byteLength(command) > MAX_COMMAND_BYTES) {
       throw Object.assign(new Error("Bash 命令为空或过长。"), { status: 400 });
@@ -641,6 +646,7 @@ export function createCommandManager({ dataDirectory }) {
       id: randomUUID(),
       workspaceId: workspace.id,
       workspaceRoot: workspace.path,
+      extraReadableRoots,
       command,
       approvalMode,
       permissionMode,
@@ -703,16 +709,20 @@ function sendJson(response, status, payload) {
   response.end(JSON.stringify(payload));
 }
 
-async function readJsonBody(request) {
+async function readJsonBody(request, maxBytes = MAX_BODY_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw Object.assign(new Error("请求内容过大。"), { status: 413 });
+    if (size > maxBytes) throw Object.assign(new Error("请求内容过大。"), { status: 413 });
     chunks.push(chunk);
   }
   if (chunks.length === 0) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\\"'\\\"'")}'`;
 }
 
 export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = createMcpManager() }) {
@@ -746,7 +756,47 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
         return sendJson(response, 200, await skillStore.list());
       }
       if (request.method === "POST" && url.pathname === "/skills/import") {
-        return sendJson(response, 201, await skillStore.importFolder(await readJsonBody(request)));
+        return sendJson(response, 201, await skillStore.importFolder(await readJsonBody(request, MAX_SKILL_BODY_BYTES)));
+      }
+      if (segments[0] === "skills" && segments[1] && segments[2] === "files") {
+        const skillId = segments[1];
+        if (request.method === "GET" && segments[3] === "content" && segments.length === 4) {
+          return sendJson(response, 200, await skillStore.readResource(skillId, url.searchParams.get("path") ?? ""));
+        }
+        if (request.method === "PUT" && segments.length === 3) {
+          return sendJson(response, 200, await skillStore.writeResource(skillId, await readJsonBody(request, MAX_SKILL_BODY_BYTES)));
+        }
+        if (request.method === "DELETE" && segments.length === 3) {
+          return sendJson(response, 200, await skillStore.removeResource(skillId, url.searchParams.get("path") ?? ""));
+        }
+      }
+      if (segments[0] === "skills" && segments[1] && segments[2] === "export" && segments.length === 3 && request.method === "GET") {
+        const archive = await skillStore.exportZip(segments[1]);
+        response.writeHead(200, {
+          "Content-Type": "application/zip",
+          "Content-Length": archive.length,
+          "Content-Disposition": "attachment; filename=skill.zip",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        });
+        response.end(archive);
+        return;
+      }
+      if (segments[0] === "skills" && segments[1] && segments[2] === "scripts" && segments[3] === "run" && segments.length === 4 && request.method === "POST") {
+        const payload = await readJsonBody(request);
+        const workspace = await findWorkspace(dataDirectory, payload.workspaceId);
+        const script = await skillStore.resolveScript(segments[1], payload.path);
+        const args = Array.isArray(payload.args) && payload.args.every((value) => typeof value === "string" && value.length <= 1_000)
+          ? payload.args
+          : null;
+        if (!args || args.length > 20) throw Object.assign(new Error("Skill 脚本参数无效。"), { status: 400 });
+        const command = [script.interpreter, script.scriptPath, ...args].map(shellQuote).join(" ");
+        return sendJson(response, payload.approvalMode === "ask" ? 202 : 201, commandManager.create(workspace, {
+          command,
+          approvalMode: payload.approvalMode,
+          permissionMode: payload.permissionMode,
+          timeoutMs: payload.timeoutMs,
+        }, { extraReadableRoots: [script.readableRoot] }));
       }
       if (segments[0] === "skills" && segments[1] && segments.length === 2) {
         if (request.method === "POST") {
