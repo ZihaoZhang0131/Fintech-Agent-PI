@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createFileTreeFromFlatEntries,
   getProjectFileTree,
   getVisibleFileTreeEntries,
   removeProjectFileTree,
@@ -50,6 +51,41 @@ test("file tree expands loaded children, collapses them, and keeps the branch ca
   ]);
   assert.deepEqual(collapsed.childrenByDirectory.reports.map((item) => item.path), [
     "reports/summary.md",
+  ]);
+});
+
+test("flat Skill resources become a complete directory tree with stable folder-first ordering", () => {
+  const tree = createFileTreeFromFlatEntries([
+    entry("references/filings/annual.md"),
+    entry("SKILL.md"),
+    entry("scripts/fetch.py"),
+    entry("references/index.md"),
+    entry("assets/logo.png"),
+  ]);
+
+  assert.deepEqual(tree.childrenByDirectory[""].map((item) => item.path), [
+    "assets",
+    "references",
+    "scripts",
+    "SKILL.md",
+  ]);
+  assert.deepEqual(tree.childrenByDirectory.references.map((item) => item.path), [
+    "references/filings",
+    "references/index.md",
+  ]);
+  assert.deepEqual(tree.childrenByDirectory["references/filings"].map((item) => item.path), [
+    "references/filings/annual.md",
+  ]);
+
+  tree.expandedPaths = ["references", "references/filings"];
+  assert.deepEqual(getVisibleFileTreeEntries(tree).map((item) => item.path), [
+    "assets",
+    "references",
+    "references/filings",
+    "references/filings/annual.md",
+    "references/index.md",
+    "scripts",
+    "SKILL.md",
   ]);
 });
 

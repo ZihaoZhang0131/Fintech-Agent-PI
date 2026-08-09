@@ -25,6 +25,59 @@ const EMPTY_PROJECT_FILE_TREE: ProjectFileTree = {
   truncatedPaths: [],
 };
 
+function compareFileTreeEntries(left: FileTreeEntry, right: FileTreeEntry) {
+  if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
+  return left.name.localeCompare(right.name, "zh-CN", { numeric: true, sensitivity: "base" });
+}
+
+/**
+ * Turns a complete flat resource manifest into the same tree shape used by the
+ * project file panel. Empty directories cannot be represented in a file
+ * manifest, but every ancestor of a file is retained as a directory node.
+ */
+export function createFileTreeFromFlatEntries(entries: FileTreeEntry[]): ProjectFileTree {
+  const childrenByDirectory: Record<string, FileTreeEntry[]> = { "": [] };
+  const byPath = new Map<string, FileTreeEntry>();
+
+  function addToDirectory(directoryPath: string, entry: FileTreeEntry) {
+    const children = childrenByDirectory[directoryPath] ?? (childrenByDirectory[directoryPath] = []);
+    if (!children.some((child) => child.path === entry.path)) children.push(entry);
+  }
+
+  for (const originalEntry of entries) {
+    const segments = originalEntry.path.split("/").filter(Boolean);
+    if (segments.length === 0) continue;
+
+    let parentPath = "";
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const path = segments.slice(0, index + 1).join("/");
+      const directory = byPath.get(path) ?? {
+        path,
+        name: segments[index],
+        kind: "directory" as const,
+        size: 0,
+        modifiedAt: 0,
+        extension: "",
+      };
+      byPath.set(path, directory);
+      addToDirectory(parentPath, directory);
+      childrenByDirectory[path] ??= [];
+      parentPath = path;
+    }
+
+    const entry = { ...originalEntry, path: segments.join("/"), name: segments.at(-1) ?? originalEntry.name };
+    const existing = byPath.get(entry.path);
+    if (!existing || entry.kind === "file") {
+      byPath.set(entry.path, entry);
+      addToDirectory(parentPath, entry);
+      if (entry.kind === "directory") childrenByDirectory[entry.path] ??= [];
+    }
+  }
+
+  for (const children of Object.values(childrenByDirectory)) children.sort(compareFileTreeEntries);
+  return { childrenByDirectory, expandedPaths: [], loadingPaths: [], errorsByPath: {}, truncatedPaths: [] };
+}
+
 export function getProjectFileTree(
   state: ProjectFileTreeState,
   projectId: string,

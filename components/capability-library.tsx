@@ -1,9 +1,12 @@
 "use client";
 
-import { ArrowLeft, Download, ExternalLink, FileCode, FileText, FolderUp, Image as ImageIcon, Pencil, RefreshCw, Save, Search, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, FolderUp, Pencil, RefreshCw, Save, Search, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { FileSystemTree } from "@/components/file-system-tree";
+import { MarkdownMessage } from "@/components/chat-markdown";
 import type { CapabilityItem, CapabilityKind, McpCapabilityTool } from "@/lib/capability-types";
+import { createFileTreeFromFlatEntries, getVisibleFileTreeEntries } from "@/lib/file-tree";
 
 type CapabilityLibraryProps = {
   kind: CapabilityKind;
@@ -31,6 +34,10 @@ export type SkillResourcePreview = {
   data?: string;
 };
 
+function isMarkdownSkillResource(path: string) {
+  return /\.mdx?$/i.test(path);
+}
+
 export function CapabilityLibrary({
   kind,
   items,
@@ -55,6 +62,7 @@ export function CapabilityLibrary({
   const [skillTab, setSkillTab] = useState<"instructions" | "files">("instructions");
   const [showImportMenu, setShowImportMenu] = useState(false);
   const [selectedResourcePath, setSelectedResourcePath] = useState("");
+  const [expandedSkillPaths, setExpandedSkillPaths] = useState<string[]>([]);
   const [resourcePreview, setResourcePreview] = useState<SkillResourcePreview | null>(null);
   const [resourceDraft, setResourceDraft] = useState("");
   const [resourceEditing, setResourceEditing] = useState(false);
@@ -76,6 +84,20 @@ export function CapabilityLibrary({
     () => items.find((item) => item.name === selectedName) ?? null,
     [items, selectedName],
   );
+  const skillFileTree = useMemo(() => createFileTreeFromFlatEntries(
+    (selected?.resources ?? []).map((resource) => ({
+      path: resource.path,
+      name: resource.name,
+      kind: "file" as const,
+      size: resource.size,
+      modifiedAt: 0,
+      extension: resource.extension,
+    })),
+  ), [selected?.resources]);
+  const visibleSkillFiles = useMemo(
+    () => getVisibleFileTreeEntries({ ...skillFileTree, expandedPaths: expandedSkillPaths }),
+    [expandedSkillPaths, skillFileTree],
+  );
 
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) {
@@ -90,6 +112,7 @@ export function CapabilityLibrary({
     setEditing(false);
     setSkillTab("instructions");
     setSelectedResourcePath("");
+    setExpandedSkillPaths([]);
     setResourcePreview(null);
     setResourceEditing(false);
     setOperationError("");
@@ -140,6 +163,12 @@ export function CapabilityLibrary({
     } catch (error) {
       setOperationError(error instanceof Error ? error.message : "读取技能文件失败。");
     }
+  }
+
+  function toggleSkillDirectory(path: string) {
+    setExpandedSkillPaths((current) => current.includes(path)
+      ? current.filter((item) => item !== path)
+      : [...current, path]);
   }
 
   async function saveResource() {
@@ -380,16 +409,27 @@ export function CapabilityLibrary({
                     <div className="skill-file-manager">
                       <aside className="skill-file-tree">
                         <div className="skill-file-tree-heading"><span>完整目录</span><SkillResourceSummary resources={selected.resources ?? []} /></div>
-                        {(selected.resources ?? []).map((resource) => (
-                          <button key={resource.path} type="button" className={selectedResourcePath === resource.path ? "active" : ""} style={{ paddingInlineStart: `${10 + Math.max(0, resource.path.split("/").length - 1) * 12}px` }} onClick={() => void selectResource(resource)}>
-                            {resource.category === "script" ? <FileCode size={13} /> : resource.category === "asset" ? <ImageIcon size={13} /> : <FileText size={13} />}
-                            <span>{resource.name}</span>
-                          </button>
-                        ))}
+                        <FileSystemTree
+                          ariaLabel="Skill 文件目录"
+                          entries={visibleSkillFiles}
+                          tree={{ ...skillFileTree, expandedPaths: expandedSkillPaths }}
+                          activePath={selectedResourcePath}
+                          onDirectoryToggle={(entry) => toggleSkillDirectory(entry.path)}
+                          onFileSelect={(entry) => {
+                            const resource = selected.resources?.find((item) => item.path === entry.path);
+                            if (resource) void selectResource(resource);
+                          }}
+                        />
                       </aside>
                       <section className="skill-file-preview">
                         {!resourcePreview && <p>从左侧选择文件以预览或编辑。</p>}
-                        {resourcePreview?.kind === "text" && (resourceEditing ? <textarea value={resourceDraft} rows={18} onChange={(event) => setResourceDraft(event.target.value)} /> : <pre><code>{resourcePreview.content}</code></pre>)}
+                        {resourcePreview?.kind === "text" && (resourceEditing ? (
+                          <textarea value={resourceDraft} rows={18} onChange={(event) => setResourceDraft(event.target.value)} />
+                        ) : isMarkdownSkillResource(resourcePreview.path) ? (
+                          <div className="skill-markdown-preview markdown-preview">
+                            <MarkdownMessage content={resourcePreview.content ?? ""} />
+                          </div>
+                        ) : <pre><code>{resourcePreview.content}</code></pre>)}
                         {resourcePreview?.kind === "image" && resourcePreview.data && (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={`data:${resourcePreview.mimeType};base64,${resourcePreview.data}`} alt={resourcePreview.path} />

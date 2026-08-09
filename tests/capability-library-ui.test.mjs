@@ -7,6 +7,7 @@ const component = await readFile(
   "utf8",
 );
 const stylesheet = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+const fileSystemTree = await readFile(new URL("../components/file-system-tree.tsx", import.meta.url), "utf8");
 
 test("capability cards remove redundant corner markers", () => {
   assert.doesNotMatch(component, /capability-card-topline|capability-card-icon/);
@@ -66,4 +67,31 @@ test("Skill management supports full folders, ZIP import, and compact resource b
   assert.match(component, /添加文件/);
   assert.match(stylesheet, /\.skill-file-manager/);
   assert.match(stylesheet, /\.capability-import-menu/);
+});
+
+test("Skill resources reuse the project file-system tree instead of a flat file list", async () => {
+  const workspace = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(component, /<FileSystemTree/);
+  assert.match(workspace, /<FileSystemTree/);
+  assert.match(component, /createFileTreeFromFlatEntries/);
+  assert.match(fileSystemTree, /workspace-file-row directory/);
+  assert.match(fileSystemTree, /workspace-directory-chevron/);
+});
+
+test("Markdown Skill resources render in preview mode while editing keeps source text", () => {
+  assert.match(component, /import \{ MarkdownMessage \} from "@\/components\/chat-markdown"/);
+  assert.match(component, /function isMarkdownSkillResource\(path: string\)/);
+  assert.match(component, /className="skill-markdown-preview markdown-preview"/);
+  assert.match(component, /<MarkdownMessage content=\{resourcePreview\.content \?\? ""\} \/>/);
+  assert.match(component, /resourceEditing \? \(\s*<textarea/s);
+  assert.match(stylesheet, /\.skill-markdown-preview\s*\{[^}]*overflow:\s*auto;/s);
+});
+
+test("Skill descriptions remain editable only from the unified detail editor", () => {
+  assert.doesNotMatch(component, /editingCardDescriptionName|editCardDescription|skill-card-description-edit/);
+  assert.match(component, /selected\.kind === "skill" \? editing && draft/);
+  assert.match(component, /Skill 描述（Agent 看到的）/);
+  assert.match(component, /value=\{draft\.description\}/);
+  assert.match(component, /onSkillUpdate\(selected, draft\)/);
+  assert.doesNotMatch(stylesheet, /\.skill-card-description-editor|\.skill-card-description-edit/);
 });

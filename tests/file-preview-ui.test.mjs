@@ -6,6 +6,7 @@ const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "
 const stylesheet = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const localRoute = await readFile(new URL("../app/api/local/[...segments]/route.ts", import.meta.url), "utf8");
 const codePreview = await readFile(new URL("../components/code-preview.tsx", import.meta.url), "utf8");
+const fileSystemTree = await readFile(new URL("../components/file-system-tree.tsx", import.meta.url), "utf8");
 
 test("file preview UI uses protected asset URLs instead of Base64 data URLs", () => {
   assert.match(pageSource, /files\/asset\?path=\$\{encodeURIComponent\(activeFilePath\)\}/);
@@ -50,12 +51,13 @@ test("local API proxy preserves binary preview safety headers", () => {
 
 test("file browser exposes lazy, accessible directory expansion with local retry", () => {
   assert.match(pageSource, /\?path=\$\{encodeURIComponent\(directoryPath\)\}/);
-  assert.match(pageSource, /toggleProjectDirectory\(file\)/);
-  assert.match(pageSource, /aria-expanded=\{expanded\}/);
-  assert.match(pageSource, /handleDirectoryKeyDown\(event, file\)/);
+  assert.match(pageSource, /<FileSystemTree/);
+  assert.match(pageSource, /onDirectoryToggle=\{toggleProjectDirectory\}/);
   assert.match(pageSource, /loadProjectDirectory\(activeProject\.id, file\.path\)/);
-  assert.match(pageSource, />\s*重试\s*</);
-  assert.match(pageSource, /空文件夹/);
+  assert.match(fileSystemTree, /aria-expanded=\{expanded\}/);
+  assert.match(fileSystemTree, /event\.key === "ArrowRight"/);
+  assert.match(fileSystemTree, />重试</);
+  assert.match(fileSystemTree, /空文件夹/);
   assert.match(stylesheet, /\.workspace-directory-status\s*\{/);
   assert.match(stylesheet, /\.workspace-directory-chevron\s*\{/);
 });

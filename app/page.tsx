@@ -5,7 +5,6 @@ import {
   Bot,
   Braces,
   ChevronDown,
-  ChevronRight,
   CircleStop,
   CircleX,
   Copy,
@@ -13,8 +12,6 @@ import {
   Download,
   File,
   FileChartColumn,
-  FileCode2,
-  FileImage,
   FileText,
   Folder,
   FolderOpen,
@@ -41,7 +38,6 @@ import {
 import {
   CSSProperties,
   FormEvent,
-  Fragment,
   KeyboardEvent,
   PointerEvent as ReactPointerEvent,
   useCallback,
@@ -52,6 +48,7 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import { CapabilityLibrary, type SkillResourcePreview } from "@/components/capability-library";
+import { CODE_EXTENSIONS, FileSystemTree, fileTreeIcon } from "@/components/file-system-tree";
 import { AgentLibrary } from "@/components/agent-library";
 import { MarkdownMessage } from "@/components/chat-markdown";
 import { CodePreview } from "@/components/code-preview";
@@ -206,29 +203,6 @@ const SUGGESTIONS = [
     prompt: "搭建新能源汽车产业链研究框架，并将结果保存到项目文件夹。",
   },
 ];
-
-const CODE_EXTENSIONS = new Set([
-  ".c",
-  ".cc",
-  ".cpp",
-  ".css",
-  ".go",
-  ".h",
-  ".html",
-  ".java",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".mts",
-  ".py",
-  ".rb",
-  ".rs",
-  ".scss",
-  ".sh",
-  ".sql",
-  ".ts",
-  ".tsx",
-]);
 
 function makeId() {
   return crypto.randomUUID();
@@ -432,17 +406,6 @@ function normalizeSkillFolderFiles(files: File[]) {
     path: commonRoot ? paths[index].slice(commonRoot.length + 1) : paths[index],
     file,
   }));
-}
-
-function fileIcon(file: ProjectFile) {
-  if (file.kind === "directory") return Folder;
-  if (file.extension === ".pdf") return FileChartColumn;
-  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif"].includes(file.extension)) {
-    return FileImage;
-  }
-  if (CODE_EXTENSIONS.has(file.extension)) return FileCode2;
-  if ([".md", ".mdx", ".txt", ".csv"].includes(file.extension)) return FileText;
-  return File;
 }
 
 function previewCacheKey(projectId: string, path: string) {
@@ -1475,17 +1438,6 @@ export default function Home() {
     }
   }
 
-  function handleDirectoryKeyDown(
-    event: KeyboardEvent<HTMLButtonElement>,
-    file: ProjectFile,
-  ) {
-    const isExpanded = activeFileTree.expandedPaths.includes(file.path);
-    if ((event.key === "ArrowRight" && !isExpanded) || (event.key === "ArrowLeft" && isExpanded)) {
-      event.preventDefault();
-      toggleProjectDirectory(file);
-    }
-  }
-
   function activateProjectFile(path: string | null) {
     if (!activeProject) return;
     setFileTabsByProject((current) => activateFileTab(current, activeProject.id, path));
@@ -2237,7 +2189,7 @@ export default function Home() {
                   const file = loadedFiles.find(
                     (entry) => entry.kind === "file" && entry.path === path,
                   );
-                  const Icon = file ? fileIcon(file) : FileText;
+                  const Icon = file ? fileTreeIcon(file) : FileText;
                   const active = activeFilePath === path;
                   return (
                     <div className={`workspace-file-tab ${active ? "active" : ""}`} key={path}>
@@ -2332,90 +2284,14 @@ export default function Home() {
                   </button>
                 </div>
               ) : files.length > 0 ? (
-                <nav className="workspace-file-list" aria-label="项目文件列表">
-                  {files.map((file) => {
-                    const Icon = fileIcon(file);
-                    const depth = Math.max(0, file.path.split("/").length - 1);
-                    if (file.kind === "directory") {
-                      const expanded = activeFileTree.expandedPaths.includes(file.path);
-                      const loading = activeFileTree.loadingPaths.includes(file.path);
-                      const error = activeFileTree.errorsByPath[file.path];
-                      const loaded = Object.hasOwn(
-                        activeFileTree.childrenByDirectory,
-                        file.path,
-                      );
-                      const childCount = activeFileTree.childrenByDirectory[file.path]?.length ?? 0;
-                      const DirectoryIcon = expanded ? FolderOpen : Folder;
-                      return (
-                        <Fragment key={file.path}>
-                          <button
-                            className="workspace-file-row directory"
-                            style={{ paddingLeft: `${10 + depth * 14}px` }}
-                            type="button"
-                            aria-expanded={expanded}
-                            aria-label={`${expanded ? "收起" : "展开"}目录 ${file.path}`}
-                            onClick={() => toggleProjectDirectory(file)}
-                            onKeyDown={(event) => handleDirectoryKeyDown(event, file)}
-                            title={file.path}
-                          >
-                            {expanded ? (
-                              <ChevronDown className="workspace-directory-chevron" size={12} />
-                            ) : (
-                              <ChevronRight className="workspace-directory-chevron" size={12} />
-                            )}
-                            <DirectoryIcon size={14} />
-                            <span>{file.name}</span>
-                          </button>
-                          {expanded && loading && (
-                            <div
-                              className="workspace-directory-status"
-                              style={{ paddingLeft: `${31 + depth * 14}px` }}
-                            >
-                              <RefreshCw size={11} className="spinning" />
-                              <span>正在读取…</span>
-                            </div>
-                          )}
-                          {expanded && error && !loading && (
-                            <div
-                              className="workspace-directory-status error"
-                              style={{ paddingLeft: `${31 + depth * 14}px` }}
-                            >
-                              <span>{error}</span>
-                              <button
-                                type="button"
-                                onClick={() => void loadProjectDirectory(activeProject.id, file.path)}
-                              >
-                                重试
-                              </button>
-                            </div>
-                          )}
-                          {expanded && loaded && !loading && !error && childCount === 0 && (
-                            <div
-                              className="workspace-directory-status"
-                              style={{ paddingLeft: `${31 + depth * 14}px` }}
-                            >
-                              <span>空文件夹</span>
-                            </div>
-                          )}
-                        </Fragment>
-                      );
-                    }
-                    return (
-                      <button
-                        className="workspace-file-row"
-                        style={{ paddingLeft: `${10 + depth * 14}px` }}
-                        type="button"
-                        onClick={() => selectProjectFile(file)}
-                        title={file.path}
-                        key={file.path}
-                      >
-                        <Icon size={14} />
-                        <span>{file.name}</span>
-                        <small>{formatBytes(file.size)}</small>
-                      </button>
-                    );
-                  })}
-                </nav>
+                <FileSystemTree
+                  ariaLabel="项目文件列表"
+                  entries={files}
+                  tree={activeFileTree}
+                  onDirectoryToggle={toggleProjectDirectory}
+                  onDirectoryRetry={(file) => void loadProjectDirectory(activeProject.id, file.path)}
+                  onFileSelect={selectProjectFile}
+                />
               ) : rootFilesLoaded ? (
                 <div className="workspace-files-empty">
                   <FolderOpen size={22} />
