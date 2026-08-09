@@ -34,6 +34,7 @@ import {
   Sparkles,
   Trash2,
   TrendingUp,
+  UserRound,
   Wrench,
   X,
 } from "lucide-react";
@@ -56,6 +57,7 @@ import { MarkdownMessage } from "@/components/chat-markdown";
 import { CodePreview } from "@/components/code-preview";
 import { ModelLibrary, type ModelProviderItem } from "@/components/model-library";
 import { ToolRunStack } from "@/components/tool-run-stack";
+import { UserUsagePage } from "@/components/user-usage-page";
 import type { CapabilityCatalog, CapabilityItem, CapabilityKind } from "@/lib/capability-types";
 import {
   cloneProjectAgentConfig,
@@ -99,6 +101,7 @@ import {
   type ToolRun,
   type ToolStartEvent,
 } from "@/lib/tool-runs";
+import { getUsageActivity } from "@/lib/usage-activity";
 
 type MessageRole = "user" | "assistant";
 
@@ -109,6 +112,7 @@ type ChatMessage = {
   createdAt: number;
   toolRuns?: ToolRun[];
   durationMs?: number;
+  tokenUsage?: number;
 };
 
 type Conversation = {
@@ -182,7 +186,7 @@ const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
 const AGENT_PROFILES_KEY = "pi-research-agent:agent-profiles:v2";
 const AGENT_PROMPTS_KEY = "pi-research-agent:agent-prompts:v1";
 
-type AppView = "workspace" | CapabilityKind | "model" | "agent";
+type AppView = "workspace" | CapabilityKind | "model" | "agent" | "user";
 
 const SUGGESTIONS = [
   {
@@ -528,6 +532,7 @@ export default function Home() {
     () => availableModels.find((model) => `${model.providerId}:${model.modelId}` === selectedModelId),
     [availableModels, selectedModelId],
   );
+  const usageActivity = useMemo(() => getUsageActivity(conversations), [conversations]);
   const activeAgentConfig = useMemo(
     () => agentConfigsByProject[activeProjectId] ?? createDefaultProjectAgentConfig(),
     [activeProjectId, agentConfigsByProject],
@@ -1620,6 +1625,15 @@ export default function Home() {
               ),
               updatedAt: timestampNow(),
             }));
+            if (event.usage?.totalTokens !== undefined) {
+              updateConversation(conversationId, (conversation) => ({
+                ...conversation,
+                messages: conversation.messages.map((message) =>
+                  message.id === assistantId ? { ...message, tokenUsage: event.usage?.totalTokens } : message,
+                ),
+                updatedAt: timestampNow(),
+              }));
+            }
             refreshProjectFiles(activeProject.id);
           }
           if (event.type === "error") throw new Error(event.message);
@@ -1904,6 +1918,14 @@ export default function Home() {
             <Cpu size={15} />
             <span>模型</span>
             <small>{availableModels.length}</small>
+          </button>
+          <button
+            className={activeView === "user" ? "active" : ""}
+            type="button"
+            onClick={() => setActiveView("user")}
+          >
+            <UserRound size={15} />
+            <span>用户</span>
           </button>
         </nav>
       </aside>
@@ -2514,6 +2536,8 @@ export default function Home() {
           onDelete={deleteModelProvider}
           onClose={() => setActiveView("workspace")}
         />
+      ) : activeView === "user" ? (
+        <UserUsagePage activity={usageActivity} />
       ) : (
         <CapabilityLibrary
           key={activeView}
