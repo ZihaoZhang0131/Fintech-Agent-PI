@@ -46,7 +46,6 @@ import {
   useRef,
   useState,
 } from "react";
-import ReactMarkdown from "react-markdown";
 import { CapabilityLibrary, type SkillResourcePreview } from "@/components/capability-library";
 import { CODE_EXTENSIONS, FileSystemTree, fileTreeIcon } from "@/components/file-system-tree";
 import { AgentLibrary } from "@/components/agent-library";
@@ -2361,7 +2360,7 @@ export default function Home() {
                     {filePreview.kind === "text" && filePreview.content !== undefined &&
                       ([".md", ".mdx"].includes(filePreview.extension) ? (
                         <div className="markdown-preview">
-                          <ReactMarkdown>{filePreview.content}</ReactMarkdown>
+                          <MarkdownMessage content={filePreview.content} />
                         </div>
                       ) : CODE_EXTENSIONS.has(filePreview.extension) ? (
                         <CodePreview

@@ -28,6 +28,12 @@ test("file preview UI exposes code, download, and recoverable unsupported states
   assert.match(stylesheet, /\.workspace-preview-actions\s*\{[^}]*gap: 5px;/s);
 });
 
+test("Markdown workspace files reuse the GFM renderer", () => {
+  assert.match(pageSource, /\["\.md", "\.mdx"\]\.includes\(filePreview\.extension\)/);
+  assert.match(pageSource, /<MarkdownMessage content=\{filePreview\.content\} \/>/);
+  assert.doesNotMatch(pageSource, /<ReactMarkdown>\{filePreview\.content\}<\/ReactMarkdown>/);
+});
+
 test("code preview provides Prism highlighting and an IDE-style fixed line-number gutter", () => {
   assert.match(codePreview, /import Prism from "prismjs"/);
   assert.match(codePreview, /prism-python/);
