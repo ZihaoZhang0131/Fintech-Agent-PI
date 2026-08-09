@@ -43,5 +43,6 @@ next-env.d.ts
 /outputs/
 /work/
 /.local-data/
+/aktools_log.log
 /mcp/akshare-one/.venv/
 /mcp/akshare-stock/.venv/

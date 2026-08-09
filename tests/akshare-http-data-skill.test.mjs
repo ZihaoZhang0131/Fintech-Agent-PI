@@ -29,6 +29,7 @@ test("AKShare reference manifest covers every documented entry in the frozen sna
   const instructions = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
   assert.match(instructions, /run_skill_script/);
   assert.match(instructions, /read_skill_resource/);
+  assert.match(instructions, /npm run aktools:setup/);
   assert.match(instructions, /不是项目工作目录中的文件路径/);
   assert.match(instructions, /不得删减后缀/);
   const manifest = JSON.parse(await readFile(path.join(referencesDirectory, "manifest.json"), "utf8"));

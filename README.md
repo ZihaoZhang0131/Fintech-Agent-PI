@@ -28,11 +28,13 @@
 
 ## Skills
 
-项目内置三个渐进加载的投研 Skill：
+项目内置五个渐进加载的投研 Skill：
 
 - `equity-research`：公司、商业模式、财务、竞争与投资风险研究
 - `earnings-review`：财报、业绩预告、电话会与盈利质量解读
 - `policy-tracking`：政策、监管和产业事件影响追踪
+- `akshare-http-data`：通过本机 AKTools HTTP 服务读取结构化财经数据
+- `a-share-value-investing`：按全市场初筛、深挖和证据链流程筛选 A 股价值投资候选
 
 Skill 以 `.agents/skills/<skill-name>/SKILL.md` 为入口，完整目录可以包含 `scripts/`、`references/`、`assets/` 与更深层的资源文件。系统提示词只包含名称和描述；模型判断任务匹配后，通过白名单工具 `load_skill` 获取执行说明和资源索引，再按需读取资料或运行受支持的脚本。Skill 负责工作流程，`web_search` 负责获取网络信息。
 
@@ -62,17 +64,18 @@ npm run mcp:setup
 
 2. 在 `.env` 中填写 Tavily API Key；DeepSeek API Key 仍可作为兼容配置。模型服务商的 API Key 也可以在启动后从左侧“模型”页面保存到本机 Runtime，完成测试后才会进入对话模型列表。Tavily SDK 可在未配置 Key 时使用受限的 keyless 模式，但稳定使用建议配置自己的 Key。
 
-3. 安装依赖、安装 MCP 并启动完整的本地应用：
+3. 安装依赖、安装本机数据服务和 MCP，并启动完整的本地应用：
 
    ```bash
    npm install
+   npm run aktools:setup
    npm run mcp:setup
    npm run dev
    ```
 
 4. 打开 `http://localhost:3000`。
 
-`npm run dev` 会同时启动网页和仅监听 `127.0.0.1` 的本机 Agent Runtime。请不要直接使用 `npm run dev:site`，否则文件夹选择和项目文件工具不会工作。
+`npm run dev` 会同时启动网页、仅监听 `127.0.0.1` 的本机 Agent Runtime，以及默认监听 `127.0.0.1:8080` 的 AKTools HTTP 数据服务；退出项目时会一并停止它。数据服务首次只需运行一次 `npm run aktools:setup` 安装。若设置了非默认的 `AKTOOLS_BASE_URL`，项目会保留该外部服务，不会代为启动或停止。请不要直接使用 `npm run dev:site`，否则文件夹选择和项目文件工具不会工作。
 
 ## 本地项目模型
 
