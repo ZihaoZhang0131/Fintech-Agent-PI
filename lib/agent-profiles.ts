@@ -21,10 +21,33 @@ export type ProjectAgentConfig = {
   profiles: Record<AgentRoleId, AgentProfile>;
 };
 
+const LEGACY_DEFAULT_MAIN_SKILL_NAMES = [
+  "equity-research",
+  "earnings-review",
+  "policy-tracking",
+] as const;
+
+export const DEFAULT_MAIN_SKILL_NAMES = [
+  ...LEGACY_DEFAULT_MAIN_SKILL_NAMES,
+  "akshare-http-data",
+] as const;
+
+/**
+ * Existing projects saved the former complete built-in default. Add newly bundled
+ * defaults only for that exact legacy selection, while preserving intentional
+ * partial selections made by the user.
+ */
+export function upgradeLegacyDefaultSkillSelection(names: readonly string[]) {
+  const isLegacyDefault =
+    names.length === LEGACY_DEFAULT_MAIN_SKILL_NAMES.length &&
+    LEGACY_DEFAULT_MAIN_SKILL_NAMES.every((name) => names.includes(name));
+  return isLegacyDefault ? [...DEFAULT_MAIN_SKILL_NAMES] : [...names];
+}
+
 const DEFAULT_PROFILES: Record<AgentRoleId, AgentProfile> = {
   main: {
     enabled: true,
-    enabledSkills: ["equity-research", "earnings-review", "policy-tracking"],
+    enabledSkills: [...DEFAULT_MAIN_SKILL_NAMES],
     enabledTools: [
       "load_skill",
       "web_search",
@@ -84,7 +107,7 @@ export function createProjectAgentConfigFromLegacy(input: {
   const config = createDefaultProjectAgentConfig();
   const main = config.profiles.main;
   if (input.model) config.mainModel = { ...input.model };
-  if (input.enabledSkills) main.enabledSkills = [...input.enabledSkills];
+  if (input.enabledSkills) main.enabledSkills = upgradeLegacyDefaultSkillSelection(input.enabledSkills);
   if (input.enabledTools) main.enabledTools = [...input.enabledTools];
   if (input.enabledMcps) main.enabledMcps = [...input.enabledMcps];
   return config;

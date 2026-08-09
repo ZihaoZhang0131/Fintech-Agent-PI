@@ -53,6 +53,9 @@ test("local skill store imports folders, preserves references, overlays bundled 
   const state = await store.list();
   assert.equal(state.entries.length, 2);
   assert.ok(state.entries.some((entry) => entry.name === "company-research"));
+  const akshareResources = state.resourceFilesByName["akshare-http-data"];
+  assert.ok(akshareResources.some((file) => file.path === "scripts/aktools_status.py"));
+  assert.ok(akshareResources.some((file) => file.path === "references/macro/index.md"));
   await store.remove("bundled:earnings-review");
   assert.ok((await store.list()).deletedBundledNames.includes("earnings-review"));
 });

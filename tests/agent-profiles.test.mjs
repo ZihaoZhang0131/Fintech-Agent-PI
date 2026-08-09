@@ -5,11 +5,18 @@ import {
   cloneProjectAgentConfig,
   createDefaultProjectAgentConfig,
   createProjectAgentConfigFromLegacy,
+  upgradeLegacyDefaultSkillSelection,
 } from "../lib/agent-profiles.ts";
 import { DEFAULT_AGENT_SYSTEM_PROMPTS, createDefaultAgentPromptConfig } from "../lib/agent-prompts.ts";
 
 test("new project Agent profiles keep every delegated capability disabled by default", () => {
   const config = createDefaultProjectAgentConfig();
+  assert.deepEqual(config.profiles.main.enabledSkills, [
+    "equity-research",
+    "earnings-review",
+    "policy-tracking",
+    "akshare-http-data",
+  ]);
   assert.deepEqual(config.profiles.main.enabledMcps, []);
   assert.deepEqual(config.profiles["market-data"].enabledMcps, []);
   assert.deepEqual(config.profiles["market-data"].enabledSkills, []);
@@ -41,4 +48,12 @@ test("legacy main capabilities migrate without sharing mutable profile arrays", 
   assert.deepEqual(migrated.profiles.main.enabledTools, ["web_search"]);
   assert.equal(migrated.mainModel.modelId, "deepseek-v4-flash");
   assert.equal(createDefaultAgentPromptConfig()["web-evidence"], DEFAULT_AGENT_SYSTEM_PROMPTS["web-evidence"]);
+});
+
+test("the former complete default Skill selection gains the new AKShare Skill", () => {
+  assert.deepEqual(
+    upgradeLegacyDefaultSkillSelection(["equity-research", "earnings-review", "policy-tracking"]),
+    ["equity-research", "earnings-review", "policy-tracking", "akshare-http-data"],
+  );
+  assert.deepEqual(upgradeLegacyDefaultSkillSelection(["equity-research"]), ["equity-research"]);
 });

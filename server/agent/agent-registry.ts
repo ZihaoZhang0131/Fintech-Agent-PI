@@ -1,6 +1,7 @@
 import {
   AGENT_ROLE_IDS,
   createDefaultProjectAgentConfig,
+  upgradeLegacyDefaultSkillSelection,
   type AgentModelOverride,
   type AgentProfile,
   type AgentRoleId,
@@ -93,7 +94,13 @@ function resolveProfile(
   return {
     enabled: role.id === "main" ? true : candidate.enabled === undefined ? fallback.enabled : candidate.enabled === true,
     ...(parseModelOverride(candidate.model) ? { model: parseModelOverride(candidate.model) } : {}),
-    enabledSkills: selectKnownNames(candidate.enabledSkills, skillNames, fallback.enabledSkills),
+    enabledSkills: selectKnownNames(
+      role.id === "main" && Array.isArray(candidate.enabledSkills)
+        ? upgradeLegacyDefaultSkillSelection(candidate.enabledSkills.filter((value): value is string => typeof value === "string"))
+        : candidate.enabledSkills,
+      skillNames,
+      fallback.enabledSkills,
+    ),
     enabledTools: selectKnownNames(candidate.enabledTools, role.maxTools, fallback.enabledTools),
     enabledMcps: selectKnownNames(candidate.enabledMcps, role.maxMcps, fallback.enabledMcps),
   };
@@ -123,7 +130,13 @@ export function resolveProjectAgentConfig(input: unknown, legacy?: {
     ...defaults.profiles.main,
     enabledSkills: legacy?.enabledSkills === undefined
       ? defaults.profiles.main.enabledSkills
-      : selectKnownNames(legacy.enabledSkills, skillNames, []),
+      : selectKnownNames(
+          Array.isArray(legacy.enabledSkills)
+            ? upgradeLegacyDefaultSkillSelection(legacy.enabledSkills.filter((value): value is string => typeof value === "string"))
+            : legacy.enabledSkills,
+          skillNames,
+          [],
+        ),
     enabledTools: legacy?.enabledTools === undefined
       ? defaults.profiles.main.enabledTools
       : selectKnownNames(legacy.enabledTools, AGENT_ROLE_REGISTRY.main.maxTools, []),

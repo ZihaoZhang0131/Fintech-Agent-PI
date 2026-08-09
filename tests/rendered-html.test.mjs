@@ -52,7 +52,7 @@ test("exposes the searchable Skill, Tool, and MCP capability catalog", async () 
   const response = await render("/api/capabilities");
   assert.equal(response.status, 200);
   const catalog = await response.json();
-  assert.equal(catalog.skills.length, 3);
+  assert.equal(catalog.skills.length, 4);
   assert.equal(catalog.tools.length, 6);
   assert.equal(catalog.mcps.length, 2);
   assert.equal(catalog.mcps[0].name, "akshare-one");

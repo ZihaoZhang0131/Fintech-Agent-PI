@@ -63,6 +63,7 @@ import {
   cloneProjectAgentConfig,
   createDefaultProjectAgentConfig,
   createProjectAgentConfigFromLegacy,
+  upgradeLegacyDefaultSkillSelection,
   type AgentProfile,
   type AgentRoleId,
   type ProjectAgentConfig,
@@ -313,7 +314,9 @@ function parseProjectAgentConfigs(value: string | null): Record<string, ProjectA
           base.profiles[id] = {
             enabled: id === "main" ? true : profile.enabled === true,
             ...(profile.model ? { model: profile.model } : {}),
-            enabledSkills: Array.isArray(profile.enabledSkills) ? profile.enabledSkills.filter((name): name is string => typeof name === "string") : [],
+            enabledSkills: Array.isArray(profile.enabledSkills)
+              ? upgradeLegacyDefaultSkillSelection(profile.enabledSkills.filter((name): name is string => typeof name === "string"))
+              : [],
             enabledTools: Array.isArray(profile.enabledTools) ? profile.enabledTools.filter((name): name is string => typeof name === "string") : [],
             enabledMcps: Array.isArray(profile.enabledMcps) ? profile.enabledMcps.filter((name): name is string => typeof name === "string") : [],
           };

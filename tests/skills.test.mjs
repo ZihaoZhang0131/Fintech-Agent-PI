@@ -11,6 +11,7 @@ const skillCases = [
   ["equity-research", "公司研究"],
   ["earnings-review", "财报解读"],
   ["policy-tracking", "政策"],
+  ["akshare-http-data", "AKShare"],
 ];
 
 test("the system prompt catalog exposes metadata but not full Skill instructions", () => {
@@ -44,7 +45,7 @@ test("the system prompt clearly reports when every Skill is disabled", () => {
   assert.match(catalog, /不要调用 load_skill/);
 });
 
-test("the three bundled Skill files have valid metadata and instructions", async () => {
+test("the bundled Skill files have valid metadata and instructions", async () => {
   for (const [name, instructionFragment] of skillCases) {
     const source = await readFile(
       new URL(`../.agents/skills/${name}/SKILL.md`, import.meta.url),
@@ -121,6 +122,27 @@ test("Skill resources are listed only after load and cannot be read before their
   const loaded = createLoadSkillTool(registry, tracker);
   const result = await loaded.execute("load-resource", { name: skill.name });
   assert.match(result.content[0].text, /references\/rules\.md/);
+});
+
+test("large Skill folders expose topic entrypoints instead of an unhelpful full file dump", async () => {
+  const resources = [
+    { path: "references/stock/index.md", name: "index.md", size: 12, extension: ".md", category: "reference", isText: true },
+    { path: "scripts/get.py", name: "get.py", size: 12, extension: ".py", category: "script", isText: true },
+    ...Array.from({ length: 31 }, (_, index) => ({ path: `references/stock/topic-${index}.md`, name: `topic-${index}.md`, size: 12, extension: ".md", category: "reference", isText: true })),
+  ];
+  const skill = {
+    id: "bundled:large-resource-skill",
+    origin: "bundled",
+    name: "large-resource-skill",
+    description: "包含大量按需资料。",
+    instructions: "先读取主题入口。",
+    resources,
+  };
+  const registry = { list: () => [skill], get: () => skill };
+  const result = await createLoadSkillTool(registry).execute("load-large-resource", { name: skill.name });
+  assert.match(result.content[0].text, /references\/stock\/index\.md/);
+  assert.match(result.content[0].text, /scripts\/get\.py/);
+  assert.doesNotMatch(result.content[0].text, /topic-30\.md/);
 });
 
 test("legacy allowed_tools is ignored when parsing uploaded Skill content", () => {

@@ -1,6 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { SkillRegistry } from "../skills/loader";
+import type { SkillResource } from "../skills/parser";
 
 const loadSkillParameters = Type.Object({
   name: Type.String({
@@ -20,6 +21,17 @@ export type LoadedSkillTracker = {
   has(name: string): boolean;
   add(name: string): boolean;
 };
+
+function formatResourceIndex(resources: SkillResource[]) {
+  if (resources.length <= 32) return resources.map((resource) => `- ${resource.path}（${resource.category}，${resource.size} bytes）`).join("\n");
+  const scripts = resources.filter((resource) => resource.category === "script");
+  const referenceIndexes = resources.filter((resource) => /^references\/[^/]+\/index\.md$/.test(resource.path));
+  return [
+    `该 Skill 有 ${resources.length} 个资源，为避免无关文件占用上下文，先只列出入口索引与脚本。具体接口卡路径由入口索引提供。`,
+    ...referenceIndexes.map((resource) => `- ${resource.path}（主题入口）`),
+    ...scripts.map((resource) => `- ${resource.path}（脚本）`),
+  ].join("\n");
+}
 
 export function createLoadedSkillTracker(): LoadedSkillTracker {
   const names = new Set<string>();
@@ -79,7 +91,7 @@ export function createLoadSkillTool(
               (skill.resources ?? []).length
                 ? [
                     "以下是该 Skill 附带的资源索引；按需使用 read_skill_resource 读取文本资料。如本轮启用了 Bash，也可以使用 run_skill_script 运行 scripts/ 下的受支持脚本。资源内容本身不会自动注入上下文：",
-                    ...(skill.resources ?? []).map((resource) => `- ${resource.path}（${resource.category}，${resource.size} bytes）`),
+                    formatResourceIndex(skill.resources ?? []),
                   ].join("\n")
                 : "该 Skill 没有附带的额外资源文件。",
               "</skill>",

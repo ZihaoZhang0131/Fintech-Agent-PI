@@ -4,6 +4,7 @@ export const BUNDLED_SKILL_NAMES = [
   "equity-research",
   "earnings-review",
   "policy-tracking",
+  "akshare-http-data",
 ] as const;
 
 export const AGENT_TOOL_NAMES = [
