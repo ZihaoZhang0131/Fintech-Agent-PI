@@ -1,0 +1,4 @@
+interface:
+  display_name: "AKShare 中国宏观"
+  short_description: "通过本机 AKTools 获取已验证的中国宏观经济金融指标和历史数据"
+  default_prompt: "使用 $akshare-china-macro 查询中国宏观经济指标。"

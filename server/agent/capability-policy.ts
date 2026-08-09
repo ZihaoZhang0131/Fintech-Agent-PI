@@ -6,6 +6,10 @@ export const BUNDLED_SKILL_NAMES = [
   "policy-tracking",
   "akshare-http-data",
   "a-share-value-investing",
+  "akshare-china-macro",
+  "akshare-us-macro",
+  "akshare-euro-macro",
+  "akshare-institutions-macro",
 ] as const;
 
 export const AGENT_TOOL_NAMES = [

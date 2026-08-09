@@ -1,0 +1,4 @@
+interface:
+  display_name: "AKShare 欧元区宏观"
+  short_description: "通过本机 AKTools 获取已验证的欧元区经济通胀就业贸易与信心指标"
+  default_prompt: "使用 $akshare-euro-macro 查询欧元区宏观经济指标。"

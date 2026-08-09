@@ -28,13 +28,17 @@
 
 ## Skills
 
-项目内置五个渐进加载的投研 Skill：
+项目内置九个渐进加载的投研 Skill：
 
 - `equity-research`：公司、商业模式、财务、竞争与投资风险研究
 - `earnings-review`：财报、业绩预告、电话会与盈利质量解读
 - `policy-tracking`：政策、监管和产业事件影响追踪
 - `akshare-http-data`：通过本机 AKTools HTTP 服务读取结构化财经数据
 - `a-share-value-investing`：按全市场初筛、深挖和证据链流程筛选 A 股价值投资候选
+- `akshare-china-macro`：已验证可用的中国宏观经济与金融数据
+- `akshare-us-macro`：已验证可用的美国宏观经济数据
+- `akshare-euro-macro`：已验证可用的欧元区宏观经济数据
+- `akshare-institutions-macro`：已验证可用的 LME、CFTC、CME、ETF 与 OPEC 数据
 
 Skill 以 `.agents/skills/<skill-name>/SKILL.md` 为入口，完整目录可以包含 `scripts/`、`references/`、`assets/` 与更深层的资源文件。系统提示词只包含名称和描述；模型判断任务匹配后，通过白名单工具 `load_skill` 获取执行说明和资源索引，再按需读取资料或运行受支持的脚本。Skill 负责工作流程，`web_search` 负责获取网络信息。
 

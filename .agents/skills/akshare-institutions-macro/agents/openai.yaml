@@ -1,0 +1,4 @@
+interface:
+  display_name: "AKShare 重要机构"
+  short_description: "通过本机 AKTools 获取已验证的重要机构库存持仓与月度报告数据"
+  default_prompt: "使用 $akshare-institutions-macro 查询重要机构宏观与持仓数据。"

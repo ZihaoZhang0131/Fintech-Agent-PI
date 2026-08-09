@@ -52,7 +52,7 @@ test("exposes the searchable Skill, Tool, and MCP capability catalog", async () 
   const response = await render("/api/capabilities");
   assert.equal(response.status, 200);
   const catalog = await response.json();
-  assert.equal(catalog.skills.length, 5);
+  assert.equal(catalog.skills.length, 9);
   assert.ok(catalog.skills.some((item) => item.name === "a-share-value-investing"));
   assert.equal(catalog.tools.length, 6);
   assert.equal(catalog.mcps.length, 2);

@@ -32,9 +32,17 @@ const AKSHARE_DEFAULT_MAIN_SKILL_NAMES = [
   "akshare-http-data",
 ] as const;
 
-export const DEFAULT_MAIN_SKILL_NAMES = [
+const VALUE_INVESTING_DEFAULT_MAIN_SKILL_NAMES = [
   ...AKSHARE_DEFAULT_MAIN_SKILL_NAMES,
   "a-share-value-investing",
+] as const;
+
+export const DEFAULT_MAIN_SKILL_NAMES = [
+  ...VALUE_INVESTING_DEFAULT_MAIN_SKILL_NAMES,
+  "akshare-china-macro",
+  "akshare-us-macro",
+  "akshare-euro-macro",
+  "akshare-institutions-macro",
 ] as const;
 
 /**
@@ -46,6 +54,7 @@ export function upgradeLegacyDefaultSkillSelection(names: readonly string[]) {
   const previousDefaults: readonly (readonly string[])[] = [
     LEGACY_DEFAULT_MAIN_SKILL_NAMES,
     AKSHARE_DEFAULT_MAIN_SKILL_NAMES,
+    VALUE_INVESTING_DEFAULT_MAIN_SKILL_NAMES,
   ];
   const isPreviousCompleteDefault = previousDefaults.some(
     (defaults) => names.length === defaults.length && defaults.every((name) => names.includes(name)),

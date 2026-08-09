@@ -1,0 +1,4 @@
+interface:
+  display_name: "AKShare 美国宏观"
+  short_description: "通过本机 AKTools 获取已验证的美国经济通胀就业消费与市场指标"
+  default_prompt: "使用 $akshare-us-macro 查询美国宏观经济指标。"

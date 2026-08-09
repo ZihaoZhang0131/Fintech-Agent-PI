@@ -3,6 +3,10 @@ import equityResearchSource from "../../../.agents/skills/equity-research/SKILL.
 import policyTrackingSource from "../../../.agents/skills/policy-tracking/SKILL.md?raw";
 import akshareHttpDataSource from "../../../.agents/skills/akshare-http-data/SKILL.md?raw";
 import aShareValueInvestingSource from "../../../.agents/skills/a-share-value-investing/SKILL.md?raw";
+import akshareChinaMacroSource from "../../../.agents/skills/akshare-china-macro/SKILL.md?raw";
+import akshareUsMacroSource from "../../../.agents/skills/akshare-us-macro/SKILL.md?raw";
+import akshareEuroMacroSource from "../../../.agents/skills/akshare-euro-macro/SKILL.md?raw";
+import akshareInstitutionsMacroSource from "../../../.agents/skills/akshare-institutions-macro/SKILL.md?raw";
 import { parseSkill, type SkillDefinition, type SkillMetadata, type SkillResource } from "./parser";
 import { loadLocalSkillState } from "./local";
 
@@ -12,6 +16,10 @@ const BUNDLED_SKILL_SOURCES = [
   policyTrackingSource,
   akshareHttpDataSource,
   aShareValueInvestingSource,
+  akshareChinaMacroSource,
+  akshareUsMacroSource,
+  akshareEuroMacroSource,
+  akshareInstitutionsMacroSource,
 ] as const;
 
 export type SkillRegistry = {

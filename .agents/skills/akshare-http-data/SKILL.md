@@ -29,7 +29,8 @@ Skill 内的 `scripts/` 和 `references/` 是**资源标识，不是项目工作
 | 利率与收益率曲线 | `references/interest_rate/index.md` |
 | 公募、ETF、LOF、私募基金 | `references/fund/index.md` |
 | 指数与指数成分、指数行情 | `references/index/index.md` |
-| 中国及海外宏观经济指标 | `references/macro/index.md` |
+| 中国宏观、美国宏观、欧元区宏观、重要机构的宏观指标 | 优先加载 `akshare-china-macro`、`akshare-us-macro`、`akshare-euro-macro` 或 `akshare-institutions-macro`；这些 Skill 仅保留已验证可用接口 |
+| 其他中国及海外宏观经济指标 | `references/macro/index.md` |
 | 东方财富专题、银行、财经资讯、能源、事件、高频、NLP、QDII、另类数据、工具 | 按需读取 `references/dc/`、`bank/`、`article/`、`energy/`、`event/`、`hf/`、`nlp/`、`qdii/`、`others/`、`tool/` 下的 `index.md` |
 | 期货公司、品种、基金、基本面与指数资料 | `references/qhkc/index.md` |
 

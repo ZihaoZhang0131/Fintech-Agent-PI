@@ -12,7 +12,17 @@ const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_ZIP_BYTES = 5 * 1024 * 1024;
 const MAX_TEXT_FILE_BYTES = 1 * 1024 * 1024;
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const BUNDLED_SKILL_NAMES = new Set(["equity-research", "earnings-review", "policy-tracking", "akshare-http-data", "a-share-value-investing"]);
+const BUNDLED_SKILL_NAMES = new Set([
+  "equity-research",
+  "earnings-review",
+  "policy-tracking",
+  "akshare-http-data",
+  "a-share-value-investing",
+  "akshare-china-macro",
+  "akshare-us-macro",
+  "akshare-euro-macro",
+  "akshare-institutions-macro",
+]);
 const TEXT_EXTENSIONS = new Set([
   ".c", ".cc", ".conf", ".cpp", ".css", ".csv", ".env", ".go", ".graphql", ".h", ".html",
   ".ini", ".java", ".js", ".json", ".jsx", ".log", ".md", ".mdx", ".mjs", ".mts", ".py",
