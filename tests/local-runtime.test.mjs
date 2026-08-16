@@ -116,8 +116,20 @@ test("Python interpreter resolution skips the macOS developer-tool shim", async 
     platform: "darwin",
     fallbackCandidates: [],
   }), {
-    executable: await realpath(python),
-    readableRoot: await realpath(pythonRoot),
+    executable: python,
+    readableRoot: pythonRoot,
+  });
+  const virtualEnvironment = path.join(temporaryRoot, "documents-venv");
+  const virtualPython = path.join(virtualEnvironment, "bin", "python");
+  await mkdir(path.dirname(virtualPython), { recursive: true });
+  await symlink(python, virtualPython);
+  assert.deepEqual(await resolvePythonInterpreter({
+    environment: { SKILL_PYTHON_PATH: virtualPython, PATH: "" },
+    platform: "darwin",
+    fallbackCandidates: [],
+  }), {
+    executable: virtualPython,
+    readableRoot: virtualEnvironment,
   });
   await assert.rejects(
     resolvePythonInterpreter({ environment: { PATH: "/usr/bin" }, platform: "darwin", fallbackCandidates: [] }),

@@ -20,15 +20,32 @@ test("chat messages render GitHub-flavored Markdown", () => {
 test("collapsed tool activity shows only total run time beside its disclosure", () => {
   assert.match(toolRunSource, /function ToolRunStack\(/);
   assert.match(toolRunSource, /run\.startedAt >= latest\.startedAt/);
+  assert.match(toolRunSource, /startedAt: number;/);
+  assert.match(toolRunSource, /isRunning: boolean;/);
+  assert.match(toolRunSource, /isRunning \? now - startedAt : durationMs/);
+  assert.match(toolRunSource, /if \(!isRunning && !hasRunningRun\) return undefined;/);
+  assert.match(toolRunSource, /\[hasRunningRun, isRunning\]/);
   assert.match(toolRunSource, /className="tool-run-summary"/);
   assert.match(toolRunSource, /aria-expanded=\{expanded\}/);
-  assert.match(toolRunSource, /`本次运行 \$\{formatRunDuration\(durationMs\)\}`/);
+  assert.match(toolRunSource, /`本次运行 \$\{formatRunDuration\(displayedDurationMs\)\}`/);
   assert.match(pageSource, /message\.id === assistantId \? \{ \.\.\.message, durationMs: event\.durationMs \}/);
   assert.match(toolRunSource, /\{expanded && \(/);
   assert.match(pageSource, /isBusy && activeMessageId === messageId/);
   assert.doesNotMatch(toolRunSource, /Agent 执行|className="tool-run-stack"/);
   assert.match(styleSource, /\.tool-run-summary\s*\{[^}]*display:\s*inline-flex;[^}]*gap:\s*3px;[^}]*border:\s*0;/s);
   assert.match(styleSource, /\.tool-run-summary\[aria-expanded="true"\] \.tool-run-chevron/);
+});
+
+test("unfinished assistant replies keep the thinking indicator on their final line", () => {
+  assert.match(pageSource, /const activeAssistantMessageId = isBusy \? activeConversation\?\.messages\.at\(-1\)\?\.id : undefined;/);
+  assert.match(pageSource, /message\.role === "assistant" && message\.id === activeAssistantMessageId/);
+  assert.match(pageSource, /startedAt=\{message\.createdAt\}/);
+  assert.match(pageSource, /isRunning=\{isUnfinishedAssistantMessage\}/);
+  assert.match(pageSource, /\{message\.content \? <MarkdownMessage content=\{message\.content\} \/> : null\}/);
+  assert.match(pageSource, /\{isUnfinishedAssistantMessage && \([\s\S]*className="thinking-indicator"[\s\S]*aria-label="Agent 正在回复"/);
+  assert.match(styleSource, /\.thinking-indicator i:nth-child\(2\)\s*\{[^}]*animation-delay:\s*140ms/s);
+  assert.match(styleSource, /\.thinking-indicator i:nth-child\(3\)\s*\{[^}]*animation-delay:\s*280ms/s);
+  assert.match(styleSource, /@keyframes think\s*\{[\s\S]*translateY\(-3px\)/);
 });
 
 test("latest tool card preserves tool approval controls and Bash execution details", () => {

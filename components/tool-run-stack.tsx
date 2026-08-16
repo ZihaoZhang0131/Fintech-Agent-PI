@@ -27,6 +27,8 @@ type ToolRunDetailProps = {
 type ToolRunStackProps = Omit<ToolRunDetailProps, "run"> & {
   runs: ToolRun[];
   durationMs?: number;
+  startedAt: number;
+  isRunning: boolean;
   expanded: boolean;
   onToggle: () => void;
 };
@@ -117,6 +119,8 @@ function ToolRunDetail({
 export function ToolRunStack({
   runs,
   durationMs,
+  startedAt,
+  isRunning,
   expanded,
   onToggle,
   ...detailProps
@@ -131,12 +135,13 @@ export function ToolRunStack({
     (latestRun.status === "awaiting_approval" && Boolean(latestRun.commandId)) ||
     (latestRun.toolName === "bash" && Boolean(latestRun.stdout || latestRun.stderr || latestRun.truncated)) ||
     Boolean(latestRun.sources?.length);
+  const displayedDurationMs = isRunning ? now - startedAt : durationMs;
 
   useEffect(() => {
-    if (!hasRunningRun) return undefined;
+    if (!isRunning && !hasRunningRun) return undefined;
     const interval = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(interval);
-  }, [hasRunningRun]);
+  }, [hasRunningRun, isRunning]);
 
   return (
     <div className="tool-run-disclosure">
@@ -146,7 +151,9 @@ export function ToolRunStack({
         aria-expanded={expanded}
         onClick={onToggle}
       >
-        <span>{durationMs === undefined ? "正在运行…" : `本次运行 ${formatRunDuration(durationMs)}`}</span>
+        <span>
+          {displayedDurationMs === undefined ? "正在运行…" : `本次运行 ${formatRunDuration(displayedDurationMs)}`}
+        </span>
         <ChevronDown className="tool-run-chevron" size={14} />
       </button>
       {expanded && (

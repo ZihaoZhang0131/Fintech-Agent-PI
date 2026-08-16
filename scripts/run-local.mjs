@@ -11,7 +11,11 @@ const token = randomBytes(32).toString("hex");
 const requestedPort = Number(process.env.LOCAL_RUNTIME_PORT) || 4318;
 const defaultAktoolsUrl = "http://127.0.0.1:8080";
 const aktoolsUrl = (process.env.AKTOOLS_BASE_URL || defaultAktoolsUrl).replace(/\/$/, "");
-const managedAktoolsPython = path.join(root, ".local-data", "aktools-venv", "bin", "python");
+const localDataDirectory = process.env.PI_LOCAL_DATA_DIR
+  ? path.resolve(process.env.PI_LOCAL_DATA_DIR)
+  : path.join(root, ".local-data");
+const managedAktoolsPython = path.join(localDataDirectory, "aktools-venv", "bin", "python");
+const managedPandoc = path.join(localDataDirectory, "pandoc", "bin", "pandoc");
 
 function probePort(port) {
   return new Promise((resolve, reject) => {
@@ -99,6 +103,25 @@ async function startAktools() {
   return child;
 }
 
+function startPandocProvisioning() {
+  if (existsSync(managedPandoc)) {
+    console.log(`检测到受管 Pandoc：${managedPandoc}`);
+    return null;
+  }
+  console.log("正在后台初始化文档组件（Pandoc 与受管 Python）；PDF/Word 工具准备完成前会自动等待。");
+  const child = spawn(process.execPath, [path.join(root, "scripts", "setup-pandoc.mjs")], {
+    cwd: root,
+    env: process.env,
+    stdio: "inherit",
+  });
+  child.on("exit", (code, signal) => {
+    if (code !== 0) {
+      console.error(`文档组件初始化未完成（${signal ?? code}）。应用仍可使用，稍后重新启动会自动重试。`);
+    }
+  });
+  return child;
+}
+
 const availablePort = await chooseRuntimePort(requestedPort);
 const port = String(availablePort);
 if (availablePort !== requestedPort) {
@@ -112,8 +135,10 @@ const environment = {
 };
 
 let aktools;
+let pandocProvisioner;
 try {
   aktools = await startAktools();
+  pandocProvisioner = startPandocProvisioning();
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
@@ -146,6 +171,7 @@ function stop(exitCode = 0) {
   runtime.kill("SIGTERM");
   vinext.kill("SIGTERM");
   stopAktools(aktools);
+  pandocProvisioner?.kill("SIGTERM");
   process.exitCode = exitCode;
 }
 

@@ -309,10 +309,13 @@ export async function resolvePythonInterpreter({
     if (!info?.isFile()) continue;
     const executable = await access(canonical, constants.X_OK).then(() => true).catch(() => false);
     if (!executable) continue;
-    const readableRoot = path.resolve(path.dirname(canonical), "..");
+    // Keep the candidate executable rather than its realpath. A virtualenv's
+    // bin/python is a symlink to the base interpreter; executing the realpath
+    // loses the virtualenv prefix and therefore its installed packages.
+    const readableRoot = path.resolve(path.dirname(candidate), "..");
     if (readableRoot === path.parse(readableRoot).root) continue;
     return {
-      executable: canonical,
+      executable: candidate,
       readableRoot,
     };
   }

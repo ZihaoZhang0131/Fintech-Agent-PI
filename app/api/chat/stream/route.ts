@@ -369,6 +369,9 @@ export async function POST(request: Request) {
       childMcps.length
         ? `本次可使用的 MCP：${childMcps.map((server) => server.label).join("、")}。`
         : "本次没有可用 MCP；不要声称调用过 MCP。",
+      childToolNames.has("generate_document")
+        ? "如任务要求 Word 或 PDF，直接调用 generate_document。不要为此调用 Bash、npm、Pandoc 或 Python，也不要把工具失败伪称为已保存的文档。"
+        : "本角色没有启用 Word/PDF 文档生成能力，不要声称已生成文档。",
       formatSkillCatalog(childSkills),
     ].join("\n\n");
     const child = new Agent({
@@ -465,7 +468,7 @@ export async function POST(request: Request) {
       ? "形成完整研究报告、研究框架、表格数据或代码时，在最终回答前使用 write_project_file 保存到 outputs/ 目录，并说明保存路径。"
       : "本轮没有启用文件写入能力，不要声称已经把产出保存到本地。",
     enabledToolNames.has("generate_document")
-      ? "用户明确要求 Word 或 PDF 文件时，使用 generate_document。文档内容与写法必须由用户要求或已加载 Skill 决定；不要把该工具当作写作 Skill。"
+      ? "用户明确要求 Word 或 PDF 文件时，完成内容后直接调用 generate_document。文档内容与写法必须由用户要求或已加载 Skill 决定；不要把该工具当作写作 Skill。严禁为了文档生成调用 Bash、npm、Pandoc、Python、conda、wkhtmltopdf 或在当前项目里安装/探测依赖；这些均由 Local Runtime 管理。若工具返回初始化中或失败，只如实说明该工具错误，不要伪称已保存 Markdown、PDF 或 DOCX。"
       : "本轮没有启用 Word/PDF 文档生成能力，不要声称已经生成文档。",
     enabledToolNames.has("query_local_database") || enabledToolNames.has("list_local_database_tables")
       ? "本地数据库为全应用共享。查询前先查看数据表和结构；只读查询使用本地数据库工具，不要猜测表或数据。"

@@ -34,6 +34,7 @@ const COMMAND_JOB_TTL_MS = 10 * 60_000;
 const MAX_DOCUMENT_MARKDOWN_BYTES = 500_000;
 const MAX_DOCUMENT_TEMPLATE_BYTES = 20 * 1024 * 1024;
 const MAX_DOCUMENT_CHARTS = 12;
+const DOCUMENT_COMPONENT_WAIT_MS = 75_000;
 const RUNTIME_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DOCUMENT_RENDERER_PATH = path.join(RUNTIME_ROOT, "server", "document-renderer.py");
 const EXCLUDED_DIRECTORIES = new Set([
@@ -740,6 +741,24 @@ function throwIfDocumentCancelled(signal) {
   if (signal?.aborted) throw documentError("文档生成已取消。", 499);
 }
 
+async function waitForManagedDocumentComponents(dataDirectory, signal) {
+  const pandocPath = path.resolve(process.env.PANDOC_PATH || path.join(dataDirectory, "pandoc", "bin", "pandoc"));
+  const pythonPath = path.resolve(process.env.DOCUMENT_PYTHON_PATH || path.join(dataDirectory, "documents-venv", "bin", "python"));
+  const deadline = Date.now() + DOCUMENT_COMPONENT_WAIT_MS;
+  while (Date.now() < deadline) {
+    throwIfDocumentCancelled(signal);
+    const [pandoc, python] = await Promise.all([
+      realpath(pandocPath).catch(() => null),
+      realpath(pythonPath).catch(() => null),
+    ]);
+    // The Python virtualenv entrypoint is usually a symlink. Probe its realpath,
+    // but retain the entrypoint so Python keeps the virtualenv site-packages.
+    if (pandoc && python) return { pandoc: pandocPath, python: pythonPath };
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw documentError("文档组件尚未初始化完成。请稍后重试；不要在当前项目目录运行 npm、Pandoc 或 Python。", 503);
+}
+
 function normalizeDocumentFilename(filename, format) {
   if (typeof filename !== "string" || !filename.trim() || filename.length > 120) {
     throw documentError("文档文件名无效。");
@@ -899,18 +918,16 @@ async function generateDocumentArtifact(workspace, dataDirectory, payload, signa
     const docxPath = path.join(temporaryDirectory, "document.docx");
     const cjkPdfPath = path.join(temporaryDirectory, "document-cjk.pdf");
     await writeFile(inputPath, JSON.stringify({ markdown: request.markdown, charts: request.charts, referenceDocx }), { encoding: "utf8", mode: 0o600 });
-    const pandocPath = process.env.PANDOC_PATH || path.join(dataDirectory, "pandoc", "bin", "pandoc");
-    const canonicalPandoc = await realpath(pandocPath).catch(() => null);
-    if (!canonicalPandoc) throw documentError("未安装受管 Pandoc。请先运行 npm run documents:setup。", 503);
+    const documentComponents = await waitForManagedDocumentComponents(dataDirectory, signal);
     const python = await resolvePythonInterpreter({
-      environment: { ...process.env, ...(process.env.DOCUMENT_PYTHON_PATH ? { SKILL_PYTHON_PATH: process.env.DOCUMENT_PYTHON_PATH } : {}) },
+      environment: { ...process.env, SKILL_PYTHON_PATH: documentComponents.python },
     });
     try {
       const rendererArguments = [DOCUMENT_RENDERER_PATH, inputPath, docxPath];
       if (request.format === "pdf" && !referenceDocx) rendererArguments.push("--pdf", cjkPdfPath);
       await execFileAsync(python.executable, rendererArguments, {
         cwd: temporaryDirectory,
-        env: { ...process.env, PANDOC_PATH: canonicalPandoc },
+        env: { ...process.env, PANDOC_PATH: documentComponents.pandoc },
         signal,
         maxBuffer: 256 * 1024,
       });

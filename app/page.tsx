@@ -508,6 +508,7 @@ export default function Home() {
     [activeProjectId, agentConfigsByProject],
   );
   const isBusy = status === "connecting" || status === "streaming";
+  const activeAssistantMessageId = isBusy ? activeConversation?.messages.at(-1)?.id : undefined;
   const activeFileTabs = getProjectFileTabs(fileTabsByProject, activeProjectId);
   const activeFileTree = getProjectFileTree(fileTreesByProject, activeProjectId);
   const files = useMemo(() => getVisibleFileTreeEntries(activeFileTree), [activeFileTree]);
@@ -2007,36 +2008,43 @@ export default function Home() {
             </div>
           ) : activeConversation?.messages.length ? (
             <div className="message-thread">
-              {activeConversation.messages.map((message) => (
-                <article className={`message ${message.role}`} key={message.id}>
-                  <div className="message-body">
-                    <div className={`message-content ${!message.content ? "is-streaming" : ""}`}>
-                      {message.role === "assistant" && Boolean(message.toolRuns?.length) && (
-                        <ToolRunStack
-                          runs={message.toolRuns ?? []}
-                          durationMs={getMessageDuration(message)}
-                          messageId={message.id}
-                          projectPath={activeProject?.path}
-                          approvalSubmittingIds={approvalSubmittingIds}
-                          expanded={toolRunsAreExpanded(message.id)}
-                          onToggle={() => toggleToolRuns(message.id)}
-                          onDecision={(messageId, run, decision) =>
-                            void decideBashCommand(messageId, run, decision)
-                          }
-                        />
-                      )}
-                      {message.content ? <MarkdownMessage content={message.content} /> : null}
-                      {!message.content && (
-                        <span className="thinking-indicator">
-                          <i />
-                          <i />
-                          <i />
-                        </span>
-                      )}
+              {activeConversation.messages.map((message) => {
+                const isUnfinishedAssistantMessage =
+                  message.role === "assistant" && message.id === activeAssistantMessageId;
+
+                return (
+                  <article className={`message ${message.role}`} key={message.id}>
+                    <div className="message-body">
+                      <div className={`message-content ${isUnfinishedAssistantMessage ? "is-streaming" : ""}`}>
+                        {message.role === "assistant" && Boolean(message.toolRuns?.length) && (
+                          <ToolRunStack
+                            runs={message.toolRuns ?? []}
+                            durationMs={getMessageDuration(message)}
+                            startedAt={message.createdAt}
+                            isRunning={isUnfinishedAssistantMessage}
+                            messageId={message.id}
+                            projectPath={activeProject?.path}
+                            approvalSubmittingIds={approvalSubmittingIds}
+                            expanded={toolRunsAreExpanded(message.id)}
+                            onToggle={() => toggleToolRuns(message.id)}
+                            onDecision={(messageId, run, decision) =>
+                              void decideBashCommand(messageId, run, decision)
+                            }
+                          />
+                        )}
+                        {message.content ? <MarkdownMessage content={message.content} /> : null}
+                        {isUnfinishedAssistantMessage && (
+                          <span className="thinking-indicator" role="status" aria-label="Agent 正在回复">
+                            <i />
+                            <i />
+                            <i />
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
               <div ref={messagesEndRef} />
             </div>
           ) : (
