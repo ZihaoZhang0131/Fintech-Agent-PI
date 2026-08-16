@@ -68,11 +68,19 @@ test("former complete default Skill selections gain every newly bundled default"
   assert.deepEqual(upgradeLegacyDefaultSkillSelection(["equity-research"]), ["equity-research"]);
 });
 
-test("former complete default tool selections gain database tools without changing partial selections", () => {
+test("former complete default tool selections gain bundled tools without changing partial selections", () => {
   const upgraded = upgradeLegacyDefaultToolSelection([
     "load_skill", "web_search", "list_project_files", "read_project_file", "write_project_file", "bash",
   ]);
   assert.ok(upgraded.includes("query_local_database"));
   assert.ok(upgraded.includes("mutate_local_database"));
+  assert.ok(upgraded.includes("generate_document"));
+  assert.ok(
+    upgradeLegacyDefaultToolSelection([
+      "load_skill", "web_search", "list_project_files", "read_project_file", "write_project_file",
+      "list_local_database_tables", "describe_local_database_table", "query_local_database",
+      "mutate_local_database", "bash",
+    ]).includes("generate_document"),
+  );
   assert.deepEqual(upgradeLegacyDefaultToolSelection(["web_search"]), ["web_search"]);
 });

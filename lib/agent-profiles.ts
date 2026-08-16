@@ -54,7 +54,7 @@ const LEGACY_DEFAULT_MAIN_TOOL_NAMES = [
   "bash",
 ] as const;
 
-export const DEFAULT_MAIN_TOOL_NAMES = [
+const DATABASE_DEFAULT_MAIN_TOOL_NAMES = [
   "load_skill",
   "web_search",
   "list_project_files",
@@ -67,11 +67,20 @@ export const DEFAULT_MAIN_TOOL_NAMES = [
   "bash",
 ] as const;
 
-/** Add the new database tools only for projects that retained the prior complete default. */
+export const DEFAULT_MAIN_TOOL_NAMES = [
+  ...DATABASE_DEFAULT_MAIN_TOOL_NAMES,
+  "generate_document",
+] as const;
+
+/** Add bundled tools only for projects that retained the prior complete default. */
 export function upgradeLegacyDefaultToolSelection(names: readonly string[]) {
-  const isPreviousCompleteDefault =
-    names.length === LEGACY_DEFAULT_MAIN_TOOL_NAMES.length &&
-    LEGACY_DEFAULT_MAIN_TOOL_NAMES.every((name) => names.includes(name));
+  const previousDefaults: readonly (readonly string[])[] = [
+    LEGACY_DEFAULT_MAIN_TOOL_NAMES,
+    DATABASE_DEFAULT_MAIN_TOOL_NAMES,
+  ];
+  const isPreviousCompleteDefault = previousDefaults.some(
+    (defaults) => names.length === defaults.length && defaults.every((name) => names.includes(name)),
+  );
   return isPreviousCompleteDefault ? [...DEFAULT_MAIN_TOOL_NAMES] : [...names];
 }
 

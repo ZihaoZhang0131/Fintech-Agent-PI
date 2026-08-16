@@ -3,6 +3,7 @@ import webSearchSource from "../../../server/agent/tools/web-search.ts?raw";
 import workspaceFilesSource from "../../../server/agent/tools/workspace-files.ts?raw";
 import localDatabaseSource from "../../../server/agent/tools/local-database.ts?raw";
 import bashSource from "../../../server/agent/tools/bash.ts?raw";
+import documentSource from "../../../server/agent/tools/generate-document.ts?raw";
 import { AGENT_TOOL_NAMES } from "@/server/agent/capability-policy";
 import { publicAgentRoles } from "@/server/agent/agent-registry";
 import { loadEffectiveSkillRegistry } from "@/server/agent/skills/loader";
@@ -62,6 +63,12 @@ const toolMetadata = {
     description: "把报告、研究框架和代码写入当前项目，默认建议保存到 outputs 目录。",
     sourcePath: "server/agent/tools/workspace-files.ts",
     code: workspaceFilesSource,
+  },
+  generate_document: {
+    label: "生成 Word / PDF",
+    description: "将用户或 Skill 指导的 Markdown 安全生成 DOCX 或 PDF，并保存到当前项目 outputs 目录。",
+    sourcePath: "server/agent/tools/generate-document.ts",
+    code: documentSource,
   },
   list_local_database_tables: {
     label: "查看本地数据库表",

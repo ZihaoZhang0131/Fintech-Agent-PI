@@ -18,6 +18,7 @@ export const AGENT_TOOL_NAMES = [
   "list_project_files",
   "read_project_file",
   "write_project_file",
+  "generate_document",
   "list_local_database_tables",
   "describe_local_database_table",
   "query_local_database",

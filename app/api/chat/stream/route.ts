@@ -26,6 +26,7 @@ import {
   type WorkspaceToolDetails,
 } from "@/server/agent/tools/workspace-files";
 import { createLocalDatabaseTools, type LocalDatabaseToolDetails } from "@/server/agent/tools/local-database";
+import { createDocumentTool, type DocumentToolDetails } from "@/server/agent/tools/generate-document";
 
 type InputMessage = {
   role: "user" | "assistant";
@@ -140,6 +141,14 @@ function getLocalDatabaseDetails(value: unknown): LocalDatabaseToolDetails | und
   const details = value as Partial<LocalDatabaseToolDetails>;
   if (details.kind !== "local_database" || typeof details.action !== "string") return undefined;
   return details as LocalDatabaseToolDetails;
+}
+
+function getDocumentDetails(value: unknown): DocumentToolDetails | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const details = value as Partial<DocumentToolDetails>;
+  if (details.kind !== "document" || typeof details.path !== "string") return undefined;
+  if (details.format !== "docx" && details.format !== "pdf") return undefined;
+  return details as DocumentToolDetails;
 }
 
 function getSkillResourceDetails(value: unknown): SkillResourceDetails | undefined {
@@ -286,6 +295,7 @@ export async function POST(request: Request) {
     enabledToolNames.has(tool.name),
   );
   const databaseTools = createLocalDatabaseTools().filter((tool) => enabledToolNames.has(tool.name));
+  const documentTools = enabledToolNames.has("generate_document") ? [createDocumentTool(workspaceId)] : [];
   const connectedMcpServers = await discoverMcpServers(mainProfile.enabledMcps);
   const mcpTools = createMcpAgentTools(connectedMcpServers);
   const models = createConfiguredModels();
@@ -326,6 +336,7 @@ export async function POST(request: Request) {
       childToolNames.has(tool.name),
     );
     const childDatabaseTools = createLocalDatabaseTools().filter((tool) => childToolNames.has(tool.name));
+    const childDocumentTools = childToolNames.has("generate_document") ? [createDocumentTool(workspaceId)] : [];
     // MCP discovery is deliberately delayed until this specialized worker is actually invoked.
     const childMcps = await discoverMcpServers(profile.enabledMcps);
     const childSkillTracker = createLoadedSkillTracker();
@@ -344,6 +355,7 @@ export async function POST(request: Request) {
         : []),
       ...childWorkspaceTools,
       ...childDatabaseTools,
+      ...childDocumentTools,
       ...(childToolNames.has("bash")
         ? [createBashTool(workspaceId, { approvalMode: bashApprovalMode, permissionMode: bashPermissionMode })]
         : []),
@@ -429,6 +441,7 @@ export async function POST(request: Request) {
       : []),
     ...workspaceTools,
     ...databaseTools,
+    ...documentTools,
     ...(enabledToolNames.has("bash")
       ? [createBashTool(workspaceId, { approvalMode: bashApprovalMode, permissionMode: bashPermissionMode })]
       : []),
@@ -451,6 +464,9 @@ export async function POST(request: Request) {
     enabledToolNames.has("write_project_file")
       ? "形成完整研究报告、研究框架、表格数据或代码时，在最终回答前使用 write_project_file 保存到 outputs/ 目录，并说明保存路径。"
       : "本轮没有启用文件写入能力，不要声称已经把产出保存到本地。",
+    enabledToolNames.has("generate_document")
+      ? "用户明确要求 Word 或 PDF 文件时，使用 generate_document。文档内容与写法必须由用户要求或已加载 Skill 决定；不要把该工具当作写作 Skill。"
+      : "本轮没有启用 Word/PDF 文档生成能力，不要声称已经生成文档。",
     enabledToolNames.has("query_local_database") || enabledToolNames.has("list_local_database_tables")
       ? "本地数据库为全应用共享。查询前先查看数据表和结构；只读查询使用本地数据库工具，不要猜测表或数据。"
       : "本轮没有启用本地数据库查询能力，不要声称已经查询数据库。",
@@ -527,6 +543,7 @@ export async function POST(request: Request) {
           const skillResourceDetails = getSkillResourceDetails(event.result?.details);
           const workspaceDetails = getWorkspaceDetails(event.result?.details);
           const databaseDetails = getLocalDatabaseDetails(event.result?.details);
+          const documentDetails = getDocumentDetails(event.result?.details);
           const bashDetails = getBashDetails(event.result?.details);
           const mcpDetails = getMcpDetails(event.result?.details);
           const subAgentDetails = getSubAgentDetails(event.result?.details);
@@ -544,6 +561,7 @@ export async function POST(request: Request) {
               workspaceDetails?.path ??
               databaseDetails?.sql ??
               databaseDetails?.table ??
+              documentDetails?.path ??
               bashDetails?.command ??
               mcpDetails?.summary ??
               subAgentDetails?.task,
@@ -567,6 +585,8 @@ export async function POST(request: Request) {
                         ? `返回 ${databaseDetails.resultCount ?? 0} 行${databaseDetails.truncated ? "（已截断）" : ""}`
                         : databaseDetails?.action === "mutate"
                           ? `已修改数据库，影响 ${databaseDetails.resultCount ?? 0} 行`
+                  : documentDetails
+                    ? `已生成 ${documentDetails.format.toUpperCase()}：${documentDetails.path}`
                   : bashDetails?.status === "rejected"
                     ? "用户已拒绝，命令未执行"
                     : bashDetails

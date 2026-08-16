@@ -2,14 +2,15 @@ import { createServer } from "node:http";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createMcpManager } from "./mcp-manager.mjs";
 import { createLocalDatabase } from "./local-database.mjs";
 import { createSkillStore } from "./skill-store.mjs";
+import { resolvePythonInterpreter } from "./skill-store.mjs";
 import {
   deleteModelProvider,
   listPublicModelProviders,
@@ -30,6 +31,11 @@ const MAX_COMMAND_OUTPUT_BYTES = 200 * 1024;
 const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
 const MAX_COMMAND_TIMEOUT_MS = 120_000;
 const COMMAND_JOB_TTL_MS = 10 * 60_000;
+const MAX_DOCUMENT_MARKDOWN_BYTES = 500_000;
+const MAX_DOCUMENT_TEMPLATE_BYTES = 20 * 1024 * 1024;
+const MAX_DOCUMENT_CHARTS = 12;
+const RUNTIME_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const DOCUMENT_RENDERER_PATH = path.join(RUNTIME_ROOT, "server", "document-renderer.py");
 const EXCLUDED_DIRECTORIES = new Set([
   ".git",
   ".next",
@@ -726,6 +732,225 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\\"'\\\"'")}'`;
 }
 
+function documentError(message, status = 400) {
+  return Object.assign(new Error(message), { status });
+}
+
+function throwIfDocumentCancelled(signal) {
+  if (signal?.aborted) throw documentError("文档生成已取消。", 499);
+}
+
+function normalizeDocumentFilename(filename, format) {
+  if (typeof filename !== "string" || !filename.trim() || filename.length > 120) {
+    throw documentError("文档文件名无效。");
+  }
+  const trimmed = filename.trim();
+  if (trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("\0")) {
+    throw documentError("文档文件名不能包含路径。");
+  }
+  const basename = trimmed.replace(/\.(docx|pdf)$/i, "").trim();
+  if (!basename || basename === "." || basename === "..") {
+    throw documentError("文档文件名无效。");
+  }
+  return `${basename}.${format}`;
+}
+
+function validateDocumentPayload(payload) {
+  if (!payload || typeof payload !== "object") throw documentError("文档请求无效。");
+  if (payload.format !== "docx" && payload.format !== "pdf") {
+    throw documentError("文档格式仅支持 docx 或 pdf。");
+  }
+  if (typeof payload.markdown !== "string" || !payload.markdown.trim()) {
+    throw documentError("文档 Markdown 内容不能为空。");
+  }
+  if (Buffer.byteLength(payload.markdown, "utf8") > MAX_DOCUMENT_MARKDOWN_BYTES) {
+    throw documentError("文档 Markdown 内容超过 500KB 限制。", 413);
+  }
+  if (payload.referenceDocxPath !== undefined && typeof payload.referenceDocxPath !== "string") {
+    throw documentError("referenceDocxPath 必须是项目内 .docx 文件路径。");
+  }
+  if (payload.charts !== undefined && !Array.isArray(payload.charts)) {
+    throw documentError("charts 必须是数组。");
+  }
+  const charts = payload.charts ?? [];
+  if (charts.length > MAX_DOCUMENT_CHARTS) throw documentError("最多支持 12 个基础图表。");
+  const ids = new Set();
+  for (const chart of charts) {
+    if (!chart || typeof chart !== "object" || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(chart.id ?? "")) {
+      throw documentError("图表 ID 无效。");
+    }
+    if (ids.has(chart.id)) throw documentError("图表 ID 不能重复。");
+    ids.add(chart.id);
+    if ((chart.type !== "bar" && chart.type !== "line") || !Array.isArray(chart.labels) || !Array.isArray(chart.series)) {
+      throw documentError("图表类型或数据无效。");
+    }
+    if (!chart.labels.length || chart.labels.length > 48 || !chart.series.length || chart.series.length > 8) {
+      throw documentError("图表标签或数据序列数量无效。");
+    }
+    if (chart.labels.some((label) => typeof label !== "string" || !label.trim() || label.length > 80)) {
+      throw documentError("图表标签必须是 1 至 80 个字符的文本。");
+    }
+    if (chart.title !== undefined && (typeof chart.title !== "string" || chart.title.length > 200)) {
+      throw documentError("图表标题无效。");
+    }
+    for (const series of chart.series) {
+      if (!series || typeof series.name !== "string" || !series.name.trim() || series.name.length > 80 || !Array.isArray(series.values) || series.values.length !== chart.labels.length) {
+        throw documentError("图表序列必须与标签数量一致。");
+      }
+      if (series.values.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+        throw documentError("图表数值必须是有限数字。");
+      }
+    }
+  }
+  return {
+    format: payload.format,
+    filename: normalizeDocumentFilename(payload.filename, payload.format),
+    markdown: payload.markdown,
+    referenceDocxPath: payload.referenceDocxPath,
+    charts,
+  };
+}
+
+async function resolveDocumentTemplate(root, relativePath) {
+  let normalized;
+  try {
+    normalized = normalizeWorkspaceRelativePath(relativePath);
+  } catch {
+    throw documentError("样式模板必须是当前项目内的 .docx 文件。");
+  }
+  if (!normalized || normalized === ".." || normalized.startsWith("../") || path.extname(normalized).toLowerCase() !== ".docx") {
+    throw documentError("样式模板必须是当前项目内的 .docx 文件。");
+  }
+  const target = resolveWorkspacePath(root, normalized);
+  const canonical = await realpath(target).catch(() => null);
+  if (!canonical || !isInside(root, canonical)) {
+    throw documentError("样式模板不存在或指向项目目录之外。");
+  }
+  const info = await stat(canonical);
+  if (!info.isFile() || info.size > MAX_DOCUMENT_TEMPLATE_BYTES) {
+    throw documentError("样式模板不是有效文件或超过 20MB 限制。");
+  }
+  const header = await readFile(canonical);
+  if (header.length < 4 || header.subarray(0, 2).toString("utf8") !== "PK") {
+    throw documentError("样式模板不是有效的 DOCX 文件。");
+  }
+  return canonical;
+}
+
+function safeProcessMessage(error, fallback) {
+  const detail = error?.stderr || error?.stdout || error?.message;
+  return typeof detail === "string" && detail.trim() ? detail.trim().slice(0, 2_000) : fallback;
+}
+
+async function validateRenderedPdf(pdfPath, temporaryDirectory) {
+  const pdfInfo = process.env.DOCUMENT_PDFINFO_PATH || "pdfinfo";
+  const pdftoppm = process.env.DOCUMENT_PDFTOPPM_PATH || "pdftoppm";
+  let info;
+  try {
+    info = await execFileAsync(pdfInfo, [pdfPath], { maxBuffer: 64 * 1024 });
+  } catch (error) {
+    throw documentError(`无法读取生成的 PDF：${safeProcessMessage(error, "pdfinfo 执行失败。")}`, 500);
+  }
+  const pageMatch = /^Pages:\s+(\d+)$/m.exec(info.stdout);
+  const pageCount = Number(pageMatch?.[1] ?? 0);
+  if (!Number.isInteger(pageCount) || pageCount < 1) throw documentError("生成的 PDF 没有有效页面。", 500);
+  const renderDirectory = path.join(temporaryDirectory, `pdf-pages-${randomUUID()}`);
+  await mkdir(renderDirectory, { recursive: true, mode: 0o700 });
+  try {
+    await execFileAsync(pdftoppm, ["-png", pdfPath, path.join(renderDirectory, "page")], { maxBuffer: 64 * 1024 });
+  } catch (error) {
+    throw documentError(`PDF 渲染校验失败：${safeProcessMessage(error, "pdftoppm 执行失败。")}`, 500);
+  }
+  const renderedPages = (await readdir(renderDirectory)).filter((name) => /^page-\d+\.png$/.test(name));
+  if (renderedPages.length !== pageCount) throw documentError("PDF 渲染页数与文档页数不一致。", 500);
+  return { pageCount, renderedPages: renderedPages.length };
+}
+
+async function validateCjkPdfFallback(pdfPath, temporaryDirectory) {
+  if (process.platform !== "darwin") return validateRenderedPdf(pdfPath, temporaryDirectory);
+  const pdfInfo = process.env.DOCUMENT_PDFINFO_PATH || "pdfinfo";
+  const info = await execFileAsync(pdfInfo, [pdfPath], { maxBuffer: 64 * 1024 }).catch((error) => {
+    throw documentError(`无法读取生成的 PDF：${safeProcessMessage(error, "pdfinfo 执行失败。")}`, 500);
+  });
+  const pageCount = Number(/^Pages:\s+(\d+)$/m.exec(info.stdout)?.[1] ?? 0);
+  if (!Number.isInteger(pageCount) || pageCount < 1) throw documentError("生成的 PDF 没有有效页面。", 500);
+  const renderDirectory = path.join(temporaryDirectory, `quicklook-pages-${randomUUID()}`);
+  await mkdir(renderDirectory, { recursive: true, mode: 0o700 });
+  await execFileAsync("/usr/bin/qlmanage", ["-t", "-s", "1400", "-o", renderDirectory, pdfPath], { maxBuffer: 64 * 1024 }).catch((error) => {
+    throw documentError(`PDF 预览渲染校验失败：${safeProcessMessage(error, "qlmanage 执行失败。")}`, 500);
+  });
+  const renderedPages = (await readdir(renderDirectory)).filter((name) => name.endsWith(".png"));
+  if (renderedPages.length < 1) throw documentError("PDF 预览未生成图像。", 500);
+  return { pageCount, renderedPages: Math.min(pageCount, renderedPages.length) };
+}
+
+async function generateDocumentArtifact(workspace, dataDirectory, payload, signal) {
+  throwIfDocumentCancelled(signal);
+  const request = validateDocumentPayload(payload);
+  const temporaryDirectory = path.join(dataDirectory, "document-jobs", randomUUID());
+  const outputPath = resolveWorkspacePath(workspace.path, path.posix.join("outputs", request.filename));
+  await ensureSafeWriteTarget(workspace.path, outputPath);
+  await mkdir(temporaryDirectory, { recursive: true, mode: 0o700 });
+  try {
+    const templatePath = request.referenceDocxPath ? await resolveDocumentTemplate(workspace.path, request.referenceDocxPath) : undefined;
+    const referenceDocx = templatePath ? path.join(temporaryDirectory, "reference.docx") : undefined;
+    if (templatePath && referenceDocx) await copyFile(templatePath, referenceDocx);
+    const inputPath = path.join(temporaryDirectory, "input.json");
+    const docxPath = path.join(temporaryDirectory, "document.docx");
+    const cjkPdfPath = path.join(temporaryDirectory, "document-cjk.pdf");
+    await writeFile(inputPath, JSON.stringify({ markdown: request.markdown, charts: request.charts, referenceDocx }), { encoding: "utf8", mode: 0o600 });
+    const pandocPath = process.env.PANDOC_PATH || path.join(dataDirectory, "pandoc", "bin", "pandoc");
+    const canonicalPandoc = await realpath(pandocPath).catch(() => null);
+    if (!canonicalPandoc) throw documentError("未安装受管 Pandoc。请先运行 npm run documents:setup。", 503);
+    const python = await resolvePythonInterpreter({
+      environment: { ...process.env, ...(process.env.DOCUMENT_PYTHON_PATH ? { SKILL_PYTHON_PATH: process.env.DOCUMENT_PYTHON_PATH } : {}) },
+    });
+    try {
+      const rendererArguments = [DOCUMENT_RENDERER_PATH, inputPath, docxPath];
+      if (request.format === "pdf" && !referenceDocx) rendererArguments.push("--pdf", cjkPdfPath);
+      await execFileAsync(python.executable, rendererArguments, {
+        cwd: temporaryDirectory,
+        env: { ...process.env, PANDOC_PATH: canonicalPandoc },
+        signal,
+        maxBuffer: 256 * 1024,
+      });
+    } catch (error) {
+      throwIfDocumentCancelled(signal);
+      throw documentError(`DOCX 生成失败：${safeProcessMessage(error, "文档渲染器执行失败。")}`, 500);
+    }
+    const docx = await readFile(docxPath);
+    if (docx.length < 4 || docx.subarray(0, 2).toString("utf8") !== "PK") throw documentError("DOCX 输出校验失败。", 500);
+    const pdfPath = path.join(temporaryDirectory, "document.pdf");
+    const soffice = process.env.DOCUMENT_SOFFICE_PATH || "soffice";
+    try {
+      await execFileAsync(soffice, ["--headless", `-env:UserInstallation=file://${path.join(temporaryDirectory, "lo-profile")}`, "--convert-to", "pdf:writer_pdf_Export", "--outdir", temporaryDirectory, docxPath], {
+        cwd: temporaryDirectory,
+        env: { ...process.env, TMPDIR: temporaryDirectory },
+        signal,
+        maxBuffer: 256 * 1024,
+      });
+    } catch (error) {
+      throwIfDocumentCancelled(signal);
+      throw documentError(`PDF 转换失败：${safeProcessMessage(error, "LibreOffice 执行失败。")}`, 500);
+    }
+    throwIfDocumentCancelled(signal);
+    const pdf = await readFile(pdfPath).catch(() => null);
+    if (!pdf || pdf.length < 5 || pdf.subarray(0, 5).toString("utf8") !== "%PDF-") throw documentError("PDF 输出校验失败。", 500);
+    const libreOfficeRendering = await validateRenderedPdf(pdfPath, temporaryDirectory);
+    const cjkPdf = await readFile(cjkPdfPath).catch(() => null);
+    const useCjkPdfFallback = request.format === "pdf" && !referenceDocx && cjkPdf?.subarray(0, 5).toString("utf8") === "%PDF-";
+    const rendering = useCjkPdfFallback
+      ? await validateCjkPdfFallback(cjkPdfPath, temporaryDirectory)
+      : libreOfficeRendering;
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await copyFile(request.format === "docx" ? docxPath : useCjkPdfFallback ? cjkPdfPath : pdfPath, outputPath);
+    const outputInfo = await stat(outputPath);
+    return { path: path.relative(workspace.path, outputPath).split(path.sep).join("/"), format: request.format, size: outputInfo.size, ...rendering };
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
 export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = createMcpManager() }) {
   const commandManager = createCommandManager({ dataDirectory });
   const localDatabase = createLocalDatabase(dataDirectory);
@@ -927,6 +1152,22 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
             201,
             await writeWorkspaceFile(workspace.path, payload.path, payload.content),
           );
+        }
+        if (
+          request.method === "POST" &&
+          segments[2] === "documents" &&
+          segments[3] === "generate" &&
+          segments.length === 4
+        ) {
+          const cancellation = new AbortController();
+          const cancelDocument = () => cancellation.abort();
+          request.once("aborted", cancelDocument);
+          try {
+            const payload = await readJsonBody(request);
+            return sendJson(response, 201, await generateDocumentArtifact(workspace, dataDirectory, payload, cancellation.signal));
+          } finally {
+            request.off("aborted", cancelDocument);
+          }
         }
         if (request.method === "POST" && segments[2] === "commands" && segments.length === 3) {
           const payload = await readJsonBody(request);
