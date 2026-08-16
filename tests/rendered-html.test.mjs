@@ -54,7 +54,7 @@ test("exposes the searchable Skill, Tool, and MCP capability catalog", async () 
   const catalog = await response.json();
   assert.equal(catalog.skills.length, 9);
   assert.ok(catalog.skills.some((item) => item.name === "a-share-value-investing"));
-  assert.equal(catalog.tools.length, 6);
+  assert.equal(catalog.tools.length, 10);
   assert.equal(catalog.mcps.length, 2);
   assert.equal(catalog.mcps[0].name, "akshare-one");
   assert.equal(catalog.mcps[0].requiresApiKey, false);
@@ -70,6 +70,10 @@ test("exposes the searchable Skill, Tool, and MCP capability catalog", async () 
       "list_project_files",
       "read_project_file",
       "write_project_file",
+      "list_local_database_tables",
+      "describe_local_database_table",
+      "query_local_database",
+      "mutate_local_database",
       "bash",
     ],
   );

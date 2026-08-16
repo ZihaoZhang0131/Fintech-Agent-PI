@@ -45,6 +45,36 @@ export const DEFAULT_MAIN_SKILL_NAMES = [
   "akshare-institutions-macro",
 ] as const;
 
+const LEGACY_DEFAULT_MAIN_TOOL_NAMES = [
+  "load_skill",
+  "web_search",
+  "list_project_files",
+  "read_project_file",
+  "write_project_file",
+  "bash",
+] as const;
+
+export const DEFAULT_MAIN_TOOL_NAMES = [
+  "load_skill",
+  "web_search",
+  "list_project_files",
+  "read_project_file",
+  "write_project_file",
+  "list_local_database_tables",
+  "describe_local_database_table",
+  "query_local_database",
+  "mutate_local_database",
+  "bash",
+] as const;
+
+/** Add the new database tools only for projects that retained the prior complete default. */
+export function upgradeLegacyDefaultToolSelection(names: readonly string[]) {
+  const isPreviousCompleteDefault =
+    names.length === LEGACY_DEFAULT_MAIN_TOOL_NAMES.length &&
+    LEGACY_DEFAULT_MAIN_TOOL_NAMES.every((name) => names.includes(name));
+  return isPreviousCompleteDefault ? [...DEFAULT_MAIN_TOOL_NAMES] : [...names];
+}
+
 /**
  * Existing projects saved the former complete built-in default. Add newly bundled
  * defaults only for that exact legacy selection, while preserving intentional
@@ -66,14 +96,7 @@ const DEFAULT_PROFILES: Record<AgentRoleId, AgentProfile> = {
   main: {
     enabled: true,
     enabledSkills: [...DEFAULT_MAIN_SKILL_NAMES],
-    enabledTools: [
-      "load_skill",
-      "web_search",
-      "list_project_files",
-      "read_project_file",
-      "write_project_file",
-      "bash",
-    ],
+    enabledTools: [...DEFAULT_MAIN_TOOL_NAMES],
     // New projects delegate structured market data instead of loading MCP tools into the parent.
     enabledMcps: [],
   },
@@ -126,7 +149,7 @@ export function createProjectAgentConfigFromLegacy(input: {
   const main = config.profiles.main;
   if (input.model) config.mainModel = { ...input.model };
   if (input.enabledSkills) main.enabledSkills = upgradeLegacyDefaultSkillSelection(input.enabledSkills);
-  if (input.enabledTools) main.enabledTools = [...input.enabledTools];
+  if (input.enabledTools) main.enabledTools = upgradeLegacyDefaultToolSelection(input.enabledTools);
   if (input.enabledMcps) main.enabledMcps = [...input.enabledMcps];
   return config;
 }

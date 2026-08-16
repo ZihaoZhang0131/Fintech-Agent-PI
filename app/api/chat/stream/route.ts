@@ -25,6 +25,7 @@ import {
   createWorkspaceTools,
   type WorkspaceToolDetails,
 } from "@/server/agent/tools/workspace-files";
+import { createLocalDatabaseTools, type LocalDatabaseToolDetails } from "@/server/agent/tools/local-database";
 
 type InputMessage = {
   role: "user" | "assistant";
@@ -134,6 +135,13 @@ function getWorkspaceDetails(value: unknown): WorkspaceToolDetails | undefined {
   return details as WorkspaceToolDetails;
 }
 
+function getLocalDatabaseDetails(value: unknown): LocalDatabaseToolDetails | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const details = value as Partial<LocalDatabaseToolDetails>;
+  if (details.kind !== "local_database" || typeof details.action !== "string") return undefined;
+  return details as LocalDatabaseToolDetails;
+}
+
 function getSkillResourceDetails(value: unknown): SkillResourceDetails | undefined {
   if (!value || typeof value !== "object") return undefined;
   const details = value as Partial<SkillResourceDetails>;
@@ -198,6 +206,10 @@ function getToolLabel(
   if (toolName === "list_project_files") return "查看项目文件";
   if (toolName === "read_project_file") return "读取项目文件";
   if (toolName === "write_project_file") return "保存项目产出";
+  if (toolName === "list_local_database_tables") return "查看本地数据库表";
+  if (toolName === "describe_local_database_table") return "查看本地数据表结构";
+  if (toolName === "query_local_database") return "查询本地数据库";
+  if (toolName === "mutate_local_database") return "修改本地数据库";
   if (toolName === "bash") return "执行 Bash";
   return toolName;
 }
@@ -207,6 +219,7 @@ function getToolInput(args: unknown) {
   if ("query" in args) return String(args.query);
   if ("name" in args) return String(args.name);
   if ("path" in args) return String(args.path);
+  if ("sql" in args) return String(args.sql);
   if ("command" in args) return String(args.command);
   if ("task" in args) return String(args.task);
   const summary = Object.entries(args)
@@ -272,6 +285,7 @@ export async function POST(request: Request) {
   const workspaceTools = createWorkspaceTools(workspaceId).filter((tool) =>
     enabledToolNames.has(tool.name),
   );
+  const databaseTools = createLocalDatabaseTools().filter((tool) => enabledToolNames.has(tool.name));
   const connectedMcpServers = await discoverMcpServers(mainProfile.enabledMcps);
   const mcpTools = createMcpAgentTools(connectedMcpServers);
   const models = createConfiguredModels();
@@ -311,6 +325,7 @@ export async function POST(request: Request) {
     const childWorkspaceTools = createWorkspaceTools(workspaceId).filter((tool) =>
       childToolNames.has(tool.name),
     );
+    const childDatabaseTools = createLocalDatabaseTools().filter((tool) => childToolNames.has(tool.name));
     // MCP discovery is deliberately delayed until this specialized worker is actually invoked.
     const childMcps = await discoverMcpServers(profile.enabledMcps);
     const childSkillTracker = createLoadedSkillTracker();
@@ -328,6 +343,7 @@ export async function POST(request: Request) {
         ? [createWebSearchTool({ apiKey: process.env.TAVILY_API_KEY })]
         : []),
       ...childWorkspaceTools,
+      ...childDatabaseTools,
       ...(childToolNames.has("bash")
         ? [createBashTool(workspaceId, { approvalMode: bashApprovalMode, permissionMode: bashPermissionMode })]
         : []),
@@ -412,6 +428,7 @@ export async function POST(request: Request) {
       ? [createWebSearchTool({ apiKey: process.env.TAVILY_API_KEY })]
       : []),
     ...workspaceTools,
+    ...databaseTools,
     ...(enabledToolNames.has("bash")
       ? [createBashTool(workspaceId, { approvalMode: bashApprovalMode, permissionMode: bashPermissionMode })]
       : []),
@@ -434,6 +451,12 @@ export async function POST(request: Request) {
     enabledToolNames.has("write_project_file")
       ? "形成完整研究报告、研究框架、表格数据或代码时，在最终回答前使用 write_project_file 保存到 outputs/ 目录，并说明保存路径。"
       : "本轮没有启用文件写入能力，不要声称已经把产出保存到本地。",
+    enabledToolNames.has("query_local_database") || enabledToolNames.has("list_local_database_tables")
+      ? "本地数据库为全应用共享。查询前先查看数据表和结构；只读查询使用本地数据库工具，不要猜测表或数据。"
+      : "本轮没有启用本地数据库查询能力，不要声称已经查询数据库。",
+    enabledToolNames.has("mutate_local_database")
+      ? "修改本地数据库时只能调用修改本地数据库工具，并清楚说明将执行的 SQL；完成后报告受影响行数。"
+      : "本轮没有启用本地数据库写入能力，不要声称已经创建、更新或删除数据库数据。",
     enabledToolNames.has("bash")
       ? `Bash 已启用，执行模式为 ${bashApprovalMode === "ask" ? "每条确认" : "自动执行"}，权限模式为 ${bashPermissionMode === "full" ? "完整本机权限" : "项目沙箱"}。只有任务确实需要运行脚本、测试、构建或命令行操作时才调用 bash。`
       : "本轮没有启用 Bash，不要声称执行过脚本、测试、构建或命令。",
@@ -503,6 +526,7 @@ export async function POST(request: Request) {
           const skillDetails = getLoadSkillDetails(event.result?.details);
           const skillResourceDetails = getSkillResourceDetails(event.result?.details);
           const workspaceDetails = getWorkspaceDetails(event.result?.details);
+          const databaseDetails = getLocalDatabaseDetails(event.result?.details);
           const bashDetails = getBashDetails(event.result?.details);
           const mcpDetails = getMcpDetails(event.result?.details);
           const subAgentDetails = getSubAgentDetails(event.result?.details);
@@ -518,6 +542,8 @@ export async function POST(request: Request) {
               skillDetails?.name ??
               skillResourceDetails?.path ??
               workspaceDetails?.path ??
+              databaseDetails?.sql ??
+              databaseDetails?.table ??
               bashDetails?.command ??
               mcpDetails?.summary ??
               subAgentDetails?.task,
@@ -531,8 +557,16 @@ export async function POST(request: Request) {
                     ? `退出码 ${skillResourceDetails.exitCode ?? "无"}`
               : workspaceDetails?.action === "write"
                 ? `已保存 ${workspaceDetails.path}`
-                : workspaceDetails?.action === "read"
+              : workspaceDetails?.action === "read"
                   ? `已读取 ${workspaceDetails.path}`
+                  : databaseDetails?.action === "list"
+                    ? `发现 ${databaseDetails.resultCount ?? 0} 张表`
+                    : databaseDetails?.action === "describe"
+                      ? `已查看 ${databaseDetails.table}`
+                      : databaseDetails?.action === "query"
+                        ? `返回 ${databaseDetails.resultCount ?? 0} 行${databaseDetails.truncated ? "（已截断）" : ""}`
+                        : databaseDetails?.action === "mutate"
+                          ? `已修改数据库，影响 ${databaseDetails.resultCount ?? 0} 行`
                   : bashDetails?.status === "rejected"
                     ? "用户已拒绝，命令未执行"
                     : bashDetails
@@ -550,7 +584,7 @@ export async function POST(request: Request) {
                 ? completedAt - toolStartedAt.get(event.toolCallId)!
                 : undefined),
             resultCount:
-              searchDetails?.sources.length ?? workspaceDetails?.resultCount ?? mcpDetails?.resultCount,
+              searchDetails?.sources.length ?? workspaceDetails?.resultCount ?? databaseDetails?.resultCount ?? mcpDetails?.resultCount,
             mcpServerId: mcpDetails?.serverId,
             mcpServerLabel: mcpDetails?.serverLabel,
             externalToolName: mcpDetails?.externalToolName,
@@ -565,7 +599,7 @@ export async function POST(request: Request) {
             exitCode: bashDetails?.exitCode ?? skillResourceDetails?.exitCode,
             stdout: bashDetails?.stdout ?? skillResourceDetails?.stdout,
             stderr: bashDetails?.stderr ?? skillResourceDetails?.stderr,
-            truncated: bashDetails?.truncated ?? skillResourceDetails?.truncated ?? mcpDetails?.truncated ?? subAgentDetails?.truncated,
+            truncated: bashDetails?.truncated ?? skillResourceDetails?.truncated ?? databaseDetails?.truncated ?? mcpDetails?.truncated ?? subAgentDetails?.truncated,
             timedOut: bashDetails?.timedOut ?? skillResourceDetails?.timedOut,
             sources: searchDetails?.sources.map((source) => ({
               title: source.title,

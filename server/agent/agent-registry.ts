@@ -2,6 +2,7 @@ import {
   AGENT_ROLE_IDS,
   createDefaultProjectAgentConfig,
   upgradeLegacyDefaultSkillSelection,
+  upgradeLegacyDefaultToolSelection,
   type AgentModelOverride,
   type AgentProfile,
   type AgentRoleId,
@@ -101,7 +102,13 @@ function resolveProfile(
       skillNames,
       fallback.enabledSkills,
     ),
-    enabledTools: selectKnownNames(candidate.enabledTools, role.maxTools, fallback.enabledTools),
+    enabledTools: selectKnownNames(
+      role.id === "main" && Array.isArray(candidate.enabledTools)
+        ? upgradeLegacyDefaultToolSelection(candidate.enabledTools.filter((value): value is string => typeof value === "string"))
+        : candidate.enabledTools,
+      role.maxTools,
+      fallback.enabledTools,
+    ),
     enabledMcps: selectKnownNames(candidate.enabledMcps, role.maxMcps, fallback.enabledMcps),
   };
 }
@@ -139,7 +146,13 @@ export function resolveProjectAgentConfig(input: unknown, legacy?: {
         ),
     enabledTools: legacy?.enabledTools === undefined
       ? defaults.profiles.main.enabledTools
-      : selectKnownNames(legacy.enabledTools, AGENT_ROLE_REGISTRY.main.maxTools, []),
+      : selectKnownNames(
+          Array.isArray(legacy.enabledTools)
+            ? upgradeLegacyDefaultToolSelection(legacy.enabledTools.filter((value): value is string => typeof value === "string"))
+            : legacy.enabledTools,
+          AGENT_ROLE_REGISTRY.main.maxTools,
+          [],
+        ),
     enabledMcps: legacy?.enabledMcps === undefined
       ? defaults.profiles.main.enabledMcps
       : selectKnownNames(legacy.enabledMcps, AGENT_ROLE_REGISTRY.main.maxMcps, []),

@@ -6,6 +6,7 @@ import {
   createDefaultProjectAgentConfig,
   createProjectAgentConfigFromLegacy,
   upgradeLegacyDefaultSkillSelection,
+  upgradeLegacyDefaultToolSelection,
 } from "../lib/agent-profiles.ts";
 import { DEFAULT_AGENT_SYSTEM_PROMPTS, createDefaultAgentPromptConfig } from "../lib/agent-prompts.ts";
 
@@ -65,4 +66,13 @@ test("former complete default Skill selections gain every newly bundled default"
     ["equity-research", "earnings-review", "policy-tracking", "akshare-http-data", "a-share-value-investing", "akshare-china-macro", "akshare-us-macro", "akshare-euro-macro", "akshare-institutions-macro"],
   );
   assert.deepEqual(upgradeLegacyDefaultSkillSelection(["equity-research"]), ["equity-research"]);
+});
+
+test("former complete default tool selections gain database tools without changing partial selections", () => {
+  const upgraded = upgradeLegacyDefaultToolSelection([
+    "load_skill", "web_search", "list_project_files", "read_project_file", "write_project_file", "bash",
+  ]);
+  assert.ok(upgraded.includes("query_local_database"));
+  assert.ok(upgraded.includes("mutate_local_database"));
+  assert.deepEqual(upgradeLegacyDefaultToolSelection(["web_search"]), ["web_search"]);
 });

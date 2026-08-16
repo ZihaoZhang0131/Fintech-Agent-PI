@@ -8,6 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { createMcpManager } from "./mcp-manager.mjs";
+import { createLocalDatabase } from "./local-database.mjs";
 import { createSkillStore } from "./skill-store.mjs";
 import {
   deleteModelProvider,
@@ -727,6 +728,7 @@ function shellQuote(value) {
 
 export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = createMcpManager() }) {
   const commandManager = createCommandManager({ dataDirectory });
+  const localDatabase = createLocalDatabase(dataDirectory);
   const skillStore = createSkillStore(dataDirectory);
   return async function handle(request, response) {
     try {
@@ -751,6 +753,20 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
         return sendJson(response, 200, {
           providers: await listPublicModelProviders(dataDirectory),
         });
+      }
+      if (request.method === "GET" && url.pathname === "/database/tables") {
+        return sendJson(response, 200, { tables: localDatabase.listTables() });
+      }
+      if (segments[0] === "database" && segments[1] === "tables" && segments[2] && segments.length === 3 && request.method === "GET") {
+        return sendJson(response, 200, localDatabase.describeTable(segments[2]));
+      }
+      if (request.method === "POST" && url.pathname === "/database/query") {
+        const payload = await readJsonBody(request);
+        return sendJson(response, 200, localDatabase.query(payload.sql));
+      }
+      if (request.method === "POST" && url.pathname === "/database/execute") {
+        const payload = await readJsonBody(request);
+        return sendJson(response, 200, localDatabase.mutate(payload.sql));
       }
       if (request.method === "GET" && url.pathname === "/skills") {
         return sendJson(response, 200, await skillStore.list());

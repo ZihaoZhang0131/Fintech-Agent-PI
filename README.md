@@ -111,4 +111,5 @@ npm test
 - 对话记录：保存在当前浏览器的 `localStorage` 中。
 - 技能、工具与 MCP 开关：保存在当前浏览器的 `localStorage` 中；MCP 首次连接成功后默认启用。
 - 项目绑定关系：保存在应用目录下的 `.local-data/workspaces.json`，该目录已被 Git 忽略。
+- 本地数据库：全应用共享的 SQLite 文件保存在 `.local-data/database.sqlite`；用户页面仅支持只读 SQL，启用相应能力的 Agent 可直接写入。
 - 项目文件：保存在用户选择的本地文件夹中，解除绑定不会删除文件。

@@ -9,6 +9,7 @@ import {
   CircleX,
   Copy,
   Cpu,
+  Database,
   Download,
   File,
   FileChartColumn,
@@ -54,12 +55,14 @@ import { CodePreview } from "@/components/code-preview";
 import { ModelLibrary, type ModelProviderItem } from "@/components/model-library";
 import { ToolRunStack } from "@/components/tool-run-stack";
 import { UserUsagePage } from "@/components/user-usage-page";
+import { DatabasePage } from "@/components/database-page";
 import type { CapabilityCatalog, CapabilityItem, CapabilityKind } from "@/lib/capability-types";
 import {
   cloneProjectAgentConfig,
   createDefaultProjectAgentConfig,
   createProjectAgentConfigFromLegacy,
   upgradeLegacyDefaultSkillSelection,
+  upgradeLegacyDefaultToolSelection,
   type AgentProfile,
   type AgentRoleId,
   type ProjectAgentConfig,
@@ -183,7 +186,7 @@ const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
 const AGENT_PROFILES_KEY = "pi-research-agent:agent-profiles:v2";
 const AGENT_PROMPTS_KEY = "pi-research-agent:agent-prompts:v1";
 
-type AppView = "workspace" | CapabilityKind | "model" | "agent" | "user";
+type AppView = "workspace" | CapabilityKind | "model" | "agent" | "user" | "database";
 
 const SUGGESTIONS = [
   {
@@ -290,7 +293,9 @@ function parseProjectAgentConfigs(value: string | null): Record<string, ProjectA
             enabledSkills: Array.isArray(profile.enabledSkills)
               ? upgradeLegacyDefaultSkillSelection(profile.enabledSkills.filter((name): name is string => typeof name === "string"))
               : [],
-            enabledTools: Array.isArray(profile.enabledTools) ? profile.enabledTools.filter((name): name is string => typeof name === "string") : [],
+            enabledTools: Array.isArray(profile.enabledTools)
+              ? upgradeLegacyDefaultToolSelection(profile.enabledTools.filter((name): name is string => typeof name === "string"))
+              : [],
             enabledMcps: Array.isArray(profile.enabledMcps) ? profile.enabledMcps.filter((name): name is string => typeof name === "string") : [],
           };
         }
@@ -773,7 +778,7 @@ export default function Home() {
             : catalog.skills.filter((item) => item.defaultEnabled).map((item) => item.name),
         );
         const initialTools = storedTools
-          ? storedTools.filter((name) => knownTools.has(name))
+          ? upgradeLegacyDefaultToolSelection(storedTools).filter((name) => knownTools.has(name))
           : catalog.tools.filter((item) => item.defaultEnabled).map((item) => item.name);
         if (storedToolValue === null && knownTools.has("bash") && !initialTools.includes("bash")) {
           initialTools.push("bash");
@@ -1299,12 +1304,13 @@ export default function Home() {
     run: ToolRun,
     decision: "approve" | "reject",
   ) {
-    if (!activeProject || !run.commandId || approvalSubmittingIds.includes(run.commandId)) return;
-    setApprovalSubmittingIds((current) => [...current, run.commandId!]);
+    const commandId = run.commandId;
+    if (!commandId || approvalSubmittingIds.includes(commandId) || !activeProject) return;
+    setApprovalSubmittingIds((current) => [...current, commandId]);
     try {
       await responseJson(
         await fetch(
-          `/api/local/workspaces/${activeProject.id}/commands/${run.commandId}/decision`,
+          `/api/local/workspaces/${activeProject.id}/commands/${commandId}/decision`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1312,28 +1318,27 @@ export default function Home() {
           },
         ),
       );
-      if (activeConversation) {
-        updateConversation(activeConversation.id, (conversation) => ({
-          ...conversation,
-          messages: conversation.messages.map((message) =>
-            message.id === messageId
-              ? {
-                  ...message,
-                  toolRuns: message.toolRuns?.map((item) =>
-                    item.commandId === run.commandId
-                      ? { ...item, status: decision === "approve" ? "running" : "rejected" }
-                      : item,
-                  ),
-                }
-              : message,
-          ),
-          updatedAt: timestampNow(),
-        }));
-      }
+      updateConversation(activeConversation?.id ?? "", (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) =>
+          message.id === messageId
+            ? {
+                ...message,
+                toolRuns: message.toolRuns?.map((item) =>
+                  item.commandId === commandId
+                    ? { ...item, status: decision === "approve" ? "running" : "rejected" }
+                    : item,
+                ),
+              }
+            : message,
+        ),
+        updatedAt: timestampNow(),
+      }));
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : "Bash 审批失败。");
+      const message = error instanceof Error ? error.message : "工具审批失败。";
+      setProjectError(message);
     } finally {
-      setApprovalSubmittingIds((current) => current.filter((id) => id !== run.commandId));
+      setApprovalSubmittingIds((current) => current.filter((id) => id !== commandId));
     }
   }
 
@@ -1905,6 +1910,14 @@ export default function Home() {
             <small>{enabledMcps.length}/{capabilityCatalog.mcps.length}</small>
           </button>
           <button
+            className={activeView === "database" ? "active" : ""}
+            type="button"
+            onClick={() => setActiveView("database")}
+          >
+            <Database size={15} />
+            <span>数据库</span>
+          </button>
+          <button
             className={activeView === "model" ? "active" : ""}
             type="button"
             onClick={openModelView}
@@ -2456,6 +2469,8 @@ export default function Home() {
         />
       ) : activeView === "user" ? (
         <UserUsagePage activity={usageActivity} />
+      ) : activeView === "database" ? (
+        <DatabasePage onClose={() => setActiveView("workspace")} />
       ) : (
         <CapabilityLibrary
           key={activeView}

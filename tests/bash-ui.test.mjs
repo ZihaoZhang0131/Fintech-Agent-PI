@@ -42,7 +42,7 @@ test("selected model reference is persisted and sent with the chat request", () 
   assert.match(pageSource, /modelId: selectedModel\.modelId/);
 });
 
-test("Bash approval events are rendered with allow and reject actions", () => {
+test("tool approval events are rendered with allow and reject actions", () => {
   assert.match(pageSource, /tool_approval_required/);
   assert.match(toolRunSource, /onDecision\(messageId, run, "approve"\)/);
   assert.match(toolRunSource, /onDecision\(messageId, run, "reject"\)/);

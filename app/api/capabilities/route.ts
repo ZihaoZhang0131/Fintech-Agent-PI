@@ -1,6 +1,7 @@
 import loadSkillSource from "../../../server/agent/tools/load-skill.ts?raw";
 import webSearchSource from "../../../server/agent/tools/web-search.ts?raw";
 import workspaceFilesSource from "../../../server/agent/tools/workspace-files.ts?raw";
+import localDatabaseSource from "../../../server/agent/tools/local-database.ts?raw";
 import bashSource from "../../../server/agent/tools/bash.ts?raw";
 import { AGENT_TOOL_NAMES } from "@/server/agent/capability-policy";
 import { publicAgentRoles } from "@/server/agent/agent-registry";
@@ -61,6 +62,30 @@ const toolMetadata = {
     description: "把报告、研究框架和代码写入当前项目，默认建议保存到 outputs 目录。",
     sourcePath: "server/agent/tools/workspace-files.ts",
     code: workspaceFilesSource,
+  },
+  list_local_database_tables: {
+    label: "查看本地数据库表",
+    description: "列出全应用共享本地 SQLite 数据库中的数据表。",
+    sourcePath: "server/agent/tools/local-database.ts",
+    code: localDatabaseSource,
+  },
+  describe_local_database_table: {
+    label: "查看本地数据表结构",
+    description: "查看建表 SQL、字段和最多 100 行预览数据。",
+    sourcePath: "server/agent/tools/local-database.ts",
+    code: localDatabaseSource,
+  },
+  query_local_database: {
+    label: "查询本地数据库",
+    description: "执行只读 SQL 查询全应用共享的本地 SQLite 数据库。",
+    sourcePath: "server/agent/tools/local-database.ts",
+    code: localDatabaseSource,
+  },
+  mutate_local_database: {
+    label: "修改本地数据库",
+    description: "执行建表或增删改 SQL，并返回受影响行数。",
+    sourcePath: "server/agent/tools/local-database.ts",
+    code: localDatabaseSource,
   },
   bash: {
     label: "执行 Bash",

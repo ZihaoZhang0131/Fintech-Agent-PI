@@ -31,7 +31,7 @@ test("collapsed tool activity shows only total run time beside its disclosure", 
   assert.match(styleSource, /\.tool-run-summary\[aria-expanded="true"\] \.tool-run-chevron/);
 });
 
-test("latest tool card preserves Bash approval controls and execution details", () => {
+test("latest tool card preserves tool approval controls and Bash execution details", () => {
   assert.match(toolRunSource, /run\.status === "awaiting_approval" && run\.commandId/);
   assert.match(toolRunSource, /onDecision\(messageId, run, "reject"\)/);
   assert.match(toolRunSource, /onDecision\(messageId, run, "approve"\)/);
