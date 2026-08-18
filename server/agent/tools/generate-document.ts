@@ -8,6 +8,7 @@ export type DocumentToolDetails = {
   size: number;
   pageCount: number;
   renderedPages: number;
+  verification?: "structural" | "rendered";
 };
 
 const chartParameters = Type.Object({
@@ -115,12 +116,16 @@ export function createDocumentTool(
         size: number;
         pageCount: number;
         renderedPages: number;
+        verification?: "structural" | "rendered";
       }>(workspaceId, request, signal, fetchImpl);
+      const resultDescription = result.verification === "structural"
+        ? `结构校验通过，${result.size} bytes`
+        : `${result.pageCount} 页，${result.size} bytes`;
       return {
         content: [
           {
             type: "text",
-            text: `已生成 ${result.format.toUpperCase()} 文档：${result.path}（${result.pageCount} 页，${result.size} bytes）。最终回答应明确告诉用户该文件路径。`,
+            text: `已生成 ${result.format.toUpperCase()} 文档：${result.path}（${resultDescription}）。最终回答应明确告诉用户该文件路径。`,
           },
         ],
         details: { kind: "document", ...result },

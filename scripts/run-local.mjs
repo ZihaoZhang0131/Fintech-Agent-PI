@@ -16,6 +16,8 @@ const localDataDirectory = process.env.PI_LOCAL_DATA_DIR
   : path.join(root, ".local-data");
 const managedAktoolsPython = path.join(localDataDirectory, "aktools-venv", "bin", "python");
 const managedPandoc = path.join(localDataDirectory, "pandoc", "bin", "pandoc");
+const managedDocumentPython = path.join(localDataDirectory, "documents-venv", "bin", "python");
+const documentReadyMarker = path.join(localDataDirectory, "documents-ready-v2");
 
 function probePort(port) {
   return new Promise((resolve, reject) => {
@@ -104,8 +106,8 @@ async function startAktools() {
 }
 
 function startPandocProvisioning() {
-  if (existsSync(managedPandoc)) {
-    console.log(`检测到受管 Pandoc：${managedPandoc}`);
+  if (existsSync(managedPandoc) && existsSync(managedDocumentPython) && existsSync(documentReadyMarker)) {
+    console.log(`检测到可用文档组件：${managedPandoc}`);
     return null;
   }
   console.log("正在后台初始化文档组件（Pandoc 与受管 Python）；PDF/Word 工具准备完成前会自动等待。");

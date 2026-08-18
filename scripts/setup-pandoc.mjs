@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -30,7 +30,8 @@ const destination = path.join(dataDirectory, "pandoc", "bin", "pandoc");
 const documentEnvironment = path.join(dataDirectory, "documents-venv");
 const documentPython = path.join(documentEnvironment, "bin", "python");
 const downloadTimeoutSeconds = 300;
-const documentPackages = ["python-docx==1.2.0", "reportlab==4.4.9", "Pillow==12.3.0"];
+const documentPackages = ["python-docx==1.2.0", "reportlab==4.4.9", "Pillow==12.3.0", "pypdfium2==5.12.1"];
+const documentReadyMarker = path.join(dataDirectory, "documents-ready-v2");
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -87,4 +88,5 @@ if (!existsSync(documentPython)) {
   await run("uv", ["venv", "--python", "3.12", documentEnvironment]);
 }
 await run("uv", ["pip", "install", "--python", documentPython, ...documentPackages]);
+await writeFile(documentReadyMarker, "pandoc=3.9.0.2\npdf-renderer=pypdfium2-5.12.1\n", { mode: 0o600 });
 console.log(`文档 Python 环境安装完成：${documentPython}`);

@@ -21,10 +21,11 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image as PdfImage
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from PIL import Image, ImageDraw, ImageFont
+import pypdfium2 as pdfium
 
 
 def fail(message: str) -> None:
@@ -32,12 +33,37 @@ def fail(message: str) -> None:
 
 
 def configure_cjk_font() -> str:
-    name = "STSong-Light"
-    try:
-        pdfmetrics.registerFont(UnicodeCIDFont(name))
-    except (KeyError, ValueError):
-        pass
-    return name
+    regular_candidates = [
+        os.environ.get("DOCUMENT_CJK_FONT_PATH"),
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    ]
+    bold_candidates = [
+        os.environ.get("DOCUMENT_CJK_BOLD_FONT_PATH"),
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+    ]
+    regular_path = next((Path(value) for value in regular_candidates if value and Path(value).is_file()), None)
+    bold_path = next((Path(value) for value in bold_candidates if value and Path(value).is_file()), regular_path)
+    if not regular_path or not bold_path:
+        fail("未找到可嵌入 PDF 的中文字体。请通过 DOCUMENT_CJK_FONT_PATH 配置 TTF/TTC 字体。")
+    regular_name, bold_name = "EmbeddedCjk", "EmbeddedCjkBold"
+    if regular_name not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont(regular_name, str(regular_path)))
+    if bold_name not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont(bold_name, str(bold_path)))
+    pdfmetrics.registerFontFamily(
+        regular_name,
+        normal=regular_name,
+        bold=bold_name,
+        italic=regular_name,
+        boldItalic=bold_name,
+    )
+    return regular_name
 
 
 def render_chart(chart: dict, directory: Path) -> tuple[str, Path]:
@@ -172,37 +198,59 @@ def replace_chart_markers(markdown: str, charts: list[dict], directory: Path) ->
 
 def apply_default_cjk_styles(document_path: Path) -> None:
     document = Document(str(document_path))
-    font_name = "Noto Sans CJK SC"
+    font_name = os.environ.get("DOCUMENT_DOCX_CJK_FONT") or ("Arial Unicode MS" if sys.platform == "darwin" else "Noto Sans CJK SC")
     for style_name in ["Normal", "Body Text", "Title", "Subtitle", "Heading 1", "Heading 2", "Heading 3"]:
         try:
             style = document.styles[style_name]
         except KeyError:
             continue
         style.font.name = font_name
+        style._element.rPr.rFonts.set(qn("w:ascii"), font_name)
+        style._element.rPr.rFonts.set(qn("w:hAnsi"), font_name)
         style._element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
     for paragraph in list(document.paragraphs) + [paragraph for table in document.tables for row in table.rows for cell in row.cells for paragraph in cell.paragraphs]:
         for run in paragraph.runs:
             run.font.name = font_name
+            run._element.rPr.rFonts.set(qn("w:ascii"), font_name)
+            run._element.rPr.rFonts.set(qn("w:hAnsi"), font_name)
             run._element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
     document.save(str(document_path))
 
 
 def inline_pdf_text(value: str) -> str:
     escaped = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    escaped = re.sub(r"`([^`]+)`", r"\1", escaped)
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
 
 
-def render_pdf_from_markdown(markdown: str, directory: Path, output: Path) -> None:
-    """CJK-safe fallback for PDFs without a Word reference template."""
+def render_pdf_from_markdown(markdown: str, directory: Path, output: Path, render_directory: Path) -> tuple[int, int]:
+    """Create a CJK-safe PDF and render every page for deterministic validation."""
     font = configure_cjk_font()
     styles = getSampleStyleSheet()
     body = ParagraphStyle("CjkBody", parent=styles["BodyText"], fontName=font, fontSize=10.5, leading=18, spaceAfter=7)
-    headings = {level: ParagraphStyle(f"CjkHeading{level}", parent=styles[f"Heading{level}"], fontName=font, fontSize={1: 22, 2: 16, 3: 13}[level], leading={1: 30, 2: 24, 3: 20}[level], textColor=colors.HexColor("#1f2937"), spaceBefore=10 if level > 1 else 0, spaceAfter=8) for level in (1, 2, 3)}
+    headings = {level: ParagraphStyle(f"CjkHeading{level}", parent=styles[f"Heading{level}"], fontName=font, fontSize={1: 22, 2: 16, 3: 13}[level], leading={1: 30, 2: 24, 3: 20}[level], textColor=colors.HexColor("#1f2937"), spaceBefore=10 if level > 1 else 0, spaceAfter=8, keepWithNext=True) for level in (1, 2, 3)}
     bullet = ParagraphStyle("CjkBullet", parent=body, leftIndent=16, firstLineIndent=-10, bulletIndent=2)
+    numbered = ParagraphStyle("CjkNumbered", parent=body, leftIndent=20, firstLineIndent=-16, bulletIndent=2)
+    quote = ParagraphStyle(
+        "CjkQuote",
+        parent=body,
+        leftIndent=10,
+        rightIndent=10,
+        borderWidth=0.5,
+        borderColor=colors.HexColor("#d1d5db"),
+        borderPadding=7,
+        backColor=colors.HexColor("#f7f8fa"),
+        textColor=colors.HexColor("#4b5563"),
+        spaceAfter=5,
+    )
     story, lines, index = [], markdown.splitlines(), 0
     while index < len(lines):
         line = lines[index].strip()
         if not line:
+            index += 1
+            continue
+        if re.fullmatch(r"-{3,}", line):
+            story.append(Spacer(1, 5))
             index += 1
             continue
         heading_match = re.match(r"^(#{1,3})\s+(.+)$", line)
@@ -225,7 +273,14 @@ def render_pdf_from_markdown(markdown: str, directory: Path, output: Path) -> No
                     rows.append([Paragraph(inline_pdf_text(cell), body) for cell in cells])
                 index += 1
             if rows:
-                table = Table(rows, repeatRows=1, hAlign="LEFT")
+                column_count = max(len(row) for row in rows)
+                width_patterns = {
+                    2: [0.30, 0.70],
+                    3: [0.24, 0.46, 0.30],
+                    4: [0.16, 0.28, 0.28, 0.28],
+                }
+                ratios = width_patterns.get(column_count, [1 / column_count] * column_count)
+                table = Table(rows, repeatRows=1, hAlign="LEFT", colWidths=[166 * mm * ratio for ratio in ratios])
                 table.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), font), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e5e7eb")), ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d1d5db")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
                 story.extend([table, Spacer(1, 10)])
             continue
@@ -233,21 +288,60 @@ def render_pdf_from_markdown(markdown: str, directory: Path, output: Path) -> No
             story.append(Paragraph(inline_pdf_text(line[2:]), bullet, bulletText="•"))
             index += 1
             continue
+        numbered_match = re.match(r"^(\d+)\.\s+(.+)$", line)
+        if numbered_match:
+            story.append(Paragraph(inline_pdf_text(numbered_match.group(2)), numbered, bulletText=f"{numbered_match.group(1)}."))
+            index += 1
+            continue
+        if line.startswith(">"):
+            quote_lines = []
+            while index < len(lines) and lines[index].strip().startswith(">"):
+                quote_lines.append(lines[index].strip()[1:].strip())
+                index += 1
+            story.append(Paragraph("<br/>".join(inline_pdf_text(item) for item in quote_lines), quote))
+            continue
         paragraph = [line]
         index += 1
-        while index < len(lines) and lines[index].strip() and not re.match(r"^(#{1,3})\s+|^\||^[-*] ", lines[index].strip()):
+        while index < len(lines) and lines[index].strip() and not re.match(r"^(#{1,3})\s+|^\||^[-*] |^\d+\.\s+|^>|^-{3,}$", lines[index].strip()):
             paragraph.append(lines[index].strip())
             index += 1
         story.append(Paragraph(inline_pdf_text(" ".join(paragraph)), body))
-    SimpleDocTemplate(str(output), pagesize=A4, leftMargin=22 * mm, rightMargin=22 * mm, topMargin=20 * mm, bottomMargin=20 * mm).build(story)
+    document = SimpleDocTemplate(str(output), pagesize=A4, leftMargin=22 * mm, rightMargin=22 * mm, topMargin=20 * mm, bottomMargin=20 * mm)
+
+    def draw_page_number(canvas, doc):
+        canvas.saveState()
+        canvas.setFillColor(colors.HexColor("#9ca3af"))
+        canvas.setFont(font, 8)
+        canvas.drawCentredString(A4[0] / 2, 10 * mm, str(doc.page))
+        canvas.restoreState()
+
+    document.build(story, onFirstPage=draw_page_number, onLaterPages=draw_page_number)
+    render_directory.mkdir(parents=True, exist_ok=True)
+    pdf = pdfium.PdfDocument(str(output))
+    try:
+        page_count = len(pdf)
+        if page_count < 1:
+            fail("生成的 PDF 没有有效页面。")
+        for index in range(page_count):
+            page = pdf[index]
+            bitmap = page.render(scale=1.6)
+            try:
+                bitmap.to_pil().save(render_directory / f"page-{index + 1}.png", format="PNG")
+            finally:
+                bitmap.close()
+                page.close()
+    finally:
+        pdf.close()
+    return page_count, page_count
 
 
 def main() -> None:
-    if len(sys.argv) not in {3, 5} or (len(sys.argv) == 5 and sys.argv[3] != "--pdf"):
-        fail("用法：document-renderer.py 输入 JSON 输出 DOCX [--pdf 输出 PDF]")
+    if len(sys.argv) not in {3, 5, 7} or (len(sys.argv) >= 5 and sys.argv[3] != "--pdf") or (len(sys.argv) == 7 and sys.argv[5] != "--pdf-render-dir"):
+        fail("用法：document-renderer.py 输入 JSON 输出 DOCX [--pdf 输出 PDF [--pdf-render-dir 逐页预览目录]]")
     source = Path(sys.argv[1]).resolve()
     output = Path(sys.argv[2]).resolve()
-    pdf_output = Path(sys.argv[4]).resolve() if len(sys.argv) == 5 else None
+    pdf_output = Path(sys.argv[4]).resolve() if len(sys.argv) >= 5 else None
+    pdf_render_directory = Path(sys.argv[6]).resolve() if len(sys.argv) == 7 else None
     workdir = output.parent
     payload = json.loads(source.read_text(encoding="utf-8"))
     markdown = replace_chart_markers(payload["markdown"], payload.get("charts") or [], workdir)
@@ -278,7 +372,9 @@ def main() -> None:
     if not reference:
         apply_default_cjk_styles(output)
     if pdf_output:
-        render_pdf_from_markdown(markdown, workdir, pdf_output)
+        render_directory = pdf_render_directory or pdf_output.parent / f"{pdf_output.stem}-pages"
+        page_count, rendered_pages = render_pdf_from_markdown(markdown, workdir, pdf_output, render_directory)
+        print("DOCUMENT_RESULT " + json.dumps({"pageCount": page_count, "renderedPages": rendered_pages}))
 
 
 if __name__ == "__main__":

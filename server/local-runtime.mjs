@@ -744,16 +744,18 @@ function throwIfDocumentCancelled(signal) {
 async function waitForManagedDocumentComponents(dataDirectory, signal) {
   const pandocPath = path.resolve(process.env.PANDOC_PATH || path.join(dataDirectory, "pandoc", "bin", "pandoc"));
   const pythonPath = path.resolve(process.env.DOCUMENT_PYTHON_PATH || path.join(dataDirectory, "documents-venv", "bin", "python"));
+  const readyMarkerPath = path.join(dataDirectory, "documents-ready-v2");
   const deadline = Date.now() + DOCUMENT_COMPONENT_WAIT_MS;
   while (Date.now() < deadline) {
     throwIfDocumentCancelled(signal);
-    const [pandoc, python] = await Promise.all([
+    const [pandoc, python, readyMarker] = await Promise.all([
       realpath(pandocPath).catch(() => null),
       realpath(pythonPath).catch(() => null),
+      realpath(readyMarkerPath).catch(() => null),
     ]);
     // The Python virtualenv entrypoint is usually a symlink. Probe its realpath,
     // but retain the entrypoint so Python keeps the virtualenv site-packages.
-    if (pandoc && python) return { pandoc: pandocPath, python: pythonPath };
+    if (pandoc && python && readyMarker) return { pandoc: pandocPath, python: pythonPath };
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw documentError("文档组件尚未初始化完成。请稍后重试；不要在当前项目目录运行 npm、Pandoc 或 Python。", 503);
@@ -885,22 +887,32 @@ async function validateRenderedPdf(pdfPath, temporaryDirectory) {
   return { pageCount, renderedPages: renderedPages.length };
 }
 
-async function validateCjkPdfFallback(pdfPath, temporaryDirectory) {
-  if (process.platform !== "darwin") return validateRenderedPdf(pdfPath, temporaryDirectory);
-  const pdfInfo = process.env.DOCUMENT_PDFINFO_PATH || "pdfinfo";
-  const info = await execFileAsync(pdfInfo, [pdfPath], { maxBuffer: 64 * 1024 }).catch((error) => {
-    throw documentError(`无法读取生成的 PDF：${safeProcessMessage(error, "pdfinfo 执行失败。")}`, 500);
-  });
-  const pageCount = Number(/^Pages:\s+(\d+)$/m.exec(info.stdout)?.[1] ?? 0);
-  if (!Number.isInteger(pageCount) || pageCount < 1) throw documentError("生成的 PDF 没有有效页面。", 500);
-  const renderDirectory = path.join(temporaryDirectory, `quicklook-pages-${randomUUID()}`);
-  await mkdir(renderDirectory, { recursive: true, mode: 0o700 });
-  await execFileAsync("/usr/bin/qlmanage", ["-t", "-s", "1400", "-o", renderDirectory, pdfPath], { maxBuffer: 64 * 1024 }).catch((error) => {
-    throw documentError(`PDF 预览渲染校验失败：${safeProcessMessage(error, "qlmanage 执行失败。")}`, 500);
-  });
-  const renderedPages = (await readdir(renderDirectory)).filter((name) => name.endsWith(".png"));
-  if (renderedPages.length < 1) throw documentError("PDF 预览未生成图像。", 500);
-  return { pageCount, renderedPages: Math.min(pageCount, renderedPages.length) };
+async function validateDirectPdf(pdfPath, renderDirectory, rendererStdout) {
+  const pdf = await readFile(pdfPath).catch(() => null);
+  if (!pdf || pdf.length < 5 || pdf.subarray(0, 5).toString("utf8") !== "%PDF-") {
+    throw documentError("PDF 输出校验失败。", 500);
+  }
+  const resultLine = rendererStdout.split(/\r?\n/).find((line) => line.startsWith("DOCUMENT_RESULT "));
+  let metadata;
+  try {
+    metadata = JSON.parse(resultLine?.slice("DOCUMENT_RESULT ".length) ?? "null");
+  } catch {
+    metadata = null;
+  }
+  const pageCount = metadata?.pageCount;
+  const renderedPages = metadata?.renderedPages;
+  if (!Number.isInteger(pageCount) || pageCount < 1 || renderedPages !== pageCount) {
+    throw documentError("PDF 逐页渲染结果无效。", 500);
+  }
+  const names = (await readdir(renderDirectory)).filter((name) => /^page-\d+\.png$/.test(name));
+  if (names.length !== pageCount) throw documentError("PDF 渲染页数与文档页数不一致。", 500);
+  for (const name of names) {
+    const image = await readFile(path.join(renderDirectory, name));
+    if (image.length < 8 || image.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") {
+      throw documentError("PDF 页面预览校验失败。", 500);
+    }
+  }
+  return { pageCount, renderedPages };
 }
 
 async function generateDocumentArtifact(workspace, dataDirectory, payload, signal) {
@@ -917,28 +929,56 @@ async function generateDocumentArtifact(workspace, dataDirectory, payload, signa
     const inputPath = path.join(temporaryDirectory, "input.json");
     const docxPath = path.join(temporaryDirectory, "document.docx");
     const cjkPdfPath = path.join(temporaryDirectory, "document-cjk.pdf");
+    const cjkRenderDirectory = path.join(temporaryDirectory, "document-cjk-pages");
     await writeFile(inputPath, JSON.stringify({ markdown: request.markdown, charts: request.charts, referenceDocx }), { encoding: "utf8", mode: 0o600 });
     const documentComponents = await waitForManagedDocumentComponents(dataDirectory, signal);
     const python = await resolvePythonInterpreter({
       environment: { ...process.env, SKILL_PYTHON_PATH: documentComponents.python },
     });
+    let rendererStdout = "";
     try {
       const rendererArguments = [DOCUMENT_RENDERER_PATH, inputPath, docxPath];
-      if (request.format === "pdf" && !referenceDocx) rendererArguments.push("--pdf", cjkPdfPath);
-      await execFileAsync(python.executable, rendererArguments, {
+      if (request.format === "pdf" && !referenceDocx) rendererArguments.push("--pdf", cjkPdfPath, "--pdf-render-dir", cjkRenderDirectory);
+      const renderer = await execFileAsync(python.executable, rendererArguments, {
         cwd: temporaryDirectory,
         env: { ...process.env, PANDOC_PATH: documentComponents.pandoc },
         signal,
         maxBuffer: 256 * 1024,
       });
+      rendererStdout = renderer.stdout;
     } catch (error) {
       throwIfDocumentCancelled(signal);
       throw documentError(`DOCX 生成失败：${safeProcessMessage(error, "文档渲染器执行失败。")}`, 500);
     }
     const docx = await readFile(docxPath);
     if (docx.length < 4 || docx.subarray(0, 2).toString("utf8") !== "PK") throw documentError("DOCX 输出校验失败。", 500);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    if (request.format === "docx") {
+      await copyFile(docxPath, outputPath);
+      const outputInfo = await stat(outputPath);
+      return {
+        path: path.relative(workspace.path, outputPath).split(path.sep).join("/"),
+        format: request.format,
+        size: outputInfo.size,
+        pageCount: 0,
+        renderedPages: 0,
+        verification: "structural",
+      };
+    }
+    if (!referenceDocx) {
+      const rendering = await validateDirectPdf(cjkPdfPath, cjkRenderDirectory, rendererStdout);
+      await copyFile(cjkPdfPath, outputPath);
+      const outputInfo = await stat(outputPath);
+      return {
+        path: path.relative(workspace.path, outputPath).split(path.sep).join("/"),
+        format: request.format,
+        size: outputInfo.size,
+        ...rendering,
+        verification: "rendered",
+      };
+    }
     const pdfPath = path.join(temporaryDirectory, "document.pdf");
-    const soffice = process.env.DOCUMENT_SOFFICE_PATH || "soffice";
+    const soffice = process.env.DOCUMENT_SOFFICE_PATH || (process.platform === "darwin" ? "/Applications/LibreOffice.app/Contents/MacOS/soffice" : "soffice");
     try {
       await execFileAsync(soffice, ["--headless", `-env:UserInstallation=file://${path.join(temporaryDirectory, "lo-profile")}`, "--convert-to", "pdf:writer_pdf_Export", "--outdir", temporaryDirectory, docxPath], {
         cwd: temporaryDirectory,
@@ -953,16 +993,10 @@ async function generateDocumentArtifact(workspace, dataDirectory, payload, signa
     throwIfDocumentCancelled(signal);
     const pdf = await readFile(pdfPath).catch(() => null);
     if (!pdf || pdf.length < 5 || pdf.subarray(0, 5).toString("utf8") !== "%PDF-") throw documentError("PDF 输出校验失败。", 500);
-    const libreOfficeRendering = await validateRenderedPdf(pdfPath, temporaryDirectory);
-    const cjkPdf = await readFile(cjkPdfPath).catch(() => null);
-    const useCjkPdfFallback = request.format === "pdf" && !referenceDocx && cjkPdf?.subarray(0, 5).toString("utf8") === "%PDF-";
-    const rendering = useCjkPdfFallback
-      ? await validateCjkPdfFallback(cjkPdfPath, temporaryDirectory)
-      : libreOfficeRendering;
-    await mkdir(path.dirname(outputPath), { recursive: true });
-    await copyFile(request.format === "docx" ? docxPath : useCjkPdfFallback ? cjkPdfPath : pdfPath, outputPath);
+    const rendering = await validateRenderedPdf(pdfPath, temporaryDirectory);
+    await copyFile(pdfPath, outputPath);
     const outputInfo = await stat(outputPath);
-    return { path: path.relative(workspace.path, outputPath).split(path.sep).join("/"), format: request.format, size: outputInfo.size, ...rendering };
+    return { path: path.relative(workspace.path, outputPath).split(path.sep).join("/"), format: request.format, size: outputInfo.size, ...rendering, verification: "rendered" };
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
