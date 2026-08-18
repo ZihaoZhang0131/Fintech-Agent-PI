@@ -2068,17 +2068,6 @@ button.workspace-file-row:hover,
   color: var(--forest);
 }
 
-.sidebar-capability-nav button span {
-  flex: 1;
-}
-
-.sidebar-capability-nav button small {
-  padding: 2px 5px;
-  border-radius: 999px;
-  background: rgba(63, 63, 63, 0.08);
-  color: #7d7d7d;
-  font-size: 8px;
-}
 
 .user-usage-page {
   min-width: 0;
@@ -2231,37 +2220,42 @@ button.workspace-file-row:hover,
 }
 
 .agent-page { min-height: 100%; background: var(--background); }
-.agent-page-body { max-width: 1040px; margin: 0 auto; padding: 28px 32px 48px; }
-.agent-page-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
-.agent-page-toolbar > button { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--foreground); cursor: pointer; }
-.agent-page-toolbar > div { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 750; }
-.agent-page-intro { max-width: 650px; margin: 0 0 20px; color: var(--muted-foreground); font-size: 12px; line-height: 1.7; }
-.agent-prompt-field { display: grid; gap: 6px; }
-.agent-main-prompt { max-width: 760px; margin: 0 0 20px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
-.agent-prompt-field > span { color: var(--muted-foreground); font-size: 10px; font-weight: 750; }
-.agent-prompt-field textarea { width: 100%; min-height: 112px; resize: vertical; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--background); color: var(--foreground); font: inherit; font-size: 12px; line-height: 1.55; }
-.agent-prompt-field small { color: var(--muted-foreground); font-size: 10px; }
-.agent-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.agent-card { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 11px; background: var(--card); }
-.agent-card.disabled { opacity: .66; }
-.agent-card-heading { display: flex; gap: 10px; }
-.agent-card-heading > svg { flex: none; color: var(--forest); }
-.agent-card h2 { margin: 0 0 4px; font-size: 14px; }
-.agent-card p { margin: 0; color: var(--muted-foreground); font-size: 11px; line-height: 1.6; }
-.agent-card-meta { display: grid; gap: 6px; color: var(--muted-foreground); font-size: 10px; }
-.agent-card-meta span { display: flex; align-items: center; gap: 5px; }
-.agent-card footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.agent-card footer > button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--forest); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.agent-page-body { width: min(760px, 100%); margin: 0 auto; padding: 32px 36px 56px; }
+.agent-page-heading { display: flex; align-items: center; gap: 8px; margin: 0 0 28px; }
+.agent-page-heading h1 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
+.agent-page-heading > svg, .agent-page-heading > span > svg { color: var(--forest); }
+.agent-page-heading > span { display: inline-flex; align-items: center; gap: 8px; }
+.subagent-page-heading { justify-content: space-between; }
+.agent-prompt-field { display: grid; gap: 8px; }
+.agent-prompt-field > span, .agent-text-field > span, .agent-model-select > span, .agent-capability-group legend { color: var(--muted-foreground); font-size: 10px; font-weight: 750; }
+.agent-prompt-field textarea { width: 100%; min-height: 360px; resize: vertical; padding: 12px 0; border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); border-radius: 0; outline: 0; background: transparent; color: var(--foreground); font: inherit; font-size: 13px; line-height: 1.7; }
+.subagent-add { display: inline-flex; align-items: center; gap: 4px; padding: 4px 0; border: 0; background: transparent; color: var(--forest); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.subagent-list { border-top: 1px solid var(--line); }
+.subagent-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 14px; padding: 15px 0; border-bottom: 1px solid var(--line); }
+.subagent-select { display: grid; min-width: 0; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.subagent-select strong { font-size: 13px; font-weight: 700; }
+.subagent-select span, .subagent-select small, .subagent-empty { overflow: hidden; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-select small { font-size: 10px; }
+.subagent-delete { display: grid; place-items: center; padding: 4px; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.subagent-enabled { position: relative; display: grid; width: 28px; height: 16px; }
+.subagent-enabled input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+.subagent-enabled i { width: 28px; height: 16px; border-radius: 999px; background: var(--line); transition: background .15s ease; }
+.subagent-enabled i::after { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--card); content: ""; transition: transform .15s ease; }
+.subagent-enabled input:checked + i { background: var(--forest); }
+.subagent-enabled input:checked + i::after { transform: translateX(12px); }
+.subagent-empty { margin: 0; padding: 18px 0; border-top: 1px solid var(--line); }
 .agent-dialog-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(25, 25, 25, .34); }
 .agent-dialog { width: min(620px, 100%); max-height: min(720px, calc(100vh - 36px)); overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); box-shadow: 0 20px 64px rgba(0,0,0,.18); }
-.agent-dialog > header { display: flex; align-items: start; justify-content: space-between; padding: 17px 18px 14px; border-bottom: 1px solid var(--line); }
-.agent-dialog header span { color: var(--muted-foreground); font-size: 9px; letter-spacing: .08em; }
-.agent-dialog h2 { margin: 4px 0 0; font-size: 16px; }
+.agent-dialog > header { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--line); }
+.agent-dialog h2 { margin: 0; font-size: 14px; }
 .agent-dialog header button { border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
 .agent-dialog-content { display: grid; gap: 16px; padding: 18px; }
 .agent-dialog-content > p { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.6; }
+.agent-text-field { display: grid; gap: 6px; }
+.agent-text-field > span { color: var(--muted-foreground); font-size: 10px; font-weight: 750; }
+.agent-text-field input, .agent-text-field textarea { width: 100%; padding: 8px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--background); color: var(--foreground); font: inherit; font-size: 12px; line-height: 1.55; }
+.agent-text-field textarea { resize: vertical; }
 .agent-model-select { position: relative; display: grid; gap: 6px; }
-.agent-model-select > span, .agent-capability-group legend { color: var(--muted-foreground); font-size: 10px; font-weight: 750; }
 .agent-model-select select { width: 100%; padding: 8px 26px 8px 9px; border: 1px solid var(--line); border-radius: 7px; appearance: none; background: var(--background); color: var(--foreground); font: inherit; font-size: 12px; }
 .agent-model-select svg { position: absolute; right: 8px; bottom: 9px; pointer-events: none; }
 .agent-capability-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
@@ -2269,7 +2263,7 @@ button.workspace-file-row:hover,
 .agent-capability-group label { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 11px; }
 .agent-capability-group label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-capability-group p { grid-column: 1 / -1; margin: 0; color: var(--muted-foreground); font-size: 11px; }
-@media (max-width: 640px) { .agent-page-body { padding: 20px 16px; } .agent-card-grid { grid-template-columns: 1fr; } .agent-capability-group { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .agent-page-body { padding: 24px 18px; } .agent-capability-group { grid-template-columns: 1fr; } }
 
 .model-page-body {
   width: min(930px, 100%);

@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type, type TSchema, type TUnsafe } from "typebox";
-import type { AgentModelOverride, AgentRoleId } from "@/lib/agent-profiles";
+import type { AgentModelOverride, SubAgentId } from "@/lib/agent-profiles";
 
 const MAX_DELEGATIONS_PER_TURN = 2;
 
@@ -12,7 +12,7 @@ export type SubAgentRunResult = {
 
 export type SubAgentDetails = {
   kind: "subagent";
-  agentId: Exclude<AgentRoleId, "main">;
+  agentId: SubAgentId;
   agentLabel: string;
   model: AgentModelOverride;
   task: string;
@@ -20,9 +20,9 @@ export type SubAgentDetails = {
 };
 
 export function createDelegateAgentTool(options: {
-  agents: Array<{ id: Exclude<AgentRoleId, "main">; label: string }>;
+  agents: Array<{ id: SubAgentId; label: string }>;
   run: (
-    agentId: Exclude<AgentRoleId, "main">,
+    agentId: SubAgentId,
     task: string,
     signal?: AbortSignal,
     parentToolCallId?: string,
@@ -61,7 +61,7 @@ export function createDelegateAgentTool(options: {
     execute: async (toolCallId, raw, signal) => {
       const agentId = typeof raw.agentId === "string" ? raw.agentId : "";
       const task = typeof raw.task === "string" ? raw.task.trim() : "";
-      const selectedAgentId = agentId as Exclude<AgentRoleId, "main">;
+      const selectedAgentId = agentId as SubAgentId;
       if (!allowedIds.has(selectedAgentId) || !task) {
         throw new Error("只能委派给本轮已启用的专业 Agent，并提供具体任务。");
       }
@@ -81,7 +81,7 @@ export function createDelegateAgentTool(options: {
         }],
         details: {
           kind: "subagent" as const,
-          agentId: agentId as Exclude<AgentRoleId, "main">,
+          agentId: agentId as SubAgentId,
           agentLabel,
           model: result.model,
           task,

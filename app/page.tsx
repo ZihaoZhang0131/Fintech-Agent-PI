@@ -49,7 +49,7 @@ import {
 } from "react";
 import { CapabilityLibrary, type SkillResourcePreview } from "@/components/capability-library";
 import { CODE_EXTENSIONS, FileSystemTree, fileTreeIcon } from "@/components/file-system-tree";
-import { AgentLibrary } from "@/components/agent-library";
+import { AgentPromptPage, SubAgentLibrary } from "@/components/agent-library";
 import { MarkdownMessage } from "@/components/chat-markdown";
 import { CodePreview } from "@/components/code-preview";
 import { ModelLibrary, type ModelProviderItem } from "@/components/model-library";
@@ -59,12 +59,14 @@ import { DatabasePage } from "@/components/database-page";
 import type { CapabilityCatalog, CapabilityItem, CapabilityKind } from "@/lib/capability-types";
 import {
   cloneProjectAgentConfig,
+  createCustomSubAgent,
   createDefaultProjectAgentConfig,
   createProjectAgentConfigFromLegacy,
   upgradeLegacyDefaultSkillSelection,
   upgradeLegacyDefaultToolSelection,
   type AgentProfile,
   type AgentRoleId,
+  type CustomSubAgent,
   type ProjectAgentConfig,
 } from "@/lib/agent-profiles";
 import { createDefaultAgentPromptConfig, type AgentPromptConfig } from "@/lib/agent-prompts";
@@ -186,7 +188,7 @@ const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
 const AGENT_PROFILES_KEY = "pi-research-agent:agent-profiles:v2";
 const AGENT_PROMPTS_KEY = "pi-research-agent:agent-prompts:v1";
 
-type AppView = "workspace" | CapabilityKind | "model" | "agent" | "user" | "database";
+type AppView = "workspace" | CapabilityKind | "model" | "agent" | "subagent" | "user" | "database";
 
 const SUGGESTIONS = [
   {
@@ -284,7 +286,7 @@ function parseProjectAgentConfigs(value: string | null): Record<string, ProjectA
       Object.entries(parsed).flatMap(([projectId, config]) => {
         if (!config || typeof config !== "object" || !config.profiles || typeof config.profiles !== "object") return [];
         const base = createDefaultProjectAgentConfig();
-        for (const id of ["main", "market-data", "web-evidence", "financial-analysis"] as AgentRoleId[]) {
+        for (const id of ["main"] as AgentRoleId[]) {
           const profile = config.profiles[id];
           if (!profile || typeof profile !== "object") continue;
           base.profiles[id] = {
@@ -298,6 +300,21 @@ function parseProjectAgentConfigs(value: string | null): Record<string, ProjectA
               : [],
             enabledMcps: Array.isArray(profile.enabledMcps) ? profile.enabledMcps.filter((name): name is string => typeof name === "string") : [],
           };
+        }
+        if (Array.isArray(config.customSubAgents)) {
+          base.customSubAgents = config.customSubAgents.flatMap((agent) => {
+            if (!agent || typeof agent !== "object" || typeof agent.id !== "string" || typeof agent.label !== "string" || typeof agent.description !== "string") return [];
+            return [{
+              id: agent.id as CustomSubAgent["id"],
+              label: agent.label,
+              description: agent.description,
+              enabled: agent.enabled === true,
+              ...(agent.model ? { model: agent.model } : {}),
+              enabledSkills: Array.isArray(agent.enabledSkills) ? agent.enabledSkills.filter((name): name is string => typeof name === "string") : [],
+              enabledTools: Array.isArray(agent.enabledTools) ? agent.enabledTools.filter((name): name is string => typeof name === "string") : [],
+              enabledMcps: Array.isArray(agent.enabledMcps) ? agent.enabledMcps.filter((name): name is string => typeof name === "string") : [],
+            }];
+          });
         }
         if (config.mainModel) base.mainModel = config.mainModel;
         return [[projectId, base] as const];
@@ -1213,9 +1230,45 @@ export default function Home() {
     });
   }
 
-  function updateAgentPrompt(id: AgentRoleId, prompt: string) {
+  function updateAgentPrompt(prompt: string) {
     if (isBusy) return;
-    setAgentPrompts((current) => ({ ...current, [id]: prompt }));
+    setAgentPrompts((current) => ({ ...current, main: prompt }));
+  }
+
+  function updateCustomSubAgent(agent: CustomSubAgent) {
+    if (!activeProjectId || isBusy) return;
+    setAgentConfigsByProject((current) => {
+      const config = current[activeProjectId] ?? createDefaultProjectAgentConfig();
+      return {
+        ...current,
+        [activeProjectId]: {
+          ...config,
+          customSubAgents: config.customSubAgents.map((item) => item.id === agent.id ? agent : item),
+        },
+      };
+    });
+  }
+
+  function createCustomSubAgentForProject() {
+    const agent = createCustomSubAgent({
+      id: `custom-${makeId()}`,
+      label: "新子 Agent",
+      description: "请填写此子 Agent 的专业职责和预期产出。",
+    });
+    if (!activeProjectId || isBusy) return agent;
+    setAgentConfigsByProject((current) => {
+      const config = current[activeProjectId] ?? createDefaultProjectAgentConfig();
+      return { ...current, [activeProjectId]: { ...config, customSubAgents: [...config.customSubAgents, agent] } };
+    });
+    return agent;
+  }
+
+  function deleteCustomSubAgent(id: CustomSubAgent["id"]) {
+    if (!activeProjectId || isBusy) return;
+    setAgentConfigsByProject((current) => {
+      const config = current[activeProjectId] ?? createDefaultProjectAgentConfig();
+      return { ...current, [activeProjectId]: { ...config, customSubAgents: config.customSubAgents.filter((agent) => agent.id !== id) } };
+    });
   }
 
   function toggleBashApprovalMode() {
@@ -1881,7 +1934,14 @@ export default function Home() {
           >
             <Bot size={15} />
             <span>Agent</span>
-            <small>{Object.entries(activeAgentConfig.profiles).filter(([id, profile]) => id !== "main" && profile.enabled).length}/3</small>
+          </button>
+          <button
+            className={activeView === "subagent" ? "active" : ""}
+            type="button"
+            onClick={() => setActiveView("subagent")}
+          >
+            <Bot size={15} />
+            <span>SubAgent</span>
           </button>
           <button
             className={activeView === "skill" ? "active" : ""}
@@ -1890,7 +1950,6 @@ export default function Home() {
           >
             <BookOpenCheck size={15} />
             <span>技能</span>
-            <small>{enabledSkills.length}/{capabilityCatalog.skills.length}</small>
           </button>
           <button
             className={activeView === "tool" ? "active" : ""}
@@ -1899,7 +1958,6 @@ export default function Home() {
           >
             <Wrench size={15} />
             <span>工具</span>
-            <small>{enabledTools.length}/{capabilityCatalog.tools.length}</small>
           </button>
           <button
             className={activeView === "mcp" ? "active" : ""}
@@ -1908,7 +1966,6 @@ export default function Home() {
           >
             <Plug size={15} />
             <span>MCP</span>
-            <small>{enabledMcps.length}/{capabilityCatalog.mcps.length}</small>
           </button>
           <button
             className={activeView === "database" ? "active" : ""}
@@ -1925,7 +1982,6 @@ export default function Home() {
           >
             <Cpu size={15} />
             <span>模型</span>
-            <small>{availableModels.length}</small>
           </button>
           <button
             className={activeView === "user" ? "active" : ""}
@@ -2454,17 +2510,18 @@ export default function Home() {
       )}
         </>
       ) : activeView === "agent" ? (
-        <AgentLibrary
+        <AgentPromptPage
+          value={agentPrompts.main}
+          onChange={updateAgentPrompt}
+        />
+      ) : activeView === "subagent" ? (
+        <SubAgentLibrary
           catalog={capabilityCatalog}
-          config={{
-            ...activeAgentConfig,
-            ...(selectedModel ? { mainModel: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } } : {}),
-          }}
-          prompts={agentPrompts}
+          config={activeAgentConfig}
           models={availableModels}
-          onUpdate={updateAgentProfile}
-          onPromptUpdate={updateAgentPrompt}
-          onClose={() => setActiveView("workspace")}
+          onCustomUpdate={updateCustomSubAgent}
+          onCreateCustom={createCustomSubAgentForProject}
+          onDeleteCustom={deleteCustomSubAgent}
         />
       ) : activeView === "model" ? (
         <ModelLibrary

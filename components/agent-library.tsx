@@ -1,21 +1,19 @@
 "use client";
 
-import { ArrowLeft, Bot, ChevronDown, Cpu, Settings2, X } from "lucide-react";
+import { Bot, ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { AgentProfile, AgentRoleId, ProjectAgentConfig } from "@/lib/agent-profiles";
-import type { AgentPromptConfig } from "@/lib/agent-prompts";
+import type { AgentProfile, CustomSubAgent, ProjectAgentConfig, SubAgentId } from "@/lib/agent-profiles";
 import type { CapabilityCatalog } from "@/lib/capability-types";
 
 type ModelOption = { providerId: string; providerLabel: string; modelId: string; label: string };
 
-type AgentLibraryProps = {
+type SubAgentLibraryProps = {
   catalog: CapabilityCatalog;
   config: ProjectAgentConfig;
-  prompts: AgentPromptConfig;
   models: ModelOption[];
-  onUpdate: (id: AgentRoleId, profile: AgentProfile) => void;
-  onPromptUpdate: (id: AgentRoleId, prompt: string) => void;
-  onClose: () => void;
+  onCustomUpdate: (agent: CustomSubAgent) => void;
+  onCreateCustom: () => CustomSubAgent;
+  onDeleteCustom: (id: CustomSubAgent["id"]) => void;
 };
 
 function modelKey(model: { providerId: string; modelId: string }) {
@@ -26,14 +24,30 @@ function count(profile: AgentProfile) {
   return profile.enabledSkills.length + profile.enabledTools.length + profile.enabledMcps.length;
 }
 
-export function AgentLibrary({ catalog, config, prompts, models, onUpdate, onPromptUpdate, onClose }: AgentLibraryProps) {
-  const [selectedId, setSelectedId] = useState<AgentRoleId | null>(null);
-  const childAgents = useMemo(() => catalog.agents.filter((agent) => !agent.isMain), [catalog.agents]);
-  const selected = useMemo(
-    () => childAgents.find((agent) => agent.id === selectedId) ?? null,
-    [childAgents, selectedId],
+export function AgentPromptPage({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <section className="agent-page">
+      <div className="agent-page-body agent-prompt-page">
+        <header className="agent-page-heading"><Bot size={18} /><h1>Agent</h1></header>
+        <label className="agent-prompt-field">
+          <span>系统提示词</span>
+          <textarea value={value} maxLength={12_000} rows={16} onChange={(event) => onChange(event.target.value)} />
+        </label>
+      </div>
+    </section>
   );
-  const selectedProfile = selected ? config.profiles[selected.id] : null;
+}
+
+export function SubAgentLibrary({ catalog, config, models, onCustomUpdate, onCreateCustom, onDeleteCustom }: SubAgentLibraryProps) {
+  const [selectedId, setSelectedId] = useState<SubAgentId | null>(null);
+  const selected = useMemo(
+    () => config.customSubAgents.find((agent) => agent.id === selectedId) ?? null,
+    [config.customSubAgents, selectedId],
+  );
+
+  function createAgent() {
+    setSelectedId(onCreateCustom().id);
+  }
 
   function updateList(profile: AgentProfile, field: "enabledSkills" | "enabledTools" | "enabledMcps", name: string) {
     const current = profile[field];
@@ -42,58 +56,51 @@ export function AgentLibrary({ catalog, config, prompts, models, onUpdate, onPro
 
   return (
     <section className="agent-page">
-      <div className="agent-page-body">
-        <div className="agent-page-toolbar">
-          <button type="button" onClick={onClose} aria-label="返回项目" title="返回项目"><ArrowLeft size={16} /></button>
-          <div><Bot size={17} /><span>Agent 配置</span></div>
-        </div>
-        <p className="agent-page-intro">配置主 Agent 与可委派专业角色。系统提示词全局生效；模型、技能、工具和 MCP 仍按项目保存。每个子 Agent 的能力默认关闭，按需启用。</p>
-        <SystemPromptField
-          className="agent-main-prompt"
-          label="主 Agent 系统提示词"
-          value={prompts.main}
-          onChange={(systemPrompt) => onPromptUpdate("main", systemPrompt)}
-        />
-        <div className="agent-card-grid">
-          {childAgents.map((agent) => {
-            const profile = config.profiles[agent.id];
-            const override = profile.model;
-            const effective = override ?? config.mainModel;
-            return (
-              <article className={`agent-card ${profile.enabled ? "enabled" : "disabled"}`} key={agent.id}>
-                <div className="agent-card-heading"><Bot size={17} /><div><h2>{agent.label}</h2><p>{agent.description}</p></div></div>
-                <div className="agent-card-meta"><span><Cpu size={12} />{effective ? models.find((model) => modelKey(model) === modelKey(effective))?.label ?? effective.modelId : "未选择模型"}</span><span>{count(profile)} 项能力</span></div>
-                <footer>
-                  <button type="button" onClick={() => setSelectedId(agent.id)}><Settings2 size={14} />配置</button>
-                  <label className="capability-toggle"><span>{profile.enabled ? "已启用" : "已停用"}</span><input type="checkbox" checked={profile.enabled} onChange={() => onUpdate(agent.id, { ...profile, enabled: !profile.enabled })} aria-label={`${profile.enabled ? "停用" : "启用"}${agent.label}`} /><i aria-hidden="true" /></label>
-                </footer>
-              </article>
-            );
-          })}
-        </div>
+      <div className="agent-page-body subagent-page">
+        <header className="agent-page-heading subagent-page-heading">
+          <span><Bot size={18} /><h1>SubAgent</h1></span>
+          <button type="button" className="subagent-add" onClick={createAgent}><Plus size={16} />新增</button>
+        </header>
+        {config.customSubAgents.length ? (
+          <div className="subagent-list">
+            {config.customSubAgents.map((agent) => {
+              const effectiveModel = agent.model ?? config.mainModel;
+              const model = effectiveModel ? models.find((item) => modelKey(item) === modelKey(effectiveModel)) : undefined;
+              return (
+                <article className="subagent-row" key={agent.id}>
+                  <button type="button" className="subagent-select" onClick={() => setSelectedId(agent.id)}>
+                    <strong>{agent.label}</strong>
+                    <span>{agent.description || "未填写职责"}</span>
+                    <small>{model?.label ?? "跟随主 Agent"} · {count(agent)} 项能力</small>
+                  </button>
+                  <label className="subagent-enabled">
+                    <input type="checkbox" checked={agent.enabled} onChange={() => onCustomUpdate({ ...agent, enabled: !agent.enabled })} aria-label={`${agent.enabled ? "停用" : "启用"}${agent.label}`} />
+                    <i aria-hidden="true" />
+                  </label>
+                  <button type="button" className="subagent-delete" onClick={() => onDeleteCustom(agent.id)} aria-label={`删除${agent.label}`} title="删除"><Trash2 size={15} /></button>
+                </article>
+              );
+            })}
+          </div>
+        ) : <p className="subagent-empty">暂无 SubAgent</p>}
       </div>
-      {selected && selectedProfile && (
+      {selected && (
         <div className="agent-dialog-backdrop" role="presentation" onMouseDown={() => setSelectedId(null)}>
           <section className="agent-dialog" role="dialog" aria-modal="true" aria-labelledby="agent-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
-            <header><div><span>AGENT PROFILE</span><h2 id="agent-dialog-title">{selected.label}</h2></div><button type="button" onClick={() => setSelectedId(null)} aria-label="关闭配置"><X size={18} /></button></header>
+            <header><h2 id="agent-dialog-title">配置 SubAgent</h2><button type="button" onClick={() => setSelectedId(null)} aria-label="关闭配置"><X size={18} /></button></header>
             <div className="agent-dialog-content">
-              <p>{selected.description}</p>
-              <SystemPromptField
-                label="系统提示词"
-                value={prompts[selected.id]}
-                onChange={(systemPrompt) => onPromptUpdate(selected.id, systemPrompt)}
-              />
-              <label className="agent-model-select"><span>模型</span><select value={selectedProfile.model ? modelKey(selectedProfile.model) : "inherit"} onChange={(event) => {
-                const value = event.target.value;
-                const model = models.find((item) => modelKey(item) === value);
-                onUpdate(selected.id, { ...selectedProfile, ...(model ? { model: { providerId: model.providerId, modelId: model.modelId } } : { model: undefined }) });
+              <label className="agent-text-field"><span>名称</span><input value={selected.label} maxLength={60} onChange={(event) => onCustomUpdate({ ...selected, label: event.target.value })} /></label>
+              <label className="agent-text-field"><span>职责</span><textarea value={selected.description} maxLength={280} rows={3} onChange={(event) => onCustomUpdate({ ...selected, description: event.target.value })} /></label>
+              <label className="agent-model-select"><span>模型</span><select value={selected.model ? modelKey(selected.model) : "inherit"} onChange={(event) => {
+                const model = models.find((item) => modelKey(item) === event.target.value);
+                onCustomUpdate({ ...selected, ...(model ? { model: { providerId: model.providerId, modelId: model.modelId } } : { model: undefined }) });
               }}>
                 <option value="inherit">跟随主 Agent</option>
                 {models.map((model) => <option value={modelKey(model)} key={modelKey(model)}>{model.providerLabel} · {model.label}</option>)}
               </select><ChevronDown size={13} /></label>
-              <CapabilityGroup title="Skills" names={selected.maxSkills} enabled={selectedProfile.enabledSkills} onToggle={(name) => onUpdate(selected.id, updateList(selectedProfile, "enabledSkills", name))} />
-              <CapabilityGroup title="工具" names={selected.maxTools} enabled={selectedProfile.enabledTools} onToggle={(name) => onUpdate(selected.id, updateList(selectedProfile, "enabledTools", name))} />
-              <CapabilityGroup title="MCP" names={selected.maxMcps} enabled={selectedProfile.enabledMcps} onToggle={(name) => onUpdate(selected.id, updateList(selectedProfile, "enabledMcps", name))} />
+              <CapabilityGroup title="Skills" names={catalog.skills.map((item) => item.name)} enabled={selected.enabledSkills} onToggle={(name) => onCustomUpdate({ ...selected, ...updateList(selected, "enabledSkills", name) })} />
+              <CapabilityGroup title="工具" names={catalog.tools.map((item) => item.name)} enabled={selected.enabledTools} onToggle={(name) => onCustomUpdate({ ...selected, ...updateList(selected, "enabledTools", name) })} />
+              <CapabilityGroup title="MCP" names={catalog.mcps.map((item) => item.name)} enabled={selected.enabledMcps} onToggle={(name) => onCustomUpdate({ ...selected, ...updateList(selected, "enabledMcps", name) })} />
             </div>
           </section>
         </div>
@@ -102,14 +109,6 @@ export function AgentLibrary({ catalog, config, prompts, models, onUpdate, onPro
   );
 }
 
-function SystemPromptField({ className, label, value, onChange }: { className?: string; label: string; value: string; onChange: (value: string) => void }) {
-  return <label className={`agent-prompt-field${className ? ` ${className}` : ""}`}>
-    <span>{label}</span>
-    <textarea value={value} maxLength={12_000} rows={7} onChange={(event) => onChange(event.target.value)} />
-    <small>全局保存，并会在下一轮对话中对所有项目生效。</small>
-  </label>;
-}
-
 function CapabilityGroup({ title, names, enabled, onToggle }: { title: string; names: string[]; enabled: string[]; onToggle: (name: string) => void }) {
-  return <fieldset className="agent-capability-group"><legend>{title}</legend>{names.length ? names.map((name) => <label key={name}><input type="checkbox" checked={enabled.includes(name)} onChange={() => onToggle(name)} /><span>{name}</span></label>) : <p>此角色不允许使用{title}。</p>}</fieldset>;
+  return <fieldset className="agent-capability-group"><legend>{title}</legend>{names.length ? names.map((name) => <label key={name}><input type="checkbox" checked={enabled.includes(name)} onChange={() => onToggle(name)} /><span>{name}</span></label>) : <p>暂无可用{title}</p>}</fieldset>;
 }

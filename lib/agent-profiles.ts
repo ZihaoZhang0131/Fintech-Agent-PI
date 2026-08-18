@@ -1,6 +1,10 @@
-export const AGENT_ROLE_IDS = ["main", "market-data", "web-evidence", "financial-analysis"] as const;
+/** The only built-in role is the main Agent. Sub Agents are user-created. */
+export const AGENT_ROLE_IDS = ["main"] as const;
 
 export type AgentRoleId = (typeof AGENT_ROLE_IDS)[number];
+
+export type CustomSubAgentId = `custom-${string}`;
+export type SubAgentId = CustomSubAgentId;
 
 export type AgentModelOverride = {
   providerId: string;
@@ -16,9 +20,16 @@ export type AgentProfile = {
   enabledMcps: string[];
 };
 
+export type CustomSubAgent = AgentProfile & {
+  id: CustomSubAgentId;
+  label: string;
+  description: string;
+};
+
 export type ProjectAgentConfig = {
   mainModel?: AgentModelOverride;
   profiles: Record<AgentRoleId, AgentProfile>;
+  customSubAgents: CustomSubAgent[];
 };
 
 const LEGACY_DEFAULT_MAIN_SKILL_NAMES = [
@@ -109,24 +120,6 @@ const DEFAULT_PROFILES: Record<AgentRoleId, AgentProfile> = {
     // New projects delegate structured market data instead of loading MCP tools into the parent.
     enabledMcps: [],
   },
-  "market-data": {
-    enabled: true,
-    enabledSkills: [],
-    enabledTools: [],
-    enabledMcps: [],
-  },
-  "web-evidence": {
-    enabled: true,
-    enabledSkills: [],
-    enabledTools: [],
-    enabledMcps: [],
-  },
-  "financial-analysis": {
-    enabled: true,
-    enabledSkills: [],
-    enabledTools: [],
-    enabledMcps: [],
-  },
 };
 
 function copyProfile(profile: AgentProfile): AgentProfile {
@@ -144,6 +137,7 @@ export function createDefaultProjectAgentConfig(): ProjectAgentConfig {
     profiles: Object.fromEntries(
       AGENT_ROLE_IDS.map((id) => [id, copyProfile(DEFAULT_PROFILES[id])]),
     ) as ProjectAgentConfig["profiles"],
+    customSubAgents: [],
   };
 }
 
@@ -169,5 +163,27 @@ export function cloneProjectAgentConfig(config: ProjectAgentConfig): ProjectAgen
     profiles: Object.fromEntries(
       AGENT_ROLE_IDS.map((id) => [id, copyProfile(config.profiles[id])]),
     ) as ProjectAgentConfig["profiles"],
+    customSubAgents: (config.customSubAgents ?? []).map((agent) => ({
+      ...copyProfile(agent),
+      id: agent.id,
+      label: agent.label,
+      description: agent.description,
+    })),
+  };
+}
+
+export function createCustomSubAgent(input: {
+  id: CustomSubAgentId;
+  label: string;
+  description: string;
+}): CustomSubAgent {
+  return {
+    id: input.id,
+    label: input.label,
+    description: input.description,
+    enabled: true,
+    enabledSkills: [],
+    enabledTools: [],
+    enabledMcps: [],
   };
 }

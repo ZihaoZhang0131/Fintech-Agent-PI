@@ -2,8 +2,8 @@ import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-age
 import { type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
 import { createConfiguredModels } from "@/server/model-registry";
 import { parseModelReference, resolveRuntimeModel } from "@/server/model-runtime";
-import { AGENT_ROLE_REGISTRY, isSubAgentRoleId, resolveGlobalAgentPrompts, resolveProjectAgentConfig } from "@/server/agent/agent-registry";
-import type { AgentRoleId } from "@/lib/agent-profiles";
+import { getConfiguredSubAgent, getConfiguredSubAgents, resolveGlobalAgentPrompts, resolveProjectAgentConfig } from "@/server/agent/agent-registry";
+import type { SubAgentId } from "@/lib/agent-profiles";
 import { formatSkillCatalog } from "@/server/agent/skills/catalog";
 import { loadEffectiveSkillRegistry, selectSkillRegistry } from "@/server/agent/skills/loader";
 import { createLoadSkillTool, createLoadedSkillTracker, type LoadSkillDetails } from "@/server/agent/tools/load-skill";
@@ -196,17 +196,17 @@ function getSubAgentDetails(value: unknown): SubAgentDetails | undefined {
 function getDelegatedAgentId(args: unknown) {
   if (!args || typeof args !== "object" || !("agentId" in args)) return undefined;
   const agentId = args.agentId;
-  return typeof agentId === "string" && isSubAgentRoleId(agentId) ? agentId : undefined;
+  return typeof agentId === "string" ? agentId : undefined;
 }
 
 function getToolLabel(
   toolName: string,
   labels?: Map<string, string>,
-  delegatedAgentId?: Exclude<AgentRoleId, "main">,
+  delegatedAgentLabel?: string,
 ) {
   if (toolName === "delegate_agent") {
-    return delegatedAgentId
-      ? `委派${AGENT_ROLE_REGISTRY[delegatedAgentId].label} Agent`
+    return delegatedAgentLabel
+      ? `委派${delegatedAgentLabel} Agent`
       : "委派 Agent";
   }
   if (labels?.has(toolName)) return labels.get(toolName)!;
@@ -311,13 +311,14 @@ export async function POST(request: Request) {
   }) => void) | undefined;
 
   async function runSubAgent(
-    agentId: Exclude<AgentRoleId, "main">,
+    agentId: SubAgentId,
     task: string,
     parentSignal?: AbortSignal,
     parentToolCallId?: string,
   ) {
-    const profile = agentConfig.profiles[agentId];
-    if (!profile.enabled || !isSubAgentRoleId(agentId)) throw new Error("该专业 Agent 本轮未启用。");
+    const configuredAgent = getConfiguredSubAgent(agentConfig, agentId);
+    if (!configuredAgent?.profile.enabled) throw new Error("该专业 Agent 本轮未启用。");
+    const profile = configuredAgent.profile;
     const reference = profile.model ?? modelReference;
     let childResolved;
     try {
@@ -362,7 +363,7 @@ export async function POST(request: Request) {
       ...createMcpAgentTools(childMcps),
     ];
     const childPrompt = [
-      agentPrompts[agentId],
+      `你是${configuredAgent.label}。${configuredAgent.description} 严格区分事实、推断和待验证事项；缺少证据时明确说明，不能编造数据或来源。`,
       `当前项目名称：${JSON.stringify(workspaceName)}。`,
       "你是被主 Agent 委派的专业研究员，只能使用本角色已配置的能力，不能再次委派 Agent，也不能假设自己看过主 Agent 的聊天记录。",
       "用简洁 Markdown 返回：1. 摘要；2. 事实和来源/数据日期；3. 风险、限制或待验证项。",
@@ -424,9 +425,9 @@ export async function POST(request: Request) {
     };
   }
 
-  const enabledSubAgents = (Object.keys(agentConfig.profiles) as AgentRoleId[])
-    .filter((id): id is Exclude<AgentRoleId, "main"> => id !== "main" && agentConfig.profiles[id].enabled)
-    .map((id) => ({ id, label: AGENT_ROLE_REGISTRY[id].label }));
+  const enabledSubAgents = getConfiguredSubAgents(agentConfig)
+    .filter((agent) => agent.profile.enabled)
+    .map(({ id, label }) => ({ id, label }));
   const delegateAgentTool = createDelegateAgentTool({ agents: enabledSubAgents, run: runSubAgent });
   const skillTracker = createLoadedSkillTracker();
   const agentTools: AgentTool[] = [
@@ -503,7 +504,7 @@ export async function POST(request: Request) {
   const encoder = new TextEncoder();
   const startedAt = Date.now();
   const toolStartedAt = new Map<string, number>();
-  const delegatedAgentIds = new Map<string, Exclude<AgentRoleId, "main">>();
+  const delegatedAgentIds = new Map<string, string>();
   let finalMessage: AssistantMessage | undefined;
 
   const stream = new ReadableStream<Uint8Array>({
@@ -514,7 +515,7 @@ export async function POST(request: Request) {
           type: "tool_approval_required",
           toolCallId: parentToolCallId,
           toolName: "delegate_agent",
-          label: getToolLabel("delegate_agent", toolLabels, delegatedAgentIds.get(parentToolCallId)),
+          label: getToolLabel("delegate_agent", toolLabels, getConfiguredSubAgent(agentConfig, delegatedAgentIds.get(parentToolCallId) ?? "")?.label),
           query: command,
           commandId,
           permissionMode,
@@ -533,7 +534,7 @@ export async function POST(request: Request) {
             type: "tool_start",
             toolCallId: event.toolCallId,
             toolName: event.toolName,
-            label: getToolLabel(event.toolName, toolLabels, delegatedAgentId),
+            label: getToolLabel(event.toolName, toolLabels, getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "")?.label),
             query: getToolInput(event.args),
             startedAt: toolStartTime,
           });
@@ -555,7 +556,7 @@ export async function POST(request: Request) {
             type: "tool_end",
             toolCallId: event.toolCallId,
             toolName: event.toolName,
-            label: getToolLabel(event.toolName, toolLabels, delegatedAgentId),
+            label: getToolLabel(event.toolName, toolLabels, subAgentDetails?.agentLabel ?? getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "")?.label),
             isError: event.isError,
             query:
               searchDetails?.query ??

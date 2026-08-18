@@ -6,14 +6,16 @@ import {
   type AgentModelOverride,
   type AgentProfile,
   type AgentRoleId,
+  type CustomSubAgent,
   type ProjectAgentConfig,
+  type SubAgentId,
 } from "@/lib/agent-profiles";
 import { createDefaultAgentPromptConfig, type AgentPromptConfig } from "@/lib/agent-prompts";
 import { AGENT_TOOL_NAMES, BUNDLED_SKILL_NAMES } from "./capability-policy";
 import { MCP_SERVER_IDS } from "./mcp/registry";
 
 export type AgentRoleDefinition = {
-  id: AgentRoleId;
+  id: string;
   label: string;
   description: string;
   maxSkills: readonly string[];
@@ -21,35 +23,21 @@ export type AgentRoleDefinition = {
   maxMcps: readonly string[];
 };
 
+export type ConfiguredSubAgent = {
+  id: SubAgentId;
+  label: string;
+  description: string;
+  profile: AgentProfile;
+};
+
+const MAX_CUSTOM_SUB_AGENTS = 12;
+const CUSTOM_SUB_AGENT_ID = /^custom-[a-z0-9-]{8,80}$/;
+
 export const AGENT_ROLE_REGISTRY: Record<AgentRoleId, AgentRoleDefinition> = {
   main: {
     id: "main",
     label: "主 Agent",
     description: "负责理解任务、选择专业研究员并整合最终回答。",
-    maxSkills: BUNDLED_SKILL_NAMES,
-    maxTools: AGENT_TOOL_NAMES,
-    maxMcps: MCP_SERVER_IDS,
-  },
-  "market-data": {
-    id: "market-data",
-    label: "数据研究员",
-    description: "查询结构化行情、财务报表和财务指标，并返回带日期的数据事实。",
-    maxSkills: BUNDLED_SKILL_NAMES,
-    maxTools: AGENT_TOOL_NAMES,
-    maxMcps: MCP_SERVER_IDS,
-  },
-  "web-evidence": {
-    id: "web-evidence",
-    label: "证据研究员",
-    description: "核验新闻、公告、政策与行业事件，返回可点击的网页来源。",
-    maxSkills: BUNDLED_SKILL_NAMES,
-    maxTools: AGENT_TOOL_NAMES,
-    maxMcps: MCP_SERVER_IDS,
-  },
-  "financial-analysis": {
-    id: "financial-analysis",
-    label: "财务分析师",
-    description: "基于给定材料解释财务质量、驱动因素、风险和待验证事项。",
     maxSkills: BUNDLED_SKILL_NAMES,
     maxTools: AGENT_TOOL_NAMES,
     maxMcps: MCP_SERVER_IDS,
@@ -113,6 +101,27 @@ function resolveProfile(
   };
 }
 
+function resolveCustomSubAgents(input: unknown, skillNames: readonly string[]): CustomSubAgent[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  return input.flatMap((value) => {
+    if (seen.size >= MAX_CUSTOM_SUB_AGENTS || !value || typeof value !== "object") return [];
+    const candidate = value as Partial<CustomSubAgent>;
+    const id = typeof candidate.id === "string" ? candidate.id : "";
+    const label = typeof candidate.label === "string" ? candidate.label.trim() : "";
+    const description = typeof candidate.description === "string" ? candidate.description.trim() : "";
+    if (!CUSTOM_SUB_AGENT_ID.test(id) || seen.has(id) || !label || label.length > 60 || description.length > 280) return [];
+    seen.add(id);
+    const profile = resolveProfile(
+      { id: "custom", label, description, maxSkills: skillNames, maxTools: AGENT_TOOL_NAMES, maxMcps: MCP_SERVER_IDS },
+      candidate,
+      { enabled: true, enabledSkills: [], enabledTools: [], enabledMcps: [] },
+      skillNames,
+    );
+    return [{ id: id as CustomSubAgent["id"], label, description, ...profile }];
+  });
+}
+
 export function resolveGlobalAgentPrompts(input: unknown): AgentPromptConfig {
   const defaults = createDefaultAgentPromptConfig();
   const candidate = input && typeof input === "object"
@@ -169,7 +178,24 @@ export function resolveProjectAgentConfig(input: unknown, legacy?: {
     ]),
   ) as ProjectAgentConfig["profiles"];
   const mainModel = parseModelOverride(candidate.mainModel);
-  return { ...(mainModel ? { mainModel } : {}), profiles };
+  return {
+    ...(mainModel ? { mainModel } : {}),
+    profiles,
+    customSubAgents: resolveCustomSubAgents(candidate.customSubAgents, skillNames),
+  };
+}
+
+export function getConfiguredSubAgents(config: ProjectAgentConfig): ConfiguredSubAgent[] {
+  return config.customSubAgents.map((agent) => ({
+    id: agent.id,
+    label: agent.label,
+    description: agent.description,
+    profile: agent,
+  }));
+}
+
+export function getConfiguredSubAgent(config: ProjectAgentConfig, id: string) {
+  return getConfiguredSubAgents(config).find((agent) => agent.id === id);
 }
 
 export function publicAgentRoles(skillNames: readonly string[] = BUNDLED_SKILL_NAMES) {
@@ -187,8 +213,4 @@ export function publicAgentRoles(skillNames: readonly string[] = BUNDLED_SKILL_N
       isMain: id === "main",
     };
   });
-}
-
-export function isSubAgentRoleId(value: string): value is Exclude<AgentRoleId, "main"> {
-  return value !== "main" && (AGENT_ROLE_IDS as readonly string[]).includes(value);
 }
