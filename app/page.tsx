@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   BookOpenCheck,
   Bot,
   Braces,
@@ -56,6 +57,7 @@ import { ModelLibrary, type ModelProviderItem } from "@/components/model-library
 import { ToolRunStack } from "@/components/tool-run-stack";
 import { UserUsagePage } from "@/components/user-usage-page";
 import { DatabasePage } from "@/components/database-page";
+import { TracePage } from "@/components/trace-page";
 import type { CapabilityCatalog, CapabilityItem, CapabilityKind } from "@/lib/capability-types";
 import {
   cloneProjectAgentConfig,
@@ -115,6 +117,8 @@ type ChatMessage = {
   toolRuns?: ToolRun[];
   durationMs?: number;
   tokenUsage?: number;
+  traceId?: string;
+  traceStatus?: "recording" | "recorded" | "unavailable";
 };
 
 type Conversation = {
@@ -159,7 +163,12 @@ type AvailableModel = {
 type AgentStatus = "idle" | "connecting" | "streaming" | "done" | "stopped" | "error";
 
 type StreamEvent =
-  | { type: "start"; requestId: string }
+  | {
+      type: "start";
+      requestId: string;
+      traceId?: string;
+      traceStatus?: "recording" | "unavailable";
+    }
   | ToolStartEvent
   | ToolEndEvent
   | ToolApprovalEvent
@@ -169,6 +178,7 @@ type StreamEvent =
       durationMs: number;
       usage?: { input: number; output: number; totalTokens: number };
     }
+  | { type: "trace_status"; traceId: string; traceStatus: "recorded" | "unavailable" }
   | { type: "error"; message: string };
 
 const STORAGE_KEY = "pi-research-agent:conversations:v2";
@@ -188,7 +198,7 @@ const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
 const AGENT_PROFILES_KEY = "pi-research-agent:agent-profiles:v2";
 const AGENT_PROMPTS_KEY = "pi-research-agent:agent-prompts:v1";
 
-type AppView = "workspace" | CapabilityKind | "model" | "agent" | "subagent" | "user" | "database";
+type AppView = "workspace" | CapabilityKind | "model" | "agent" | "subagent" | "user" | "database" | "trace";
 
 const SUGGESTIONS = [
   {
@@ -479,6 +489,7 @@ export default function Home() {
   const [previewCache, setPreviewCache] = useState<Record<string, PreviewCacheEntry>>({});
   const [copiedPreviewPath, setCopiedPreviewPath] = useState("");
   const [activeView, setActiveView] = useState<AppView>("workspace");
+  const [traceFocusId, setTraceFocusId] = useState("");
   const [capabilityCatalog, setCapabilityCatalog] = useState<CapabilityCatalog>({
     skills: [],
     tools: [],
@@ -497,6 +508,7 @@ export default function Home() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [filePanelVisible, setFilePanelVisible] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
+  const activeTraceIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerIsComposingRef = useRef(false);
@@ -900,9 +912,22 @@ export default function Home() {
     );
   }
 
+  function stopActiveRun() {
+    const traceId = activeTraceIdRef.current;
+    if (traceId) {
+      void fetch("/api/chat/abort", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ traceId }),
+        keepalive: true,
+      }).catch(() => undefined);
+    }
+    abortRef.current?.abort();
+  }
+
   function newConversation(projectId = activeProjectId) {
     if (!projectId) return;
-    if (isBusy) abortRef.current?.abort();
+    if (isBusy) stopActiveRun();
     const next = makeConversation(projectId);
     setConversations((current) => [next, ...current]);
     setExpandedProjectIds((current) =>
@@ -966,7 +991,7 @@ export default function Home() {
 
   async function removeProjectBinding(project: LocalProject) {
     setProjectError("");
-    if (isBusy && project.id === activeProjectId) abortRef.current?.abort();
+    if (isBusy && project.id === activeProjectId) stopActiveRun();
 
     try {
       await responseJson<{ removed: string }>(
@@ -1045,7 +1070,7 @@ export default function Home() {
   function deleteConversation(id: string) {
     const target = conversations.find((item) => item.id === id);
     if (!target) return;
-    if (isBusy && id === activeId) abortRef.current?.abort();
+    if (isBusy && id === activeId) stopActiveRun();
     setConversations((current) => {
       const remaining = current.filter((item) => item.id !== id);
       const sameProject = remaining.filter((item) => item.projectId === target.projectId);
@@ -1072,6 +1097,25 @@ export default function Home() {
     setTokenUsage(null);
     setSidebarOpen(false);
     setActiveView("workspace");
+  }
+
+  function openTrace(traceId: string) {
+    setTraceFocusId(traceId);
+    setActiveView("trace");
+    setSidebarOpen(false);
+  }
+
+  function openTraceConversation(conversationId: string) {
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (!conversation) {
+      setProjectError("这条 Trace 对应的本地对话已经不存在。");
+      return;
+    }
+    if (isBusy && conversation.id === activeId) {
+      setActiveView("workspace");
+      return;
+    }
+    selectConversation(conversation.id, conversation.projectId);
   }
 
   function toolRunsAreExpanded(messageId: string) {
@@ -1547,12 +1591,15 @@ export default function Home() {
       createdAt: timestampNow(),
     };
     const assistantId = makeId();
+    const traceId = makeId();
     const assistantMessage: ChatMessage = {
       id: assistantId,
       role: "assistant",
       content: "",
       createdAt: timestampNow(),
       toolRuns: [],
+      traceId,
+      traceStatus: "recording",
     };
 
     updateConversation(conversationId, (conversation) => ({
@@ -1568,15 +1615,18 @@ export default function Home() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    activeTraceIdRef.current = traceId;
 
     try {
       const response = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          traceId,
           conversationId,
           workspaceId: activeProject.id,
           workspaceName: activeProject.name,
+          workspacePath: activeProject.path,
           model: {
             providerId: selectedModel.providerId,
             modelId: selectedModel.modelId,
@@ -1619,7 +1669,24 @@ export default function Home() {
         buffer = parsed.remainder;
 
         for (const event of parsed.events) {
-          if (event.type === "start") setStatus("streaming");
+          if (event.type === "start") {
+            setStatus("streaming");
+            updateConversation(conversationId, (conversation) => ({
+              ...conversation,
+              messages: conversation.messages.map((message) =>
+                message.id === assistantId
+                  ? event.traceStatus === "recording" && event.traceId
+                    ? {
+                      ...message,
+                      traceStatus: event.traceStatus,
+                      traceId: event.traceId,
+                    }
+                    : { ...message, traceId: undefined, traceStatus: "unavailable" }
+                  : message,
+              ),
+              updatedAt: timestampNow(),
+            }));
+          }
           if (event.type === "tool_start") {
             setStatus("streaming");
             updateConversation(conversationId, (conversation) => ({
@@ -1662,6 +1729,19 @@ export default function Home() {
               messages: conversation.messages.map((message) =>
                 message.id === assistantId
                   ? { ...message, content: message.content + event.text }
+                  : message,
+              ),
+              updatedAt: timestampNow(),
+            }));
+          }
+          if (event.type === "trace_status") {
+            updateConversation(conversationId, (conversation) => ({
+              ...conversation,
+              messages: conversation.messages.map((message) =>
+                message.id === assistantId
+                  ? event.traceStatus === "recorded"
+                    ? { ...message, traceId: event.traceId, traceStatus: "recorded" }
+                    : { ...message, traceId: undefined, traceStatus: "unavailable" }
                   : message,
               ),
               updatedAt: timestampNow(),
@@ -1711,6 +1791,7 @@ export default function Home() {
       }
     } finally {
       abortRef.current = null;
+      if (activeTraceIdRef.current === traceId) activeTraceIdRef.current = null;
     }
   }
 
@@ -1968,6 +2049,17 @@ export default function Home() {
             <span>MCP</span>
           </button>
           <button
+            className={activeView === "trace" ? "active" : ""}
+            type="button"
+            onClick={() => {
+              setTraceFocusId("");
+              setActiveView("trace");
+            }}
+          >
+            <Activity size={15} />
+            <span>Trace</span>
+          </button>
+          <button
             className={activeView === "database" ? "active" : ""}
             type="button"
             onClick={() => setActiveView("database")}
@@ -2072,6 +2164,16 @@ export default function Home() {
                   <article className={`message ${message.role}`} key={message.id}>
                     <div className="message-body">
                       <div className={`message-content ${isUnfinishedAssistantMessage ? "is-streaming" : ""}`}>
+                        {message.role === "assistant" && message.traceStatus && (
+                          message.traceId ? (
+                            <button className="message-trace-link" type="button" onClick={() => openTrace(message.traceId!)}>
+                              <Activity size={12} />
+                              查看 Trace
+                            </button>
+                          ) : (
+                            <span className="message-trace-unavailable">Trace 未记录</span>
+                          )
+                        )}
                         {message.role === "assistant" && Boolean(message.toolRuns?.length) && (
                           <ToolRunStack
                             runs={message.toolRuns ?? []}
@@ -2205,7 +2307,7 @@ export default function Home() {
                 )}
               </div>
               {isBusy ? (
-                <button className="send-button stop" type="button" onClick={() => abortRef.current?.abort()}>
+                <button className="send-button stop" type="button" onClick={stopActiveRun}>
                   <CircleStop size={18} />
                 </button>
               ) : (
@@ -2534,6 +2636,13 @@ export default function Home() {
         />
       ) : activeView === "user" ? (
         <UserUsagePage activity={usageActivity} />
+      ) : activeView === "trace" ? (
+        <TracePage
+          key={`${activeProjectId}:${traceFocusId}`}
+          workspaceId={activeProjectId}
+          focusTraceId={traceFocusId}
+          onOpenConversation={openTraceConversation}
+        />
       ) : activeView === "database" ? (
         <DatabasePage onClose={() => setActiveView("workspace")} />
       ) : (

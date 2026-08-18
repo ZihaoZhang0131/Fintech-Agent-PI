@@ -27,6 +27,9 @@ import {
 } from "@/server/agent/tools/workspace-files";
 import { createLocalDatabaseTools, type LocalDatabaseToolDetails } from "@/server/agent/tools/local-database";
 import { createDocumentTool, type DocumentToolDetails } from "@/server/agent/tools/generate-document";
+import { TraceRecorder } from "@/server/agent/trace/trace-recorder";
+import { LocalRuntimeTraceSink } from "@/server/agent/trace/trace-sink";
+import { traceSha256 } from "@/server/trace-redaction.mjs";
 
 type InputMessage = {
   role: "user" | "assistant";
@@ -34,9 +37,11 @@ type InputMessage = {
 };
 
 type ChatRequest = {
+  traceId?: unknown;
   conversationId?: string;
   workspaceId?: string;
   workspaceName?: string;
+  workspacePath?: string;
   model?: unknown;
   enabledSkills?: unknown;
   enabledTools?: unknown;
@@ -249,6 +254,10 @@ export async function POST(request: Request) {
   const history = Array.isArray(payload.messages) ? payload.messages : [];
   const workspaceId = payload.workspaceId?.trim() ?? "";
   const workspaceName = payload.workspaceName?.trim().slice(0, 200) || "本地项目";
+  const workspacePath = typeof payload.workspacePath === "string" && payload.workspacePath.length <= 4_096
+    ? payload.workspacePath
+    : undefined;
+  const requestedTraceId = typeof payload.traceId === "string" ? payload.traceId.trim() : "";
   const bashApprovalMode: BashApprovalMode =
     payload.bashApprovalMode === "ask" ? "ask" : "auto";
   const bashPermissionMode: BashPermissionMode =
@@ -257,7 +266,8 @@ export async function POST(request: Request) {
     !input ||
     input.length > 20_000 ||
     !history.every(isInputMessage) ||
-    !/^[a-f0-9-]{20,64}$/i.test(workspaceId)
+    !/^[a-f0-9-]{20,64}$/i.test(workspaceId) ||
+    (payload.traceId !== undefined && !/^[a-f0-9-]{20,64}$/i.test(requestedTraceId))
   ) {
     return Response.json({ message: "问题为空、过长或历史消息格式不正确。" }, { status: 400 });
   }
@@ -309,6 +319,7 @@ export async function POST(request: Request) {
     command: string;
     permissionMode: BashPermissionMode;
   }) => void) | undefined;
+  let traceRecorder: TraceRecorder | undefined;
 
   async function runSubAgent(
     agentId: SubAgentId,
@@ -387,8 +398,18 @@ export async function POST(request: Request) {
       getApiKey: () => childResolved.apiKey,
       sessionId: `${payload.conversationId ?? "conversation"}:${agentId}:${crypto.randomUUID()}`,
     });
+    const childTraceHandle = traceRecorder?.attachAgent({
+      agentId,
+      agentLabel: configuredAgent.label,
+      modelProvider: childResolved.piProviderId,
+      modelId: childResolved.modelId,
+      parentSpanId: parentToolCallId
+        ? traceRecorder.getToolSpanId("main", parentToolCallId)
+        : undefined,
+    });
     let finalText = "";
     child.subscribe((event) => {
+      childTraceHandle?.onEvent(event);
       if (event.type === "tool_execution_update" && parentToolCallId) {
         const bashDetails = getBashDetails(event.partialResult?.details);
         if (bashDetails?.status === "pending_approval") {
@@ -503,13 +524,86 @@ export async function POST(request: Request) {
 
   const encoder = new TextEncoder();
   const startedAt = Date.now();
+  const traceId = requestedTraceId || crypto.randomUUID();
   const toolStartedAt = new Map<string, number>();
   const delegatedAgentIds = new Map<string, string>();
   let finalMessage: AssistantMessage | undefined;
+  let streamCancelled = false;
+  let abortRequested = false;
+  let abortPoll: ReturnType<typeof setInterval> | undefined;
+  let abortCheckPending = false;
+  const abortRun = () => {
+    abortRequested = true;
+    streamCancelled = true;
+    if (abortPoll) clearInterval(abortPoll);
+    abortPoll = undefined;
+    traceRecorder?.markAborted();
+    agent.abort();
+  };
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (value: object) => controller.enqueue(encoder.encode(formatSse(value)));
+      const send = (value: object) => {
+        if (streamCancelled) return;
+        try {
+          controller.enqueue(encoder.encode(formatSse(value)));
+        } catch {
+          streamCancelled = true;
+        }
+      };
+      const traceSink = new LocalRuntimeTraceSink();
+      traceRecorder = new TraceRecorder({
+        id: traceId,
+        sink: traceSink,
+        workspaceId,
+        conversationId: payload.conversationId,
+        startedAt,
+        modelProvider: resolvedModel.piProviderId,
+        modelId: resolvedModel.modelId,
+        question: input,
+        workspacePath,
+        capabilities: {
+          workspaceName,
+          history: {
+            count: history.length,
+            bytes: Buffer.byteLength(JSON.stringify(history), "utf8"),
+            sha256: traceSha256(JSON.stringify(history)),
+            contentRecorded: false,
+          },
+          main: {
+            model: { providerId: modelReference.providerId, modelId: modelReference.modelId },
+            enabledSkills: mainProfile.enabledSkills,
+            enabledTools: mainProfile.enabledTools,
+            enabledMcps: mainProfile.enabledMcps,
+          },
+          subAgents: getConfiguredSubAgents(agentConfig)
+            .filter((item) => item.profile.enabled)
+            .map((item) => ({
+              id: item.id,
+              label: item.label,
+              model: item.profile.model,
+              enabledSkills: item.profile.enabledSkills,
+              enabledTools: item.profile.enabledTools,
+              enabledMcps: item.profile.enabledMcps,
+            })),
+          bashApprovalMode,
+          bashPermissionMode,
+          systemPrompt: {
+            bytes: Buffer.byteLength(`${agentPrompts.main}\n\n${projectCapabilityPrompt}\n\n${formatSkillCatalog(skillRegistry)}`, "utf8"),
+            sha256: traceSha256(`${agentPrompts.main}\n\n${projectCapabilityPrompt}\n\n${formatSkillCatalog(skillRegistry)}`),
+            contentRecorded: false,
+          },
+        },
+      });
+      const traceAvailable = await traceRecorder.start();
+      const mainTraceHandle = traceRecorder.attachAgent({
+        scopeKey: "main",
+        agentId: "main",
+        agentLabel: "主 Agent",
+        modelProvider: resolvedModel.piProviderId,
+        modelId: resolvedModel.modelId,
+        isRoot: true,
+      });
       emitChildBashApproval = ({ parentToolCallId, commandId, command, permissionMode }) => {
         send({
           type: "tool_approval_required",
@@ -523,6 +617,7 @@ export async function POST(request: Request) {
       };
 
       agent.subscribe((event) => {
+        mainTraceHandle.onEvent(event);
         if (event.type === "tool_execution_start") {
           const toolStartTime = Date.now();
           const delegatedAgentId = getDelegatedAgentId(event.args);
@@ -668,10 +763,34 @@ export async function POST(request: Request) {
         }
       });
 
-      send({ type: "start", requestId: crypto.randomUUID() });
+      send({
+        type: "start",
+        requestId: traceId,
+        traceId,
+        traceStatus: traceAvailable ? "recording" : "unavailable",
+      });
 
+      request.signal.addEventListener("abort", abortRun, { once: true });
+      if (request.signal.aborted) abortRun();
+      if (traceAvailable && !abortRequested) {
+        if (await traceSink.isAborted(traceId).catch(() => false)) abortRun();
+        abortPoll = setInterval(() => {
+          if (abortCheckPending || abortRequested) return;
+          abortCheckPending = true;
+          void traceSink.isAborted(traceId)
+            .then((aborted) => {
+              if (aborted) abortRun();
+            })
+            .catch(() => undefined)
+            .finally(() => {
+              abortCheckPending = false;
+            });
+        }, 250);
+      }
       try {
-        await agent.prompt(input);
+        if (!abortRequested) await agent.prompt(input);
+        const traceFinished = await traceRecorder.finish();
+        send({ type: "trace_status", traceId, traceStatus: traceFinished ? "recorded" : "unavailable" });
         send({
           type: "done",
           durationMs: Date.now() - startedAt,
@@ -684,15 +803,26 @@ export async function POST(request: Request) {
             : undefined,
         });
       } catch (error) {
+        const traceFinished = await traceRecorder.finish(error);
+        send({ type: "trace_status", traceId, traceStatus: traceFinished ? "recorded" : "unavailable" });
         console.error("PI Agent request failed", error);
         send({ type: "error", message: safeErrorMessage(error) });
       } finally {
+        request.signal.removeEventListener("abort", abortRun);
+        if (abortPoll) clearInterval(abortPoll);
+        abortPoll = undefined;
         emitChildBashApproval = undefined;
-        controller.close();
+        if (!streamCancelled) {
+          try {
+            controller.close();
+          } catch {
+            streamCancelled = true;
+          }
+        }
       }
     },
     cancel() {
-      agent.abort();
+      abortRun();
     },
   });
 

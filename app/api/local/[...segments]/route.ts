@@ -19,6 +19,9 @@ async function forward(request: Request, context: RouteContext) {
   ) {
     return Response.json({ message: "本机 Runtime 路径无效。" }, { status: 400 });
   }
+  if (segments[0] === "trace-ingest") {
+    return Response.json({ message: "Trace 写入端点仅供本机 Agent 服务使用。" }, { status: 403 });
+  }
 
   const incomingUrl = new URL(request.url);
   const target = new URL(segments.map(encodeURIComponent).join("/"), `${runtimeUrl}/`);

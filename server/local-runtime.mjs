@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createMcpManager } from "./mcp-manager.mjs";
 import { createLocalDatabase } from "./local-database.mjs";
+import { createTraceStore } from "./trace-store.mjs";
 import { createSkillStore } from "./skill-store.mjs";
 import { resolvePythonInterpreter } from "./skill-store.mjs";
 import {
@@ -1005,6 +1006,7 @@ async function generateDocumentArtifact(workspace, dataDirectory, payload, signa
 export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = createMcpManager() }) {
   const commandManager = createCommandManager({ dataDirectory });
   const localDatabase = createLocalDatabase(dataDirectory);
+  const traceStore = createTraceStore(dataDirectory);
   const skillStore = createSkillStore(dataDirectory);
   return async function handle(request, response) {
     try {
@@ -1029,6 +1031,45 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
         return sendJson(response, 200, {
           providers: await listPublicModelProviders(dataDirectory),
         });
+      }
+      if (request.method === "POST" && url.pathname === "/trace-ingest/runs") {
+        return sendJson(response, 201, traceStore.createRun(await readJsonBody(request)));
+      }
+      if (segments[0] === "trace-ingest" && segments[1] === "runs" && segments[2] && segments.length === 4 && segments[3] === "events" && request.method === "POST") {
+        return sendJson(response, 202, traceStore.appendBatch(segments[2], await readJsonBody(request)));
+      }
+      if (segments[0] === "trace-ingest" && segments[1] === "runs" && segments[2] && segments.length === 4 && segments[3] === "abort") {
+        if (request.method === "POST") return sendJson(response, 202, traceStore.requestAbort(segments[2]));
+        if (request.method === "GET") return sendJson(response, 200, { aborted: traceStore.isAbortRequested(segments[2]) });
+      }
+      if (segments[0] === "trace-ingest" && segments[1] === "runs" && segments[2] && segments.length === 3 && request.method === "PUT") {
+        return sendJson(response, 200, traceStore.finishRun(segments[2], await readJsonBody(request)));
+      }
+      if (request.method === "GET" && url.pathname === "/traces") {
+        const numeric = (name) => {
+          const raw = url.searchParams.get(name);
+          if (!raw) return undefined;
+          const value = Number(raw);
+          if (!Number.isSafeInteger(value)) throw Object.assign(new Error(`Trace ${name} 参数无效。`), { status: 400 });
+          return value;
+        };
+        return sendJson(response, 200, traceStore.listTraces({
+          workspaceId: url.searchParams.get("workspaceId") ?? undefined,
+          conversationId: url.searchParams.get("conversationId") ?? undefined,
+          status: url.searchParams.get("status") ?? undefined,
+          query: url.searchParams.get("query") ?? undefined,
+          cursor: url.searchParams.get("cursor") ?? undefined,
+          from: numeric("from"),
+          to: numeric("to"),
+          limit: numeric("limit"),
+        }));
+      }
+      if (segments[0] === "traces" && segments[1] && segments.length === 2) {
+        if (request.method === "GET") return sendJson(response, 200, traceStore.getTrace(segments[1]));
+        if (request.method === "DELETE") return sendJson(response, 200, traceStore.deleteTrace(segments[1]));
+      }
+      if (request.method === "DELETE" && url.pathname === "/traces") {
+        return sendJson(response, 200, traceStore.clearTraces(url.searchParams.get("workspaceId") ?? ""));
       }
       if (request.method === "GET" && url.pathname === "/database/tables") {
         return sendJson(response, 200, { tables: localDatabase.listTables() });
