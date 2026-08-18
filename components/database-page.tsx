@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Database, Play, RefreshCw, Table2 } from "lucide-react";
+import { ArrowLeft, Play, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 type DatabaseTable = { name: string; sql: string };
@@ -102,20 +102,22 @@ export function DatabasePage({ onClose }: { onClose: () => void }) {
     <section className="database-page">
       <header className="database-page-header">
         <button className="capability-back" type="button" onClick={onClose} aria-label="返回项目" title="返回项目"><ArrowLeft size={16} /></button>
-        <div><span>LOCAL SQLITE</span><h1>数据库</h1><p>全应用共享 · SQL 编辑器仅支持只读查询</p></div>
+        <h1>数据库</h1>
         <button className="capability-refresh" type="button" onClick={() => void loadTables()} disabled={loading} aria-label="刷新数据表" title="刷新数据表"><RefreshCw size={15} /></button>
       </header>
       {error && <div className="database-error">{error}</div>}
       <div className="database-workspace">
-        <aside className="database-table-list">
-          <div className="database-section-title"><Table2 size={14} /><span>数据表</span><small>{tables.length}</small></div>
-          {loading ? <div className="database-empty">正在读取…</div> : tables.length ? tables.map((table) => (
-            <button key={table.name} className={selectedTable === table.name ? "active" : ""} type="button" onClick={() => void selectTable(table.name)}>{table.name}</button>
-          )) : <div className="database-empty"><Database size={18} /><span>暂无数据表</span><p>请让 Agent 创建表并确认写入。</p></div>}
+        <aside className="database-table-list" aria-label="数据表">
+          <div className="database-section-title"><span>数据表</span><small>{tables.length}</small></div>
+          <div className="database-table-items">
+            {loading ? <div className="database-empty">正在读取…</div> : tables.length ? tables.map((table) => (
+              <button key={table.name} className={selectedTable === table.name ? "active" : ""} type="button" title={table.name} onClick={() => void selectTable(table.name)}>{table.name}</button>
+            )) : <div className="database-empty">暂无数据表</div>}
+          </div>
         </aside>
-        <main className="database-main">
-          {tableDetails && <section className="database-schema"><div><strong>{tableDetails.table}</strong><code>{tableDetails.sql}</code></div><div className="database-columns">{tableDetails.columns.map((column) => <span key={column.name}>{column.name} <em>{column.type || "ANY"}</em>{column.primaryKey ? " · PK" : ""}</span>)}</div></section>}
-          <section className="database-editor"><div className="database-editor-toolbar"><span>SQL 查询</span><button type="button" onClick={() => void runQuery()} disabled={running || !sql.trim()}><Play size={13} />{running ? "查询中" : "执行"}</button></div><textarea value={sql} onChange={(event) => setSql(event.target.value)} spellCheck={false} aria-label="SQL 查询语句" /></section>
+        <main className={`database-main${tableDetails ? " has-schema" : ""}`}>
+          {tableDetails && <section className="database-schema" aria-label={`${tableDetails.table} 字段`}><strong title={tableDetails.table}>{tableDetails.table}</strong><div className="database-columns">{tableDetails.columns.map((column) => <span key={column.name}><b>{column.name}</b><em>{column.type || "ANY"}{column.primaryKey ? " · PK" : ""}</em></span>)}</div></section>}
+          <section className="database-editor"><div className="database-editor-toolbar"><div><span>SQL 查询</span><small>只读</small></div><button type="button" onClick={() => void runQuery()} disabled={running || !sql.trim()}><Play size={13} />{running ? "查询中" : "执行"}</button></div><textarea value={sql} onChange={(event) => setSql(event.target.value)} spellCheck={false} aria-label="SQL 查询语句" /></section>
           <section className="database-results"><div className="database-section-title"><span>查询结果</span>{result && <small>{result.rows.length} 行</small>}</div>{result ? <ResultTable result={result} /> : <div className="database-empty">执行 SQL 后在这里查看结果。</div>}</section>
         </main>
       </div>
