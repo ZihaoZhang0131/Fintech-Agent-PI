@@ -74,6 +74,7 @@ export function createWorkflowHttp({
       createWorkflowRunners({
         skillStore,
         traceStore,
+        getWorkspacePath: (id) => findWorkspace(id)?.path,
         localDatabase,
         commandManager,
       })),

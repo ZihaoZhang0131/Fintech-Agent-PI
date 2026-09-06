@@ -1,9 +1,10 @@
-import type { TraceEvent, TraceRunStatus, TraceSpan, TraceStats, TraceUsage } from "../../../lib/trace-types.ts";
+import type { TraceContext, TraceMessage, TraceEvent, TraceRunStatus, TraceSpan, TraceStats, TraceUsage } from "../../../lib/trace-types.ts";
 
 export type TraceRunStart = {
   id: string;
   workspaceId: string;
   conversationId?: string;
+  context?: TraceContext;
   startedAt: number;
   modelProvider?: string;
   modelId?: string;
@@ -24,7 +25,7 @@ export type TraceRunFinish = {
 
 export interface TraceSink {
   start(run: TraceRunStart): Promise<void>;
-  append(traceId: string, payload: { spans: TraceSpan[]; events: TraceEvent[] }): Promise<void>;
+  append(traceId: string, payload: { spans: TraceSpan[]; events: TraceEvent[]; messages?: TraceMessage[] }): Promise<void>;
   finish(traceId: string, run: TraceRunFinish): Promise<void>;
 }
 
@@ -60,7 +61,7 @@ export class LocalRuntimeTraceSink implements TraceSink {
     await this.request("/trace-ingest/runs", "POST", run);
   }
 
-  async append(traceId: string, payload: { spans: TraceSpan[]; events: TraceEvent[] }) {
+  async append(traceId: string, payload: { spans: TraceSpan[]; events: TraceEvent[]; messages?: TraceMessage[] }) {
     await this.request(`/trace-ingest/runs/${encodeURIComponent(traceId)}/events`, "POST", payload);
   }
 

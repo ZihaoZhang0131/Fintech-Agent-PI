@@ -21,18 +21,11 @@ test("chat messages persist trace ids and expose a dedicated Trace page", () => 
   assert.match(page, /activeTraceIdRef/);
 });
 
-test("Trace page filters, polls running traces, renders a span tree, and manages local records", () => {
-  assert.match(tracePage, /function TraceTree/);
-  assert.match(tracePage, /window\.setInterval/);
-  assert.match(tracePage, /1_000/);
-  assert.match(tracePage, /statusFilter/);
-  assert.match(tracePage, /fromDate/);
-  assert.match(tracePage, /toDate/);
-  assert.match(tracePage, /打开对话/);
+test("Trace entry keeps conversation navigation and runtime proxy compatibility", () => {
+  assert.match(tracePage, /onOpenConversation/);
   assert.match(tracePage, /清空当前项目的全部 Trace/);
-  assert.match(tracePage, /原始事件/);
-  assert.match(styles, /\.trace-workspace/);
-  assert.match(styles, /\.trace-tree-row/);
+  assert.match(tracePage, /TraceDrawer/);
+  assert.match(styles, /trace.css/);
   assert.match(styles, /\.message-trace-link/);
 });
 

@@ -76,6 +76,7 @@ export function createWorkflowRunners({
   commandManager,
   invokeAgent,
   profileTools = createProfileTools,
+  getWorkspacePath = () => undefined,
 }) {
   // A single conservative write lock covers all Workflow runs, including shared SQL.
   let writeTail = Promise.resolve();
@@ -105,14 +106,6 @@ export function createWorkflowRunners({
       update,
       attempt,
     }) {
-      signal.throwIfAborted();
-      const resolved = await resolveRuntimeModel(reference);
-      const agent = createConfiguredAgent({
-        resolved,
-        systemPrompt: prompt,
-        tools,
-        sessionId: randomUUID(),
-      });
       const traceId = randomUUID();
       const trace = new TraceRecorder({
         sink: {
@@ -128,6 +121,18 @@ export function createWorkflowRunners({
         },
         id: traceId,
         workspaceId: run.workspaceId,
+        conversationId: run.conversationId ?? run.id,
+        workspacePath: getWorkspacePath(run.workspaceId) ?? run.workspacePath,
+        context: {
+          mode: "workflow", workflowRunId: run.id, role: attempt ? "node" : "planner",
+          ...(attempt ? {
+            nodeId: attempt.nodeId, attemptId: attempt.id, planVersion: attempt.version,
+            attemptNumber: run.attempts.filter((a) => a.nodeId === attempt.nodeId).findIndex((a) => a.id === attempt.id) + 1,
+            nodeTitle: run.plan?.nodes.find((n) => n.id === attempt.nodeId)?.title,
+            agentId: run.plan?.nodes.find((n) => n.id === attempt.nodeId)?.agentId,
+            agentLabel: run.config.customSubAgents.find((p) => p.id === run.plan?.nodes.find((n) => n.id === attempt.nodeId)?.agentId)?.label,
+          } : { agentLabel: "Plan Agent" }),
+        },
         startedAt: Date.now(),
         question: attempt ? `${attempt.nodeId}: ${run.input}` : run.input,
         modelProvider: reference.providerId,
@@ -144,12 +149,24 @@ export function createWorkflowRunners({
         { traceId },
       );
       const handle = trace.attachAgent({
-        agentId: attempt?.nodeId ?? "plan",
-        agentLabel: attempt?.nodeId ?? "Plan Agent",
+        input,
+        agentId: run.plan?.nodes.find((n) => n.id === attempt?.nodeId)?.agentId ?? "plan",
+        agentLabel: attempt ? (run.config.customSubAgents.find((p) => p.id === run.plan?.nodes.find((n) => n.id === attempt.nodeId)?.agentId)?.label ?? attempt.nodeId) : "Plan Agent",
         modelProvider: reference.providerId,
         modelId: reference.modelId,
         isRoot: true,
       });
+      let agent;
+      try {
+        signal.throwIfAborted();
+        const resolved = await resolveRuntimeModel(reference);
+        agent = createConfiguredAgent({ resolved, systemPrompt: prompt, tools, sessionId: randomUUID() });
+      } catch (error) {
+        if (signal.aborted) trace.markAborted();
+        handle.finish(error, signal.aborted);
+        await trace.finish(error);
+        throw error;
+      }
       let elapsed = 0,
         last = Date.now(),
         turns = 0,
@@ -175,7 +192,7 @@ export function createWorkflowRunners({
           approvalIds.delete(event.toolCallId);
         waiting = approvalIds.size;
       });
-      const abort = () => agent.abort();
+      const abort = () => { trace.markAborted(); agent.abort(); };
       signal.addEventListener("abort", abort, { once: true });
       const timer = setInterval(() => {
         for (const [callId, commandId] of approvalIds) {
@@ -223,6 +240,8 @@ export function createWorkflowRunners({
           throw fail(lastMessage.errorMessage ?? "模型执行失败。");
         await trace.finish();
       } catch (e) {
+        if (signal.aborted) trace.markAborted();
+        handle.finish(e, signal.aborted);
         await trace.finish(e);
         throw e;
       } finally {
@@ -404,7 +423,7 @@ export function createWorkflowRunners({
     if (!decision) throw fail("Plan Agent 未提交结构化决策。");
     return decision;
   }
-  async function executeNode({ run, node, attempt, signal, store, update }) {
+  async function executeNodeInner({ run, node, attempt, signal, store, update }) {
     const profile = run.config.customSubAgents.find(
       (a) => a.id === node.agentId && a.enabled,
     );
@@ -631,6 +650,36 @@ export function createWorkflowRunners({
     });
     if (!result) throw fail("节点未提交结构化完成结果。");
     return result;
+  }
+  async function executeNode(args) {
+    try { return await executeNodeInner(args); }
+    catch (error) {
+      const { run, node, attempt, signal, store, update } = args;
+      // Preparing skills/tools can fail before invoke() starts; preserve that attempt too.
+      if (traceStore && !store.get(run.id).attempts.find((a) => a.id === attempt.id)?.traceId) {
+        const id = randomUUID();
+        const label = run.config.customSubAgents.find((p) => p.id === node.agentId)?.label ?? node.agentId;
+        const reference = run.config.customSubAgents.find((p) => p.id === node.agentId)?.model ?? run.model;
+        const trace = new TraceRecorder({
+          sink: { async start(v) { traceStore.createRun(v); }, async append(id, v) { traceStore.appendBatch(id, v); }, async finish(id, v) { traceStore.finishRun(id, v); } },
+          id, workspaceId: run.workspaceId, conversationId: run.conversationId ?? run.id,
+          startedAt: attempt.startedAt, question: node.task, workspacePath: getWorkspacePath(run.workspaceId) ?? run.workspacePath,
+          modelProvider: reference?.providerId, modelId: reference?.modelId,
+          context: { mode: "workflow", workflowRunId: run.id, role: "node", nodeId: node.id, nodeTitle: node.title,
+            agentId: node.agentId, agentLabel: label, attemptId: attempt.id, planVersion: attempt.version,
+            attemptNumber: run.attempts.filter((a) => a.nodeId === node.id).findIndex((a) => a.id === attempt.id) + 1 },
+        });
+        if (await trace.start()) {
+          update((r) => { r.traces.push(id); r.attempts.find((a) => a.id === attempt.id).traceId = id; }, "trace", { traceId: id });
+          const handle = trace.attachAgent({ agentId: node.agentId, agentLabel: label, input: node.task,
+            modelProvider: reference?.providerId ?? "", modelId: reference?.modelId ?? "", isRoot: true });
+          if (signal.aborted) trace.markAborted();
+          handle.finish(error, signal.aborted);
+          await trace.finish(error);
+        }
+      }
+      throw error;
+    }
   }
   return { plan, executeNode };
 }

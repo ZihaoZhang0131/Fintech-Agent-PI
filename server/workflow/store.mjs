@@ -245,6 +245,7 @@ export function createWorkflowStore(directory) {
         role: "assistant",
         kind: "text",
         content: run.summary,
+      createdAt: legacy ? undefined : run.updatedAt,
       });
     if (
       ["cancelled", "interrupted", "failed"].includes(run.status) &&
@@ -261,6 +262,7 @@ export function createWorkflowStore(directory) {
             : run.status === "interrupted"
               ? "执行已中断，可以继续。"
               : "执行未完成，可以补充要求后重试。",
+        createdAt: legacy ? undefined : run.updatedAt,
       });
   }
   function save(run, type = "state", payload = {}) {
@@ -318,6 +320,9 @@ export function createWorkflowStore(directory) {
       .all()
       .map((r) => get(r.id))
       .filter((r) => !workspace || r.workspaceId === workspace);
+  }
+  function traceRuns(workspace) {
+    return db.prepare("SELECT body FROM runs WHERE workspace=? ORDER BY updated DESC").all(workspace).map((r) => JSON.parse(r.body));
   }
   function events(id, after = 0) {
     get(id);
@@ -392,6 +397,7 @@ export function createWorkflowStore(directory) {
     get,
     save,
     list,
+    traceRuns,
     events,
     lookup,
     remember,

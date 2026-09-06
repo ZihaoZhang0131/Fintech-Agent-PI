@@ -333,81 +333,89 @@ export async function POST(request: Request) {
     if (!configuredAgent?.profile.enabled) throw new Error("该专业 Agent 本轮未启用。");
     const profile = configuredAgent.profile;
     const reference = profile.model ?? modelReference;
-    let childResolved;
-    try {
-      childResolved = await resolveRuntimeModel(reference);
-    } catch (error) {
-      throw new Error(error instanceof Error ? error.message : "专业 Agent 模型不可用。");
-    }
-    const childToolNames = new Set(profile.enabledTools);
-    const { tools: childTools, skills: childSkills, mcps: childMcps } = await createProfileTools({
-      profile, registry: allSkills, workspaceId, approvalMode: bashApprovalMode, permissionMode: bashPermissionMode,
-    });
-    const childPrompt = [
-      `你是${configuredAgent.label}。${configuredAgent.description} 严格区分事实、推断和待验证事项；缺少证据时明确说明，不能编造数据或来源。`,
-      `当前项目名称：${JSON.stringify(workspaceName)}。`,
-      "你是被主 Agent 委派的专业研究员，只能使用本角色已配置的能力，不能再次委派 Agent，也不能假设自己看过主 Agent 的聊天记录。",
-      "用简洁 Markdown 返回：1. 摘要；2. 事实和来源/数据日期；3. 风险、限制或待验证项。",
-      childMcps.length
-        ? `本次可使用的 MCP：${childMcps.map((server) => server.label).join("、")}。`
-        : "本次没有可用 MCP；不要声称调用过 MCP。",
-      childToolNames.has("generate_document")
-        ? "如任务要求 Word 或 PDF，直接调用 generate_document。不要为此调用 Bash、npm、Pandoc 或 Python，也不要把工具失败伪称为已保存的文档。"
-        : "本角色没有启用 Word/PDF 文档生成能力，不要声称已生成文档。",
-      formatSkillCatalog(childSkills),
-    ].join("\n\n");
-    const child = createConfiguredAgent({
-      resolved: childResolved,
-      systemPrompt: childPrompt,
-      tools: childTools,
-      sessionId: `${payload.conversationId ?? "conversation"}:${agentId}:${crypto.randomUUID()}`,
-    });
     const childTraceHandle = traceRecorder?.attachAgent({
       agentId,
+      input: task,
       agentLabel: configuredAgent.label,
-      modelProvider: childResolved.piProviderId,
-      modelId: childResolved.modelId,
+      modelProvider: reference.providerId,
+      modelId: reference.modelId,
       parentSpanId: parentToolCallId
         ? traceRecorder.getToolSpanId("main", parentToolCallId)
         : undefined,
     });
-    let finalText = "";
-    child.subscribe((event) => {
-      childTraceHandle?.onEvent(event);
-      if (event.type === "tool_execution_update" && parentToolCallId) {
-        const bashDetails = getBashDetails(event.partialResult?.details);
-        if (bashDetails?.status === "pending_approval") {
-          emitChildBashApproval?.({
-            parentToolCallId,
-            commandId: bashDetails.commandId,
-            command: bashDetails.command,
-            permissionMode: bashDetails.permissionMode,
-          });
-        }
-      }
-      if (event.type === "message_end" && event.message.role === "assistant") {
-        finalText = event.message.content
-          .filter((item) => item.type === "text")
-          .map((item) => item.text)
-          .join("\n");
-      }
-    });
-    const timeout = setTimeout(() => child.abort(), 60_000);
-    const abort = () => child.abort();
-    parentSignal?.addEventListener("abort", abort, { once: true });
+    let childTimedOut = false;
     try {
-      await child.prompt(task);
-    } finally {
-      clearTimeout(timeout);
-      parentSignal?.removeEventListener("abort", abort);
+      let childResolved;
+      try {
+        childResolved = await resolveRuntimeModel(reference);
+      } catch (error) {
+        throw new Error(error instanceof Error ? error.message : "专业 Agent 模型不可用。");
+      }
+      const childToolNames = new Set(profile.enabledTools);
+      const { tools: childTools, skills: childSkills, mcps: childMcps } = await createProfileTools({
+        profile, registry: allSkills, workspaceId, approvalMode: bashApprovalMode, permissionMode: bashPermissionMode,
+      });
+      const childPrompt = [
+        `你是${configuredAgent.label}。${configuredAgent.description} 严格区分事实、推断和待验证事项；缺少证据时明确说明，不能编造数据或来源。`,
+        `当前项目名称：${JSON.stringify(workspaceName)}。`,
+        "你是被主 Agent 委派的专业研究员，只能使用本角色已配置的能力，不能再次委派 Agent，也不能假设自己看过主 Agent 的聊天记录。",
+        "用简洁 Markdown 返回：1. 摘要；2. 事实和来源/数据日期；3. 风险、限制或待验证项。",
+        childMcps.length
+          ? `本次可使用的 MCP：${childMcps.map((server) => server.label).join("、")}。`
+          : "本次没有可用 MCP；不要声称调用过 MCP。",
+        childToolNames.has("generate_document")
+          ? "如任务要求 Word 或 PDF，直接调用 generate_document。不要为此调用 Bash、npm、Pandoc 或 Python，也不要把工具失败伪称为已保存的文档。"
+          : "本角色没有启用 Word/PDF 文档生成能力，不要声称已生成文档。",
+        formatSkillCatalog(childSkills),
+      ].join("\n\n");
+      const child = createConfiguredAgent({
+        resolved: childResolved,
+        systemPrompt: childPrompt,
+        tools: childTools,
+        sessionId: `${payload.conversationId ?? "conversation"}:${agentId}:${crypto.randomUUID()}`,
+      });
+      let finalText = "";
+      child.subscribe((event) => {
+        childTraceHandle?.onEvent(event);
+        if (event.type === "tool_execution_update" && parentToolCallId) {
+          const bashDetails = getBashDetails(event.partialResult?.details);
+          if (bashDetails?.status === "pending_approval") {
+            emitChildBashApproval?.({
+              parentToolCallId,
+              commandId: bashDetails.commandId,
+              command: bashDetails.command,
+              permissionMode: bashDetails.permissionMode,
+            });
+          }
+        }
+        if (event.type === "message_end" && event.message.role === "assistant") {
+          finalText = event.message.content
+            .filter((item) => item.type === "text")
+            .map((item) => item.text)
+            .join("\n");
+        }
+      });
+      const timeout = setTimeout(() => { childTimedOut = true; child.abort(); }, 60_000);
+      const abort = () => child.abort();
+      parentSignal?.addEventListener("abort", abort, { once: true });
+      try {
+        await child.prompt(task);
+      } finally {
+        clearTimeout(timeout);
+        parentSignal?.removeEventListener("abort", abort);
+      }
+      if (!finalText) throw new Error("专业 Agent 未返回可用研究结果。");
+      childTraceHandle?.finish(childTimedOut ? new Error("Subagent 执行超时") : undefined, parentSignal?.aborted);
+      const limit = 12_000;
+      return {
+        text: finalText.length > limit ? `${finalText.slice(0, limit)}\n\n（子 Agent 回传已截断）` : finalText,
+        model: { providerId: reference.providerId, modelId: reference.modelId },
+        truncated: finalText.length > limit,
+      };
+    } catch (error) {
+      childTraceHandle?.finish(error, parentSignal?.aborted);
+      throw error;
     }
-    if (!finalText) throw new Error("专业 Agent 未返回可用研究结果。");
-    const limit = 12_000;
-    return {
-      text: finalText.length > limit ? `${finalText.slice(0, limit)}\n\n（子 Agent 回传已截断）` : finalText,
-      model: { providerId: reference.providerId, modelId: reference.modelId },
-      truncated: finalText.length > limit,
-    };
   }
 
   const enabledSubAgents = getConfiguredSubAgents(agentConfig)
@@ -530,6 +538,7 @@ export async function POST(request: Request) {
         sink: traceSink,
         workspaceId,
         conversationId: payload.conversationId,
+        context: { mode: "chat", role: "main" },
         startedAt,
         modelProvider: resolvedModel.piProviderId,
         modelId: resolvedModel.modelId,

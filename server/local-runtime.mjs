@@ -1,3 +1,4 @@
+import { createTraceQuery } from "./trace-query.mjs";
 import { createWorkflowHttp } from "./workflow/http.mjs";
 import { createServer } from "node:http";
 import { execFile, spawn } from "node:child_process";
@@ -1010,6 +1011,7 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
   const traceStore = createTraceStore(dataDirectory);
   const skillStore = createSkillStore(dataDirectory);
   const workflow = createWorkflowHttp({dataDirectory, skillStore, traceStore, localDatabase, commandManager, findWorkspace: id => findWorkspace(dataDirectory, id), readJsonBody, sendJson});
+  const traceQuery = createTraceQuery(traceStore, workflow.store, (id) => findWorkspace(dataDirectory, id)?.path);
   const handle = async function handle(request, response) {
     try {
       if (!token || request.headers.authorization !== `Bearer ${token}`) {
@@ -1048,6 +1050,9 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
       }
       if (segments[0] === "trace-ingest" && segments[1] === "runs" && segments[2] && segments.length === 3 && request.method === "PUT") {
         return sendJson(response, 200, traceStore.finishRun(segments[2], await readJsonBody(request)));
+      }
+      if (request.method === "GET" && segments[0] === "traces" && ["sessions", "invocations", "context"].includes(segments[1])) {
+        return sendJson(response, 200, traceQuery.query(segments.slice(1), Object.fromEntries(url.searchParams)));
       }
       if (request.method === "GET" && url.pathname === "/traces") {
         const numeric = (name) => {

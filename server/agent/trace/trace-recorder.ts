@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import type {
+  TraceMessage,
   TraceEvent,
   TraceRunStatus,
   TraceSpan,
@@ -38,11 +39,18 @@ type AgentScope = {
   currentGenerationSpanId?: string;
   turnIndex: number;
   toolSpanIds: Map<string, string>;
+  input?: string;
+  stopReason?: string;
+  warned?: boolean;
+  publicText: string;
+  generationText: string;
+  replyStartedAt?: number;
 };
 
 export type TraceAgentHandle = {
   scopeKey: string;
   onEvent: (event: AgentEvent) => void;
+  finish: (error?: unknown, cancelled?: boolean) => void;
 };
 
 function numeric(value: unknown) {
@@ -138,6 +146,7 @@ export class TraceRecorder {
   private readonly spans = new Map<string, TraceSpan>();
   private readonly dirtySpanIds = new Set<string>();
   private readonly pendingEvents: TraceEvent[] = [];
+  private readonly pendingMessages = new Map<string, TraceMessage>();
   private readonly scopes = new Map<string, AgentScope>();
   private readonly usage: TraceUsage = structuredClone(EMPTY_USAGE);
   private readonly stats: TraceStats = { turns: 0, generations: 0, tools: 0, subAgents: 0, warnings: 0 };
@@ -188,6 +197,7 @@ export class TraceRecorder {
     modelId: string;
     parentSpanId?: string;
     isRoot?: boolean;
+    input?: string;
   }): TraceAgentHandle {
     const key = options.scopeKey ?? `${options.agentId}:${randomUUID()}`;
     const scope: AgentScope = {
@@ -201,10 +211,54 @@ export class TraceRecorder {
       agentSpanId: randomUUID(),
       turnIndex: 0,
       toolSpanIds: new Map(),
+      input: options.input ?? (options.isRoot ? this.run.question : undefined),
+      publicText: "",
+      generationText: "",
     };
     this.scopes.set(key, scope);
     if (!scope.isRoot) this.stats.subAgents += 1;
-    return { scopeKey: key, onEvent: (event) => this.recordAgentEvent(scope, event) };
+    // Create the invocation before model/tool setup so failed starts remain inspectable.
+    this.recordAgentEvent(scope, { type: "agent_start" });
+    if (scope.input !== undefined) this.projectMessage(scope, "user", scope.input, false);
+    return {
+      scopeKey: key,
+      onEvent: (event) => this.recordAgentEvent(scope, event),
+      finish: (error, cancelled = false) => {
+        const status = cancelled ? "cancelled" : error ? "error" : scope.stopReason === "error" ? "error" : scope.stopReason === "aborted" ? "cancelled" : "success";
+        for (const span of this.spans.values()) {
+          if ((span.id === scope.agentSpanId || this.belongsTo(span, scope.agentSpanId)) && (span.status === "running" || span.id === scope.agentSpanId)) {
+            this.updateSpan(span.id, { status, endedAt: Date.now(), ...(error ? { error: redactTraceValue(String(error), { workspacePath: this.workspacePath }) } : {}) });
+          }
+        }
+        if (!scope.isRoot && status !== "success" && !scope.warned) { this.stats.warnings += 1; scope.warned = true; }
+        this.projectMessage(scope, "assistant", scope.publicText + scope.generationText, status !== "success");
+      },
+    };
+  }
+
+  private belongsTo(span: TraceSpan, ancestor: string): boolean {
+    let parent = span.parentSpanId;
+    const seen = new Set<string>();
+    while (parent && !seen.has(parent)) {
+      if (parent === ancestor) return true;
+      seen.add(parent);
+      parent = this.spans.get(parent)?.parentSpanId;
+    }
+    return false;
+  }
+
+  private projectMessage(scope: AgentScope, role: "user" | "assistant", content: string, partial: boolean) {
+    if (!this.enabled || !content) return;
+    const id = `${scope.agentSpanId}:${role}`;
+    const message: TraceMessage = {
+      id, traceId: this.traceId, spanId: scope.agentSpanId, role,
+      content: redactTraceText(content, { workspacePath: this.workspacePath, maxBytes: 100_000 }),
+      createdAt: role === "user" ? this.spans.get(scope.agentSpanId)?.startedAt : scope.replyStartedAt,
+      label: role === "user" ? (scope.isRoot ? "用户" : "任务") : scope.agentLabel,
+      ...(role === "assistant" ? { model: scope.modelId, partial } : {}),
+    };
+    this.pendingMessages.set(id, message);
+    this.scheduleFlush();
   }
 
   getToolSpanId(scopeKey: string, toolCallId: string) {
@@ -262,6 +316,7 @@ export class TraceRecorder {
     if (!this.enabled || this.finished) return;
     const timestamp = Date.now();
     if (event.type === "agent_start") {
+      if (this.spans.has(scope.agentSpanId)) return;
       this.createSpan(scope, {
         id: scope.agentSpanId,
         ...(scope.parentSpanId ? { parentSpanId: scope.parentSpanId } : {}),
@@ -271,6 +326,7 @@ export class TraceRecorder {
         agentLabel: scope.agentLabel,
         status: "running",
         startedAt: timestamp,
+        input: scope.input === undefined ? undefined : redactTraceValue({ task: scope.input }, { workspacePath: this.workspacePath }),
         attributes: { operation: "invoke_agent", modelProvider: scope.modelProvider, modelId: scope.modelId },
       });
       this.addEvent(scope.agentSpanId, "agent_start", { agentId: scope.agentId, agentLabel: scope.agentLabel });
@@ -297,6 +353,8 @@ export class TraceRecorder {
     if (event.type === "message_start") {
       const role = messageRole(event.message);
       if (role === "assistant") {
+        scope.replyStartedAt ??= timestamp;
+        scope.generationText = "";
         scope.currentGenerationSpanId = randomUUID();
         this.stats.generations += 1;
         this.createSpan(scope, {
@@ -317,6 +375,10 @@ export class TraceRecorder {
     }
     if (event.type === "message_update") {
       const updateType = event.assistantMessageEvent.type;
+      if (updateType === "text_delta") {
+        scope.generationText += event.assistantMessageEvent.delta;
+        this.projectMessage(scope, "assistant", scope.publicText + scope.generationText, true);
+      }
       if (updateType === "thinking_start" || updateType === "thinking_end" || updateType === "toolcall_start" || updateType === "toolcall_end") {
         this.addEvent(scope.currentGenerationSpanId, updateType, {
           contentIndex: "contentIndex" in event.assistantMessageEvent ? event.assistantMessageEvent.contentIndex : undefined,
@@ -349,9 +411,14 @@ export class TraceRecorder {
           status,
           endedAt: timestamp,
           output,
+          attributes: { operation: "chat", provider: scope.modelProvider, model: scope.modelId, usage: redactTraceValue(message.usage) },
           ...(status === "error" ? { error: redactTraceValue(message.errorMessage ?? "模型生成失败") } : {}),
         });
         addUsage(this.usage, message.usage);
+        scope.stopReason = message.stopReason;
+        scope.publicText += output.text;
+        scope.generationText = "";
+        this.projectMessage(scope, "assistant", scope.publicText, status !== "success");
         if (scope.isRoot) {
           this.rootStopReason = message.stopReason;
           this.finalOutput = output.text;
@@ -424,11 +491,12 @@ export class TraceRecorder {
       return;
     }
     if (event.type === "agent_end") {
-      const status: TraceSpanStatus = this.aborted && scope.isRoot
+      const status: TraceSpanStatus = (this.aborted && scope.isRoot) || scope.stopReason === "aborted"
         ? "cancelled"
-        : scope.isRoot && this.rootStopReason === "error"
+        : scope.stopReason === "error"
           ? "error"
           : "success";
+      if (!scope.isRoot && status !== "success" && !scope.warned) { this.stats.warnings += 1; scope.warned = true; }
       this.updateSpan(scope.agentSpanId, { status, endedAt: timestamp });
       this.addEvent(scope.agentSpanId, "agent_end", { messageCount: event.messages.length, status });
     }
@@ -461,10 +529,12 @@ export class TraceRecorder {
       const span = this.spans.get(id);
       return span ? [span] : [];
     });
+    const messages = [...this.pendingMessages.values()];
+    this.pendingMessages.clear();
     this.pendingBytes = 0;
-    if (!events.length && !spans.length) return this.flushChain;
+    if (!events.length && !spans.length && !messages.length) return this.flushChain;
     this.flushChain = this.flushChain
-      .then(() => this.sink.append(this.traceId, { spans, events }))
+      .then(() => this.sink.append(this.traceId, { spans, events, messages }))
       .catch((error) => {
         console.warn("Trace batch write failed", error);
         this.enabled = false;

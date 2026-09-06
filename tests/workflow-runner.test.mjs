@@ -6,6 +6,7 @@ import path from "node:path";
 import { createWorkflowRunners } from "../server/workflow/runner.mjs";
 import { createWorkflowStore, newRun } from "../server/workflow/store.mjs";
 import { createSkillStore } from "../server/skill-store.mjs";
+import { createTraceStore } from "../server/trace-store.mjs";
 import { createLocalDatabase } from "../server/local-database.mjs";
 const agentId = "custom-reader-12345678";
 const node = {
@@ -226,4 +227,23 @@ test("write lock serializes mutating tools across separate node attempts", async
     ),
   );
   assert.equal(max, 1);
+});
+
+test("node preparation failures create a correlated failed trace without changing recovery state", async (t) => {
+  const f = await fixture(t);
+  const directory = await mkdtemp(path.join(tmpdir(), "workflow-trace-"));
+  const traceStore = createTraceStore(directory);
+  t.after(async () => { traceStore.close(); await rm(directory, { recursive: true, force: true }); });
+  const attempt = { id: "failed-setup-attempt", nodeId: node.id, version: 1, status: "running", startedAt: Date.now() };
+  f.update((r) => { r.plan = { nodes: [node] }; r.attempts.push(attempt); });
+  const runners = createWorkflowRunners({ ...f, traceStore, localDatabase: f.db, profileTools: async () => { throw new Error("能力初始化失败"); } });
+  await assert.rejects(runners.executeNode({ run: f.store.get(f.run.id), node, attempt, signal: new AbortController().signal, store: f.store, update: f.update }), /能力初始化失败/);
+  const run = f.store.get(f.run.id), trace = traceStore.getTrace(run.attempts[0].traceId);
+  assert.equal(run.attempts[0].status, "running"); // The engine still owns attempt transitions.
+  assert.equal(trace.run.status, "error");
+  assert.equal(trace.run.context.attemptId, attempt.id);
+  assert.equal(trace.run.context.workflowRunId, run.id);
+  assert.equal(trace.run.context.agentLabel, "test");
+  assert.equal(trace.spans[0].status, "error");
+  assert.equal(trace.messages[0].content, node.task);
 });

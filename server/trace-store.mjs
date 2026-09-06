@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { redactTraceText, redactTraceValue } from "./trace-redaction.mjs";
 
-const TRACE_SCHEMA_VERSION = 1;
+const TRACE_SCHEMA_VERSION = 2;
 const DEFAULT_MAX_RUNS = 1_000;
 const DEFAULT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 const DEFAULT_STALE_AFTER_MS = 30 * 60 * 1_000;
@@ -56,6 +56,7 @@ function mapRun(row) {
   return {
     id: row.id,
     schemaVersion: row.schema_version,
+    ...(row.context_json ? { context: parseJson(row.context_json) } : {}),
     workspaceId: row.workspace_id,
     ...(row.conversation_id ? { conversationId: row.conversation_id } : {}),
     status: row.status,
@@ -202,6 +203,15 @@ export function createTraceStore(dataDirectory, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_usage_contributions_day ON usage_contributions(day);
   `);
 
+  // Additive, repeatable migration; old records retain their original schema version.
+  if (!database.prepare("PRAGMA table_info(trace_runs)").all().some((c) => c.name === "context_json")) {
+    database.exec("ALTER TABLE trace_runs ADD COLUMN context_json TEXT");
+  }
+  database.exec(`CREATE TABLE IF NOT EXISTS trace_messages (
+    id TEXT PRIMARY KEY, trace_id TEXT NOT NULL REFERENCES trace_runs(id) ON DELETE CASCADE,
+    span_id TEXT, created_at INTEGER, body TEXT NOT NULL
+  ); CREATE INDEX IF NOT EXISTS idx_trace_messages_trace ON trace_messages(trace_id, created_at);`);
+
   const now = typeof options.now === "function" ? options.now : () => Date.now();
   const maxRuns = Number(options.maxRuns) || DEFAULT_MAX_RUNS;
   const maxAgeMs = Number(options.maxAgeMs) || DEFAULT_MAX_AGE_MS;
@@ -271,6 +281,10 @@ export function createTraceStore(dataDirectory, options = {}) {
       SET status='interrupted', ended_at=last_event_at, duration_ms=MAX(0, last_event_at-started_at)
       WHERE status='running' AND last_event_at < ?
     `).run(timestamp - staleAfterMs);
+    database.prepare(`UPDATE trace_spans SET status='cancelled',
+      ended_at=(SELECT ended_at FROM trace_runs WHERE id=trace_spans.trace_id),
+      duration_ms=MAX(0,(SELECT ended_at FROM trace_runs WHERE id=trace_spans.trace_id)-started_at)
+      WHERE status='running' AND trace_id IN (SELECT id FROM trace_runs WHERE status='interrupted')`).run();
     database.prepare("DELETE FROM trace_runs WHERE started_at < ?").run(timestamp - maxAgeMs);
     database.prepare(`
       DELETE FROM trace_runs WHERE id IN (
@@ -298,6 +312,7 @@ export function createTraceStore(dataDirectory, options = {}) {
       json(payload.capabilities, 64 * 1024),
       json({ turns: 0, generations: 0, tools: 0, subAgents: 0, warnings: 0 }),
     );
+    if (payload.context) database.prepare("UPDATE trace_runs SET context_json=? WHERE id=?").run(json(payload.context), id);
     if (pendingAborts.delete(id)) abortRun(id);
     return getTrace(id).run;
   }
@@ -307,7 +322,8 @@ export function createTraceStore(dataDirectory, options = {}) {
     if (!payload || typeof payload !== "object") fail("Trace 事件批次无效。");
     const spans = Array.isArray(payload.spans) ? payload.spans : [];
     const events = Array.isArray(payload.events) ? payload.events : [];
-    if (spans.length > 200 || events.length > 200) fail("Trace 事件批次过大。", 413);
+    const messages = Array.isArray(payload.messages) ? payload.messages : [];
+    if (spans.length > 200 || events.length > 200 || messages.length > 200) fail("Trace 事件批次过大。", 413);
     const runState = database.prepare("SELECT status FROM trace_runs WHERE id=?").get(id);
     if (!runState) fail("Trace 不存在。", 404);
     if (runState.status !== "running") return { acceptedSpans: 0, acceptedEvents: 0, lastEventAt: 0, ignored: true };
@@ -351,6 +367,16 @@ export function createTraceStore(dataDirectory, options = {}) {
           timestamp,
           json(event.payload),
         );
+      }
+      for (const message of messages) {
+        if (typeof message.id !== "string" || message.id.length > 200 || !["user", "assistant"].includes(message.role)) fail("Trace 消息无效。");
+        const value = { ...message, traceId: id, content: redactTraceText(message.content, { maxBytes: 100_000 }) };
+        database.prepare(`INSERT INTO trace_messages VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body
+          WHERE trace_messages.trace_id=excluded.trace_id`).run(
+          value.id, id, optionalId(value.spanId) ?? null, Number.isSafeInteger(value.createdAt) ? value.createdAt : null,
+          JSON.stringify(redactTraceValue(value, { maxBytes: 128 * 1024 })),
+        );
+        lastEventAt = Math.max(lastEventAt, now());
       }
       if (lastEventAt) database.prepare("UPDATE trace_runs SET last_event_at=? WHERE id=?").run(lastEventAt, id);
       database.exec("COMMIT");
@@ -499,7 +525,36 @@ export function createTraceStore(dataDirectory, options = {}) {
       run: mapRun(row),
       spans: database.prepare("SELECT * FROM trace_spans WHERE trace_id=? ORDER BY started_at, id").all(id).map(mapSpan),
       events: database.prepare("SELECT * FROM trace_events WHERE trace_id=? ORDER BY seq").all(id).map(mapEvent),
+      messages: database.prepare("SELECT body FROM trace_messages WHERE trace_id=? ORDER BY created_at, rowid").all(id).map((r) => JSON.parse(r.body)),
     };
+  }
+
+  // Compact read models never load event payloads or complete message/tool bodies.
+  function summaries(workspaceId) {
+    requireId(workspaceId, "项目 ID");
+    return database.prepare(`SELECT id, schema_version, workspace_id, conversation_id, context_json,
+      status, started_at, ended_at, duration_ms, last_event_at, model_provider, model_id,
+      substr(question,1,1000) question, stats_json FROM trace_runs WHERE workspace_id=?`).all(workspaceId).map(mapRun);
+  }
+  function spanSummaries(workspaceId) {
+    requireId(workspaceId, "项目 ID");
+    return database.prepare(`SELECT s.id, s.trace_id, s.parent_span_id, s.kind, s.name, s.agent_id,
+      s.agent_label, s.status, s.started_at, s.ended_at, s.duration_ms,
+      coalesce(json_extract(s.attributes_json,'$.usage.totalTokens'),json_extract(s.output_json,'$.usage.totalTokens')) total_tokens,
+      substr(json_extract(s.input_json,'$.task'),1,1000) task
+      FROM trace_spans s JOIN trace_runs r ON s.trace_id=r.id WHERE r.workspace_id=?`).all(workspaceId)
+      .map((r) => ({ ...mapSpan(r), totalTokens: r.total_tokens, task: r.task }));
+  }
+  function linkContext(id, conversationId, context) {
+    database.prepare("UPDATE trace_runs SET conversation_id=?,context_json=? WHERE id=? AND context_json IS NULL")
+      .run(conversationId, json(context), id);
+  }
+  function messageSnapshots(traceId) {
+    return database.prepare("SELECT body FROM trace_messages WHERE trace_id=? ORDER BY created_at,rowid")
+      .all(requireId(traceId)).map((r) => JSON.parse(r.body));
+  }
+  function legacyReply(traceId) {
+    return database.prepare("SELECT output FROM trace_runs WHERE id=?").get(requireId(traceId))?.output;
   }
 
   function getUsageActivity(filters = {}) {
@@ -549,5 +604,5 @@ export function createTraceStore(dataDirectory, options = {}) {
   }
 
   cleanup();
-  return { databasePath, createRun, appendBatch, finishRun, requestAbort, isAbortRequested, listTraces, getTrace, getUsageActivity, importUsageContributions, deleteTrace, clearTraces, cleanup, close: () => database.close() };
+  return { databasePath, summaries, spanSummaries, linkContext, messageSnapshots, legacyReply, createRun, appendBatch, finishRun, requestAbort, isAbortRequested, listTraces, getTrace, getUsageActivity, importUsageContributions, deleteTrace, clearTraces, cleanup, close: () => database.close() };
 }
