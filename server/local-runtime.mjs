@@ -1068,6 +1068,19 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
           limit: numeric("limit"),
         }));
       }
+      if (request.method === "GET" && url.pathname === "/usage/activity") {
+        const numeric = (name) => {
+          const raw = url.searchParams.get(name);
+          if (!raw) return undefined;
+          const value = Number(raw);
+          if (!Number.isSafeInteger(value)) throw Object.assign(new Error(`用量 ${name} 参数无效。`), { status: 400 });
+          return value;
+        };
+        return sendJson(response, 200, traceStore.getUsageActivity({ from: numeric("from"), to: numeric("to") }));
+      }
+      if (request.method === "POST" && url.pathname === "/usage/import") {
+        return sendJson(response, 200, traceStore.importUsageContributions(await readJsonBody(request)));
+      }
       if (segments[0] === "traces" && segments[1] && segments.length === 2) {
         if (request.method === "GET") return sendJson(response, 200, traceStore.getTrace(segments[1]));
         if (request.method === "DELETE") return sendJson(response, 200, traceStore.deleteTrace(segments[1]));

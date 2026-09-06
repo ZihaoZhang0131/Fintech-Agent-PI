@@ -10,6 +10,7 @@ const DEFAULT_STALE_AFTER_MS = 30 * 60 * 1_000;
 const VALID_RUN_STATUSES = new Set(["running", "success", "success_with_warnings", "error", "aborted", "interrupted"]);
 const VALID_SPAN_KINDS = new Set(["agent", "turn", "generation", "tool"]);
 const VALID_SPAN_STATUSES = new Set(["running", "success", "error", "cancelled"]);
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
 function fail(message, status = 400) {
   throw Object.assign(new Error(message), { status });
@@ -26,6 +27,15 @@ function optionalId(value, label) {
 
 function integer(value, fallback) {
   return Number.isSafeInteger(value) ? value : fallback;
+}
+
+function nonNegativeInteger(value, fallback = 0) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
+}
+
+function usageDayKey(timestamp) {
+  const date = new Date(timestamp);
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
 }
 
 function json(value, maxBytes = 32 * 1024) {
@@ -176,6 +186,20 @@ export function createTraceStore(dataDirectory, options = {}) {
     CREATE INDEX IF NOT EXISTS idx_trace_spans_trace_parent ON trace_spans(trace_id, parent_span_id, started_at);
     CREATE INDEX IF NOT EXISTS idx_trace_spans_agent ON trace_spans(agent_id, started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_trace_events_trace_time ON trace_events(trace_id, timestamp, seq);
+    CREATE TABLE IF NOT EXISTS usage_daily (
+      day TEXT PRIMARY KEY,
+      token_count INTEGER NOT NULL DEFAULT 0,
+      tool_count INTEGER NOT NULL DEFAULT 0,
+      skill_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS usage_contributions (
+      source_id TEXT PRIMARY KEY,
+      day TEXT NOT NULL,
+      token_count INTEGER NOT NULL DEFAULT 0,
+      tool_count INTEGER NOT NULL DEFAULT 0,
+      skill_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_contributions_day ON usage_contributions(day);
   `);
 
   const now = typeof options.now === "function" ? options.now : () => Date.now();
@@ -208,6 +232,37 @@ export function createTraceStore(dataDirectory, options = {}) {
     ON CONFLICT(trace_id, seq) DO UPDATE SET
       span_id=excluded.span_id, type=excluded.type, timestamp=excluded.timestamp, payload_json=excluded.payload_json
   `);
+  const insertUsageContribution = database.prepare(`
+    INSERT OR IGNORE INTO usage_contributions (source_id, day, token_count, tool_count, skill_count)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const upsertUsageDaily = database.prepare(`
+    INSERT INTO usage_daily (day, token_count, tool_count, skill_count) VALUES (?, ?, ?, ?)
+    ON CONFLICT(day) DO UPDATE SET
+      token_count=token_count + excluded.token_count,
+      tool_count=tool_count + excluded.tool_count,
+      skill_count=skill_count + excluded.skill_count
+  `);
+
+  function addUsageContribution(sourceId, day, token = 0, tool = 0, skill = 0) {
+    if (typeof sourceId !== "string" || !sourceId || sourceId.length > 600 || !DAY_KEY.test(day)) fail("用量统计参数无效。");
+    const result = insertUsageContribution.run(sourceId, day, token, tool, skill);
+    if (result.changes) upsertUsageDaily.run(day, token, tool, skill);
+    return Number(result.changes);
+  }
+
+  function recordTraceUsage(traceId, startedAt, usage) {
+    let imported = 0;
+    const totalTokens = nonNegativeInteger(usage?.totalTokens);
+    if (totalTokens > 0) imported += addUsageContribution(`trace/${traceId}/token`, usageDayKey(startedAt), totalTokens);
+    const spans = database.prepare("SELECT id, started_at, attributes_json FROM trace_spans WHERE trace_id=? AND kind='tool'").all(traceId);
+    for (const span of spans) {
+      const attributes = parseJson(span.attributes_json);
+      const skill = attributes?.toolName === "load_skill" ? 1 : 0;
+      imported += addUsageContribution(`trace/${traceId}/tool/${span.id}`, usageDayKey(span.started_at), 0, 1, skill);
+    }
+    return imported;
+  }
 
   function cleanup() {
     const timestamp = now();
@@ -315,11 +370,13 @@ export function createTraceStore(dataDirectory, options = {}) {
     if (!row) fail("Trace 不存在。", 404);
     if (row.status !== "running") return getTrace(id).run;
     const endedAt = integer(payload.endedAt, now());
-    database.prepare(`
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      database.prepare(`
       UPDATE trace_runs SET
         status=?, ended_at=?, duration_ms=?, last_event_at=?, output=?, usage_json=?, error_json=?, stats_json=?
       WHERE id=? AND status='running'
-    `).run(
+      `).run(
       payload.status,
       endedAt,
       Math.max(0, endedAt - row.started_at),
@@ -328,8 +385,14 @@ export function createTraceStore(dataDirectory, options = {}) {
       json(payload.usage, 16 * 1024),
       json(payload.error),
       json(payload.stats, 16 * 1024),
-      id,
-    );
+        id,
+      );
+      recordTraceUsage(id, row.started_at, payload.usage);
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
     cleanup();
     return getTrace(id).run;
   }
@@ -354,6 +417,7 @@ export function createTraceStore(dataDirectory, options = {}) {
           status='aborted', ended_at=?, duration_ms=MAX(0, ?-started_at), last_event_at=?
         WHERE id=? AND status='running'
       `).run(endedAt, endedAt, endedAt, id);
+      recordTraceUsage(id, row.started_at, undefined);
       database.exec("COMMIT");
     } catch (error) {
       database.exec("ROLLBACK");
@@ -438,6 +502,39 @@ export function createTraceStore(dataDirectory, options = {}) {
     };
   }
 
+  function getUsageActivity(filters = {}) {
+    const from = Number.isSafeInteger(filters.from) ? filters.from : Date.now() - 364 * 24 * 60 * 60 * 1_000;
+    const to = Number.isSafeInteger(filters.to) ? filters.to : Date.now();
+    if (from > to) fail("用量统计日期范围无效。");
+    const days = database.prepare(`
+      SELECT day, token_count AS token, tool_count AS tool, skill_count AS skill
+      FROM usage_daily WHERE day >= ? AND day <= ? ORDER BY day ASC
+    `).all(usageDayKey(from), usageDayKey(to));
+    return { days };
+  }
+
+  function importUsageContributions(payload) {
+    const contributions = Array.isArray(payload?.contributions) ? payload.contributions : null;
+    if (!contributions || contributions.length > 10_000) fail("历史用量导入参数无效。", 413);
+    let imported = 0;
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const item of contributions) {
+        if (!item || typeof item !== "object") fail("历史用量记录无效。");
+        const token = nonNegativeInteger(item.token);
+        const tool = nonNegativeInteger(item.tool);
+        const skill = nonNegativeInteger(item.skill);
+        if (skill > tool || (token === 0 && tool === 0 && skill === 0)) fail("历史用量记录无效。");
+        imported += addUsageContribution(item.sourceId, item.day, token, tool, skill);
+      }
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+    return { imported };
+  }
+
   function deleteTrace(traceId) {
     const id = requireId(traceId, "Trace ID");
     const result = database.prepare("DELETE FROM trace_runs WHERE id=?").run(id);
@@ -452,5 +549,5 @@ export function createTraceStore(dataDirectory, options = {}) {
   }
 
   cleanup();
-  return { databasePath, createRun, appendBatch, finishRun, requestAbort, isAbortRequested, listTraces, getTrace, deleteTrace, clearTraces, cleanup, close: () => database.close() };
+  return { databasePath, createRun, appendBatch, finishRun, requestAbort, isAbortRequested, listTraces, getTrace, getUsageActivity, importUsageContributions, deleteTrace, clearTraces, cleanup, close: () => database.close() };
 }

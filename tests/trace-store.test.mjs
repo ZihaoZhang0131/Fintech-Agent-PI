@@ -92,11 +92,12 @@ test("trace store makes user abort terminal and honors an early pending abort", 
 
   store.createRun({ id: "trace_abort_store_12345678", workspaceId: "workspace_abort_store_12345678", startedAt: Date.now(), question: "停止" });
   store.appendBatch("trace_abort_store_12345678", {
-    spans: [{ id: "span_abort_store_12345678", traceId: "trace_abort_store_12345678", kind: "agent", name: "invoke_agent", status: "running", startedAt: Date.now() }],
+    spans: [{ id: "span_abort_store_12345678", traceId: "trace_abort_store_12345678", kind: "tool", name: "execute_tool bash", status: "running", startedAt: Date.now(), attributes: { toolName: "bash" } }],
     events: [{ seq: 1, type: "agent_start", timestamp: Date.now() }],
   });
   assert.equal(store.requestAbort("trace_abort_store_12345678").active, true);
   assert.equal(store.getTrace("trace_abort_store_12345678").run.status, "aborted");
+  assert.equal(store.getUsageActivity({ from: Date.now() - 86_400_000, to: Date.now() + 86_400_000 }).days[0]?.tool, 1);
   assert.equal(store.getTrace("trace_abort_store_12345678").spans[0].status, "cancelled");
   assert.equal(store.appendBatch("trace_abort_store_12345678", { spans: [], events: [{ seq: 99, type: "late", timestamp: Date.now() }] }).ignored, true);
   store.finishRun("trace_abort_store_12345678", { status: "success", endedAt: Date.now(), stats: {}, usage: {} });
@@ -106,6 +107,38 @@ test("trace store makes user abort terminal and honors an early pending abort", 
   store.createRun({ id: "trace_early_abort_12345678", workspaceId: "workspace_abort_store_12345678", startedAt: Date.now(), question: "提前停止" });
   assert.equal(store.isAbortRequested("trace_early_abort_12345678"), true);
   assert.equal(store.getTrace("trace_early_abort_12345678").run.status, "aborted");
+});
+
+test("trace store persists daily usage idempotently across trace retention and imports legacy history", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "pi-usage-store-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dayOne = new Date(2026, 8, 1, 10).getTime();
+  const dayTwo = new Date(2026, 8, 2, 1).getTime();
+  let clock = dayOne;
+  const store = createTraceStore(root, { now: () => clock, maxAgeMs: 2 * 86_400_000 });
+  t.after(() => store.close());
+  const traceId = "trace_usage_12345678";
+  store.createRun({ id: traceId, workspaceId: "workspace_usage_12345678", startedAt: dayOne, question: "统计" });
+  store.appendBatch(traceId, {
+    spans: [
+      { id: "span_usage_tool_12345678", kind: "tool", name: "execute_tool web_search", status: "success", startedAt: dayOne, endedAt: dayOne + 1, attributes: { toolName: "web_search" } },
+      { id: "span_usage_skill_12345678", kind: "tool", name: "execute_tool load_skill", status: "cancelled", startedAt: dayTwo, endedAt: dayTwo + 1, attributes: { toolName: "load_skill" } },
+    ],
+    events: [],
+  });
+  store.finishRun(traceId, { status: "success", endedAt: dayTwo + 2, usage: { totalTokens: 42 }, stats: {} });
+  store.finishRun(traceId, { status: "success", endedAt: dayTwo + 3, usage: { totalTokens: 42 }, stats: {} });
+  clock = dayTwo + 3 * 86_400_000;
+  store.cleanup();
+  const activity = store.getUsageActivity({ from: dayOne, to: dayTwo });
+  assert.deepEqual(activity.days.map((day) => ({ ...day })), [
+    { day: "2026-09-01", token: 42, tool: 1, skill: 0 },
+    { day: "2026-09-02", token: 0, tool: 1, skill: 1 },
+  ]);
+  assert.equal(store.listTraces({ limit: 10 }).traces.length, 0);
+  assert.equal(store.importUsageContributions({ contributions: [{ sourceId: "legacy/message/one/token", day: "2026-09-01", token: 9 }] }).imported, 1);
+  assert.equal(store.importUsageContributions({ contributions: [{ sourceId: "legacy/message/one/token", day: "2026-09-01", token: 9 }] }).imported, 0);
+  assert.equal(store.getUsageActivity({ from: dayOne, to: dayTwo }).days[0].token, 51);
 });
 
 test("local Runtime protects Trace ingestion and exposes query and deletion routes", async (t) => {
@@ -145,6 +178,14 @@ test("local Runtime protects Trace ingestion and exposes query and deletion rout
   assert.equal(detail.events[0].type, "agent_start");
   const listing = await fetch(`${baseUrl}/traces?workspaceId=workspace_runtime_12345678`, { headers }).then((response) => response.json());
   assert.equal(listing.traces.length, 1);
+  const usage = await fetch(`${baseUrl}/usage/activity`, { headers }).then((response) => response.json());
+  assert.equal(usage.days.at(-1).token, 2);
+  const imported = await fetch(`${baseUrl}/usage/import`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ contributions: [{ sourceId: "legacy/message/runtime/token", day: "2026-09-01", token: 4 }] }),
+  }).then((response) => response.json());
+  assert.equal(imported.imported, 1);
   assert.equal((await fetch(`${baseUrl}/traces/trace_runtime_12345678`, { method: "DELETE", headers })).status, 200);
 });
 

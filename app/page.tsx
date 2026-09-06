@@ -112,7 +112,12 @@ import {
   type ToolRun,
   type ToolStartEvent,
 } from "@/lib/tool-runs";
-import { getUsageActivity } from "@/lib/usage-activity";
+import {
+  legacyUsageContributions,
+  usageActivityFromDays,
+  type UsageActivity,
+  type UsageActivityDay,
+} from "@/lib/usage-activity";
 
 type MessageRole = "user" | "assistant";
 
@@ -204,6 +209,7 @@ const FILE_TABS_KEY = "pi-research-agent:file-tabs:v1";
 const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
 const AGENT_PROFILES_KEY = "pi-research-agent:agent-profiles:v2";
 const AGENT_PROMPTS_KEY = "pi-research-agent:agent-prompts:v1";
+const USAGE_LEGACY_MIGRATION_KEY = "pi-research-agent:usage-sqlite-migrated:v1";
 
 type AppView = "workflow" | "workspace" | CapabilityKind | "model" | "agent" | "subagent" | "user" | "database" | "trace";
 
@@ -491,6 +497,11 @@ export default function Home() {
   const [selectedModelId, setSelectedModelId] = useState("");
   const [durationMs, setDurationMs] = useState<number | null>(null);
   const [tokenUsage, setTokenUsage] = useState<number | null>(null);
+  const [usageActivity, setUsageActivity] = useState<UsageActivity>({
+    token: new Map(),
+    tool: new Map(),
+    skill: new Map(),
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [filePanelOpen, setFilePanelOpen] = useState(false);
   const [fileNavigation, setFileNavigation] = useState<FileNavigation | null>(null);
@@ -548,7 +559,6 @@ export default function Home() {
     () => availableModels.find((model) => `${model.providerId}:${model.modelId}` === selectedModelId),
     [availableModels, selectedModelId],
   );
-  const usageActivity = useMemo(() => getUsageActivity(conversations), [conversations]);
   const activeAgentConfig = useMemo(
     () => agentConfigsByProject[activeProjectId] ?? createEmptyProjectAgentConfig(),
     [activeProjectId, agentConfigsByProject],
@@ -677,6 +687,19 @@ export default function Home() {
     [loadProjectDirectory],
   );
 
+  const loadUsageActivity = useCallback(async () => {
+    const to = Date.now();
+    const from = to - 364 * 24 * 60 * 60 * 1_000;
+    try {
+      const payload = await responseJson<{ days: UsageActivityDay[] }>(
+        await fetch(`/api/local/usage/activity?from=${from}&to=${to}`, { cache: "no-store" }),
+      );
+      setUsageActivity(usageActivityFromDays(payload.days));
+    } catch {
+      // Keep the last successful value while the local Runtime is unavailable.
+    }
+  }, []);
+
   const loadModelCatalog = useCallback(async () => {
     setModelsLoading(true);
     setModelsError("");
@@ -796,6 +819,21 @@ export default function Home() {
         if (initialProject) {
           localStorage.setItem(ACTIVE_PROJECT_KEY, initialProject.id);
         }
+        if (localStorage.getItem(USAGE_LEGACY_MIGRATION_KEY) !== "done") {
+          const contributions = legacyUsageContributions(stored);
+          for (let index = 0; index < contributions.length || index === 0; index += 10_000) {
+            await responseJson(
+              await fetch("/api/local/usage/import", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ contributions: contributions.slice(index, index + 10_000) }),
+              }),
+            );
+            if (contributions.length === 0) break;
+          }
+          localStorage.setItem(USAGE_LEGACY_MIGRATION_KEY, "done");
+        }
+        await loadUsageActivity();
       } catch (error) {
         setProjectError(error instanceof Error ? error.message : "本机项目 Runtime 不可用。");
       } finally {
@@ -806,7 +844,7 @@ export default function Home() {
 
     void initialize();
     void loadModelCatalog();
-  }, [loadModelCatalog]);
+  }, [loadModelCatalog, loadUsageActivity]);
 
   useEffect(() => {
     async function loadCapabilities() {
@@ -1805,6 +1843,7 @@ export default function Home() {
               ),
               updatedAt: timestampNow(),
             }));
+            if (event.traceStatus === "recorded") void loadUsageActivity();
           }
           if (event.type === "done") {
             setStatus("done");
