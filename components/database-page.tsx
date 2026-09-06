@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ChevronRight, KeyRound, RefreshCw } from "lucide-react";
+import { ChevronRight, GripHorizontal, KeyRound, Play } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SqlEditor } from "@/components/sql-editor";
 
@@ -13,6 +13,20 @@ type TableDetails = {
   preview: QueryResult;
 };
 type FieldsState = { name: string; columns?: TableDetails["columns"]; error?: string };
+
+const DEFAULT_EDITOR_RATIO = 2 / 3;
+const MIN_EDITOR_RATIO = 0.2;
+const MAX_EDITOR_RATIO = 0.8;
+const MIN_EDITOR_HEIGHT = 96;
+const MIN_RESULTS_HEIGHT = 120;
+const SPLITTER_HEIGHT = 34;
+const SPLIT_RATIO_STORAGE_KEY = "pi-research-agent:database-editor-ratio:v1";
+
+function normalizeEditorRatio(value: number) {
+  return Number.isFinite(value) && value >= MIN_EDITOR_RATIO && value <= MAX_EDITOR_RATIO
+    ? value
+    : DEFAULT_EDITOR_RATIO;
+}
 
 async function responseJson<T>(response: Response) {
   const payload = await response.json().catch(() => null) as { message?: string } | T | null;
@@ -53,7 +67,7 @@ function Fields({ state }: { state: FieldsState }) {
   );
 }
 
-export function DatabasePage({ onClose }: { onClose: () => void }) {
+export function DatabasePage() {
   const [tables, setTables] = useState<DatabaseTable[]>([]);
   const [selectedTable, setSelectedTable] = useState("");
   const [fields, setFields] = useState<FieldsState | null>(null);
@@ -64,6 +78,12 @@ export function DatabasePage({ onClose }: { onClose: () => void }) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [listError, setListError] = useState("");
+  const [editorRatio, setEditorRatio] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_EDITOR_RATIO;
+    return normalizeEditorRatio(Number(window.localStorage.getItem(SPLIT_RATIO_STORAGE_KEY)));
+  });
+  const [editorAvailableHeight, setEditorAvailableHeight] = useState(0);
+  const databaseMain = useRef<HTMLElement>(null);
   const columnsCache = useRef(new Map<string, TableDetails["columns"]>());
   const cacheVersion = useRef(0);
   const listRequest = useRef(0);
@@ -99,6 +119,48 @@ export function DatabasePage({ onClose }: { onClose: () => void }) {
       requests.forEach((request) => { ++request.current; });
     };
   }, [loadTables]);
+
+  useEffect(() => {
+    const element = databaseMain.current;
+    if (!element) return;
+    const measure = () => setEditorAvailableHeight(Math.max(0, element.clientHeight - SPLITTER_HEIGHT));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  function constrainEditorRatio(value: number) {
+    const bounded = Math.min(MAX_EDITOR_RATIO, Math.max(MIN_EDITOR_RATIO, value));
+    if (editorAvailableHeight < MIN_EDITOR_HEIGHT + MIN_RESULTS_HEIGHT) return bounded;
+    const minForHeight = MIN_EDITOR_HEIGHT / editorAvailableHeight;
+    const maxForResults = 1 - MIN_RESULTS_HEIGHT / editorAvailableHeight;
+    return Math.min(maxForResults, Math.max(minForHeight, bounded));
+  }
+
+  function updateEditorRatio(value: number) {
+    const next = constrainEditorRatio(value);
+    setEditorRatio(next);
+    window.localStorage.setItem(SPLIT_RATIO_STORAGE_KEY, String(next));
+  }
+
+  function startResize(event: React.PointerEvent<HTMLDivElement>) {
+    if ((event.target as HTMLElement).closest("button")) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function resize(event: React.PointerEvent<HTMLDivElement>) {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId) || !databaseMain.current || !editorAvailableHeight) return;
+    const top = databaseMain.current.getBoundingClientRect().top;
+    updateEditorRatio((event.clientY - top - SPLITTER_HEIGHT / 2) / editorAvailableHeight);
+  }
+
+  function endResize(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  const editorHeight = editorAvailableHeight ? Math.round(editorAvailableHeight * constrainEditorRatio(editorRatio)) : undefined;
 
   async function fetchTable(name: string) {
     const version = cacheVersion.current;
@@ -163,10 +225,6 @@ export function DatabasePage({ onClose }: { onClose: () => void }) {
 
   return (
     <section className="database-page" aria-label="数据库">
-      <header className="database-page-header">
-        <button className="capability-back" type="button" onClick={onClose} aria-label="返回项目" title="返回项目"><ArrowLeft size={16} /></button>
-        <button className="capability-refresh" type="button" onClick={() => void loadTables()} disabled={loading} aria-label="刷新数据表" title="刷新数据表"><RefreshCw size={15} /></button>
-      </header>
       <div className="database-workspace">
         <aside className="database-table-list" aria-label="数据表">
           {listError && <div className="database-field-error" role="alert">{listError}</div>}
@@ -183,8 +241,35 @@ export function DatabasePage({ onClose }: { onClose: () => void }) {
           </div>
           {fields && <div className="database-mobile-fields"><Fields state={fields} /></div>}
         </aside>
-        <main className="database-main">
-          <SqlEditor value={sql} onChange={setSql} onRun={() => void runQuery()} running={running} />
+        <main className="database-main" ref={databaseMain}>
+          <SqlEditor value={sql} onChange={setSql} onRun={() => void runQuery()} running={running} height={editorHeight} />
+          <div
+            className="database-splitter"
+          >
+            <div
+              className="database-splitter-handle"
+              role="separator"
+              tabIndex={0}
+              aria-label="调整 SQL 编辑器和查询结果的高度"
+              aria-orientation="horizontal"
+              aria-valuemin={20}
+              aria-valuemax={80}
+              aria-valuenow={Math.round(editorRatio * 100)}
+              aria-valuetext={`SQL 编辑器 ${Math.round(editorRatio * 100)}%，查询结果 ${100 - Math.round(editorRatio * 100)}%`}
+              onPointerDown={startResize}
+              onPointerMove={resize}
+              onPointerUp={endResize}
+              onPointerCancel={endResize}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                event.preventDefault();
+                updateEditorRatio(editorRatio + (event.key === "ArrowUp" ? 0.02 : -0.02));
+              }}
+            >
+              <span className="database-splitter-line" aria-hidden="true"><GripHorizontal size={15} /></span>
+            </div>
+            <button type="button" onClick={() => void runQuery()} disabled={running || !sql.trim()} title="执行查询（⌘ / Ctrl + Enter）"><Play size={13} />{running ? "查询中" : "执行"}</button>
+          </div>
           <section className="database-results" aria-label="查询结果" aria-busy={previewLoading || running}>
             {error && <div className="database-error" role="alert">{error}</div>}
             {previewLoading ? <div className="database-empty" role="status">正在读取数据…</div> : result ? <ResultTable result={result} /> : !error && <div className="database-empty">选择数据表或执行 SQL 查看结果。</div>}

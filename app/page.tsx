@@ -2748,7 +2748,7 @@ export default function Home() {
           onOpenConversation={openTraceConversation}
         />
       ) : activeView === "database" ? (
-        <DatabasePage onClose={() => setActiveView(appMode)} />
+        <DatabasePage />
       ) : (
         <CapabilityLibrary
           key={activeView}

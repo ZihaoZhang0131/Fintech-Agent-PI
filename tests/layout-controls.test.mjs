@@ -72,5 +72,5 @@ test("project files panel exposes persistent browser-style file tabs", () => {
   );
   assert.doesNotMatch(pageSource, /FILE_BROWSER_RATIO_KEY|FILE_BROWSER_VISIBLE_KEY|FILE_PREVIEW_VISIBLE_KEY/);
   assert.doesNotMatch(pageSource, /调整文件目录和预览区域高度|隐藏文件预览|展开文件预览/);
-  assert.doesNotMatch(stylesheet, /workspace-section-resizer|--file-browser-ratio|row-resize/);
+  assert.doesNotMatch(stylesheet, /workspace-section-resizer|--file-browser-ratio/);
 });

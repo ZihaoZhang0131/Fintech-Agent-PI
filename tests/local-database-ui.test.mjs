@@ -11,12 +11,27 @@ const agentToolSource = await readFile(new URL("../server/agent/tools/local-data
 
 test("database has a bottom sidebar entry and a read-only SQL workspace", () => {
   assert.match(pageSource, /<span>数据库<\/span>/);
-  assert.match(pageSource, /<DatabasePage onClose=/);
+  assert.match(pageSource, /<DatabasePage \/>/);
   assert.match(databasePageSource, /<SqlEditor /);
+  assert.doesNotMatch(databasePageSource, /database-page-header|返回项目|刷新数据表/);
   assert.doesNotMatch(databasePageSource, /<h1>数据库|<span>SQL 查询|<span>查询结果|database-section-title|has-schema/);
   assert.doesNotMatch(databasePageSource, /LOCAL SQLITE|tableDetails\.sql/);
   assert.match(databasePageSource, /\/api\/local\/database\/query/);
   assert.match(databasePageSource, /\/api\/local\/database\/tables/);
+});
+
+test("database uses a persistent, accessible splitter with inline execution", () => {
+  assert.match(databasePageSource, /DEFAULT_EDITOR_RATIO = 2 \/ 3/);
+  assert.match(databasePageSource, /SPLIT_RATIO_STORAGE_KEY/);
+  assert.match(databasePageSource, /localStorage\.getItem\(SPLIT_RATIO_STORAGE_KEY\)/);
+  assert.match(databasePageSource, /localStorage\.setItem\(SPLIT_RATIO_STORAGE_KEY/);
+  assert.match(databasePageSource, /className="database-splitter-handle"/);
+  assert.match(databasePageSource, /role="separator"/);
+  assert.match(databasePageSource, /onPointerDown=\{startResize\}/);
+  assert.match(databasePageSource, /ArrowUp.*ArrowDown/s);
+  assert.match(databasePageSource, /onClick=\{\(\) => void runQuery\(\)\}/);
+  assert.doesNotMatch(databasePageSource, /database-editor-toolbar/);
+  assert.match(globalStylesSource, /\.database-splitter-handle \{[\s\S]*cursor: row-resize/);
 });
 
 test("database keeps a compact data-first layout on narrow screens", () => {
