@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseEnv } from "node:util";
 import { DEFAULT_AKTOOLS_URL, startAktools, stopAktools } from "./aktools-service.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -18,6 +19,11 @@ const managedAktoolsPython = path.join(localDataDirectory, "aktools-venv", "bin"
 const managedPandoc = path.join(localDataDirectory, "pandoc", "bin", "pandoc");
 const managedDocumentPython = path.join(localDataDirectory, "documents-venv", "bin", "python");
 const documentReadyMarker = path.join(localDataDirectory, "documents-ready-v2");
+
+function readOptionalEnvironmentFile(filePath) {
+  if (!existsSync(filePath)) return {};
+  return parseEnv(readFileSync(filePath, "utf8"));
+}
 
 function probePort(port) {
   return new Promise((resolve, reject) => {
@@ -114,6 +120,10 @@ try {
   startup.signal.throwIfAborted();
   if (aktools) watchChild(aktools, "AKTools HTTP 数据服务");
   const environment = {
+    // Match the app's local-file precedence without making Node --watch watch
+    // the environment files. Shell-provided values still take precedence.
+    ...readOptionalEnvironmentFile(path.join(root, ".env")),
+    ...readOptionalEnvironmentFile(path.join(root, ".env.local")),
     ...process.env,
     AKTOOLS_BASE_URL: service.baseUrl,
     LOCAL_RUNTIME_PORT: String(availablePort),
