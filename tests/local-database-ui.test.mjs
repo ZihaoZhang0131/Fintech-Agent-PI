@@ -12,7 +12,8 @@ const agentToolSource = await readFile(new URL("../server/agent/tools/local-data
 test("database has a bottom sidebar entry and a read-only SQL workspace", () => {
   assert.match(pageSource, /<span>数据库<\/span>/);
   assert.match(pageSource, /<DatabasePage onClose=/);
-  assert.match(databasePageSource, /<span>SQL 查询<\/span><small>只读<\/small>/);
+  assert.match(databasePageSource, /<SqlEditor /);
+  assert.doesNotMatch(databasePageSource, /<h1>数据库|<span>SQL 查询|<span>查询结果|database-section-title|has-schema/);
   assert.doesNotMatch(databasePageSource, /LOCAL SQLITE|tableDetails\.sql/);
   assert.match(databasePageSource, /\/api\/local\/database\/query/);
   assert.match(databasePageSource, /\/api\/local\/database\/tables/);
@@ -21,7 +22,7 @@ test("database has a bottom sidebar entry and a read-only SQL workspace", () => 
 test("database keeps a compact data-first layout on narrow screens", () => {
   assert.match(databasePageSource, /className="database-table-items"/);
   assert.match(globalStylesSource, /@media \(max-width: 720px\)[\s\S]*\.database-table-items \{[\s\S]*overflow-x: auto/);
-  assert.match(globalStylesSource, /\.database-workspace \{[\s\S]*grid-template-columns: minmax\(150px, 190px\) minmax\(0, 1fr\)/);
+  assert.match(globalStylesSource, /\.database-workspace \{[\s\S]*grid-template-columns: 220px minmax\(0, 1fr\)/);
 });
 
 test("database Agent tools are cataloged and mutations execute directly", () => {
