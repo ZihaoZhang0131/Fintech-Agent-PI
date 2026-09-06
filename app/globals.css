@@ -4545,7 +4545,6 @@ button.workspace-file-row:hover,
 .wf-popover>div {position:absolute;right:0;top:32px;z-index:30;background:var(--surface,#fff);border:1px solid var(--border,#e5e5e0);box-shadow:0 5px 20px #0001;border-radius:9px;padding:5px;min-width:160px;display:flex;flex-direction:column}
 .wf-popover>div>button {text-align:left;white-space:nowrap;padding:9px 12px;background:transparent;border:0;border-radius:5px;color:inherit;cursor:pointer;font-size:13px}
 .wf-popover button:hover {background:var(--surface-muted,#f2f2ef)}
-.wf-composer-menu>div {top:auto;bottom:32px;left:0;right:auto}
 .wf-conversation .composer-wrap {flex-shrink:0;width:100%;max-width:906px;align-self:center}
 .wf-conversation .composer-options {overflow:visible}
 .wf-conversation .composer textarea {min-height:48px}

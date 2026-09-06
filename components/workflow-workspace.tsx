@@ -339,25 +339,6 @@ export function WorkflowWorkspace({
                     ))}
                   </select>
                 </label>
-                <details className="wf-popover wf-composer-menu">
-                  <summary aria-label="输入框更多操作">
-                    <MoreHorizontal size={18} />
-                  </summary>
-                  <div>
-                    {active && !waiting && (
-                      <button
-                        type="button"
-                        disabled={busy || transition}
-                        onClick={() => void perform(() => action("pause"))}
-                      >
-                        暂停执行
-                      </button>
-                    )}
-                    <button type="button" onClick={() => manage("settings")}>
-                      Workflow 设置
-                    </button>
-                  </div>
-                </details>
               </div>
               <div className="wf-row">
                 {(busy || transition) && (
