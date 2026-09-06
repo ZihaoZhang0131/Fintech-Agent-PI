@@ -471,9 +471,18 @@ export async function POST(request: Request) {
     "只处理当前项目和用户任务相关的内容，不覆盖不相关文件。",
   ].join("\n");
 
+  const linkFormatPrompt = [
+    "引用格式：网页引用使用工具返回或用户提供的真实 http/https 网址，以 [来源](完整网址) 标注。",
+    "引用项目文件或成功保存的产出时，使用工具实际返回的项目相对路径，例如 [研究报告](outputs/report.md)。不要编造路径或声称不存在的文件已保存。",
+    "只有确认源文件行号时才使用 [查看实现](src/example.ts#L337)，不能确认时只链接文件。行号从 1 开始。",
+    "路径各段中的空格、#、? 等特殊字符需进行 URL 编码，保留目录分隔符 /；不使用操作系统绝对路径、file:// 或 :行号 后缀。",
+    "链接文字简短且说明用途。生成 Markdown 文档时，相对文件链接以文档所在目录为基准；/outputs/report.md 表示项目根目录下的文件。",
+  ].join("\n");
+  const finalSystemPrompt = `${agentPrompts.main}\n\n${projectCapabilityPrompt}\n\n${formatSkillCatalog(skillRegistry)}\n\n${linkFormatPrompt}`;
+
   const agent = new Agent({
     initialState: {
-      systemPrompt: `${agentPrompts.main}\n\n${projectCapabilityPrompt}\n\n${formatSkillCatalog(skillRegistry)}`,
+      systemPrompt: finalSystemPrompt,
       model,
       thinkingLevel: "off",
       tools: agentTools,
@@ -553,8 +562,8 @@ export async function POST(request: Request) {
           bashApprovalMode,
           bashPermissionMode,
           systemPrompt: {
-            bytes: Buffer.byteLength(`${agentPrompts.main}\n\n${projectCapabilityPrompt}\n\n${formatSkillCatalog(skillRegistry)}`, "utf8"),
-            sha256: traceSha256(`${agentPrompts.main}\n\n${projectCapabilityPrompt}\n\n${formatSkillCatalog(skillRegistry)}`),
+            bytes: Buffer.byteLength(finalSystemPrompt, "utf8"),
+            sha256: traceSha256(finalSystemPrompt),
             contentRecorded: false,
           },
         },

@@ -49,7 +49,8 @@ import {
   useState,
 } from "react";
 import { CapabilityLibrary, type SkillResourcePreview } from "@/components/capability-library";
-import { CODE_EXTENSIONS, FileSystemTree, fileTreeIcon } from "@/components/file-system-tree";
+import { FileSystemTree, fileTreeIcon } from "@/components/file-system-tree";
+import { activeFileNavigation, nextFileNavigation, type FileNavigation, type ProjectFileTarget } from "@/lib/markdown-links";
 import { AgentPromptPage, SubAgentLibrary } from "@/components/agent-library";
 import { MarkdownMessage } from "@/components/chat-markdown";
 import { CodePreview } from "@/components/code-preview";
@@ -492,6 +493,9 @@ export default function Home() {
   const [tokenUsage, setTokenUsage] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [filePanelOpen, setFilePanelOpen] = useState(false);
+  const [fileNavigation, setFileNavigation] = useState<FileNavigation | null>(null);
+  // A navigation request belongs to one project, including when switching back.
+  if (fileNavigation && fileNavigation.projectId !== activeProjectId) setFileNavigation(null);
   const [fileTreesByProject, setFileTreesByProject] = useState<ProjectFileTreeState>({});
   const [fileTabsByProject, setFileTabsByProject] = useState<ProjectFileTabsState>({});
   const [previewCache, setPreviewCache] = useState<Record<string, PreviewCacheEntry>>({});
@@ -558,6 +562,7 @@ export default function Home() {
   const rootFilesLoaded = Object.hasOwn(activeFileTree.childrenByDirectory, "");
   const filesLoading = activeFileTree.loadingPaths.length > 0;
   const activeFilePath = activeFileTabs.activePath;
+  const previewNavigation = activeFileNavigation(fileNavigation, activeProjectId, activeFilePath);
   const activePreviewEntry =
     activeProjectId && activeFilePath
       ? previewCache[previewCacheKey(activeProjectId, activeFilePath)]
@@ -1553,6 +1558,14 @@ export default function Home() {
 
   function selectProjectFile(file: ProjectFile) {
     if (!activeProject || file.kind !== "file") return;
+    openProjectFile({ path: file.path });
+  }
+
+  function openProjectFile(file: ProjectFileTarget, projectId = activeProjectId) {
+    if (!activeProject || projectId !== activeProject.id) return;
+    setFileNavigation((previous) => nextFileNavigation(previous, projectId, file));
+    setFilePanelVisible(true);
+    if (window.matchMedia("(max-width: 1180px)").matches) setFilePanelOpen(true);
     const replacedPath =
       !activeFileTabs.openPaths.includes(file.path) &&
       activeFileTabs.openPaths.length >= MAX_OPEN_FILE_TABS
@@ -1586,11 +1599,13 @@ export default function Home() {
 
   function activateProjectFile(path: string | null) {
     if (!activeProject) return;
+    setFileNavigation(null);
     setFileTabsByProject((current) => activateFileTab(current, activeProject.id, path));
   }
 
   function closeProjectFile(path: string) {
     if (!activeProject) return;
+    setFileNavigation((current) => current?.projectId === activeProject.id && current.path === path ? null : current);
     const key = previewCacheKey(activeProject.id, path);
     previewRequestRef.current[key] = (previewRequestRef.current[key] ?? 0) + 1;
     setPreviewCache((current) => {
@@ -2236,7 +2251,7 @@ export default function Home() {
                             }
                           />
                         )}
-                        {message.content ? <MarkdownMessage content={message.content} /> : null}
+                        {message.content ? <MarkdownMessage content={message.content} projectNavigation={{ baseDirectory: "", onOpenFile: (target) => openProjectFile(target, activeProjectId) }} /> : null}
                         {isUnfinishedAssistantMessage && (
                           <span className="thinking-indicator" role="status" aria-label="Agent 正在回复">
                             <i />
@@ -2583,18 +2598,18 @@ export default function Home() {
                   </header>
                   <div className={`workspace-preview-content ${filePreview.kind}`}>
                     {filePreview.kind === "text" && filePreview.content !== undefined &&
-                      ([".md", ".mdx"].includes(filePreview.extension) ? (
+                      ([".md", ".mdx"].includes(filePreview.extension) && !previewNavigation?.line ? (
                         <div className="markdown-preview">
-                          <MarkdownMessage content={filePreview.content} />
+                          <MarkdownMessage content={filePreview.content} projectNavigation={{ baseDirectory: activeFilePath.split("/").slice(0, -1).join("/"), onOpenFile: (target) => openProjectFile(target, activeProjectId) }} />
                         </div>
-                      ) : CODE_EXTENSIONS.has(filePreview.extension) ? (
+                      ) : (
                         <CodePreview
                           content={filePreview.content}
                           extension={filePreview.extension}
                           name={filePreview.name}
+                          targetLine={previewNavigation?.line}
+                          navigationRequestId={previewNavigation?.requestId}
                         />
-                      ) : (
-                        <pre className="plain-text-preview">{filePreview.content}</pre>
                       ))}
                     {filePreview.kind === "image" && previewAssetUrl && (
                       // The data comes from the user-selected local workspace.

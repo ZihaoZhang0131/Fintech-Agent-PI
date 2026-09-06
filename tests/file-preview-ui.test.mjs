@@ -30,7 +30,7 @@ test("file preview UI exposes code, download, and recoverable unsupported states
 
 test("Markdown workspace files reuse the GFM renderer", () => {
   assert.match(pageSource, /\["\.md", "\.mdx"\]\.includes\(filePreview\.extension\)/);
-  assert.match(pageSource, /<MarkdownMessage content=\{filePreview\.content\} \/>/);
+  assert.match(pageSource, /<MarkdownMessage content=\{filePreview\.content\} projectNavigation=/);
   assert.doesNotMatch(pageSource, /<ReactMarkdown>\{filePreview\.content\}<\/ReactMarkdown>/);
 });
 

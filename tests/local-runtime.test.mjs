@@ -24,6 +24,21 @@ function encoded(value) {
   return Buffer.from(value, "utf8").toString("base64");
 }
 
+test("file references cannot read outside the canonical workspace", async (t) => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "pi-link-boundary-"));
+  t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const root = path.join(await realpath(temporaryRoot), "workspace");
+  await mkdir(root);
+  await writeFile(path.join(temporaryRoot, "outside.txt"), "private");
+  await symlink(path.join(temporaryRoot, "outside.txt"), path.join(root, "escape.txt"));
+  await assert.rejects(readWorkspaceFile(root, "../outside.txt"), /超出了/);
+  await assert.rejects(readWorkspaceFile(root, "escape.txt"), /目录之外/);
+  await assert.rejects(readWorkspaceFile(root, "missing.txt"), /ENOENT/);
+  await assert.rejects(readWorkspaceFile(root, "."), /不是文件/);
+  await writeFile(path.join(root, "%2e%2e.txt"), "literal encoded filename");
+  assert.equal((await readWorkspaceFile(root, "%2e%2e.txt")).content, "literal encoded filename");
+});
+
 test("local skill store imports folders, preserves references, overlays bundled skills, and validates paths", async (t) => {
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "pi-skill-store-"));
   t.after(() => rm(temporaryRoot, { recursive: true, force: true }));

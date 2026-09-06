@@ -9,9 +9,9 @@ const styleSource = await readFile(new URL("../app/globals.css", import.meta.url
 
 test("chat messages render GitHub-flavored Markdown", () => {
   assert.match(markdownSource, /import remarkGfm from "remark-gfm"/);
-  assert.match(markdownSource, /<ReactMarkdown remarkPlugins=\{\[remarkGfm\]\}>\{normalizedContent\}<\/ReactMarkdown>/);
+  assert.match(markdownSource, /<ReactMarkdown remarkPlugins=\{\[remarkGfm\]\} components=/);
   assert.match(markdownSource, /\(\[。！？\.!\?：:\]\)\\s\*/);
-  assert.match(pageSource, /<MarkdownMessage content=\{message\.content\} \/>/);
+  assert.match(pageSource, /<MarkdownMessage content=\{message\.content\} projectNavigation=/);
   assert.match(styleSource, /\.markdown-body table\s*\{/);
   assert.match(styleSource, /\.markdown-body th,\s*\.markdown-body td\s*\{/);
   assert.match(styleSource, /\.markdown-body a\s*\{/);
@@ -41,7 +41,7 @@ test("unfinished assistant replies keep the thinking indicator on their final li
   assert.match(pageSource, /message\.role === "assistant" && message\.id === activeAssistantMessageId/);
   assert.match(pageSource, /startedAt=\{message\.createdAt\}/);
   assert.match(pageSource, /isRunning=\{isUnfinishedAssistantMessage\}/);
-  assert.match(pageSource, /\{message\.content \? <MarkdownMessage content=\{message\.content\} \/> : null\}/);
+  assert.match(pageSource, /\{message\.content \? <MarkdownMessage content=\{message\.content\} projectNavigation=/);
   assert.match(pageSource, /\{isUnfinishedAssistantMessage && \([\s\S]*className="thinking-indicator"[\s\S]*aria-label="Agent 正在回复"/);
   assert.match(styleSource, /\.thinking-indicator i:nth-child\(2\)\s*\{[^}]*animation-delay:\s*140ms/s);
   assert.match(styleSource, /\.thinking-indicator i:nth-child\(3\)\s*\{[^}]*animation-delay:\s*280ms/s);

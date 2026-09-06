@@ -905,6 +905,20 @@ body.is-resizing-column * {
   text-decoration-color: currentColor;
 }
 
+.project-markdown {
+  --link-color: #3976c5;
+}
+
+.project-markdown a,
+.project-markdown a:hover {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+.project-markdown a:hover { text-decoration: underline; }
+.project-markdown a:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
+.project-file-link svg { display: inline; vertical-align: -2px; margin-right: 3px; }
+
 .markdown-body hr {
   height: 1px;
   margin: 1.4em 0;
@@ -1908,6 +1922,25 @@ button.workspace-file-row:hover,
 
 .code-line-numbers li {
   height: 1.7em;
+}
+
+.code-line-numbers .target-line-number {
+  background: #dceafe;
+  color: #245b9f;
+  font-weight: 700;
+}
+
+.ide-code-preview .has-target-line {
+  background-image: linear-gradient(#3976c51a, #3976c51a);
+  background-repeat: no-repeat;
+  background-position: 0 calc(15px + var(--target-line-offset));
+  background-size: 100% 1.7em;
+}
+
+.code-line-warning {
+  grid-column: 1 / -1;
+  padding: 6px 15px;
+  color: #9b6519;
 }
 
 .ide-code-preview pre {
