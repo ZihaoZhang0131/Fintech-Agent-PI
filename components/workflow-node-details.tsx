@@ -12,8 +12,7 @@ import {
   terminalWorkflow as inactive,
 } from "@/lib/workflow-client";
 import { WORKFLOW_STATUS } from "./workflow-graph";
-import { MarkdownMessage } from "./chat-markdown";
-import { CodePreview } from "./code-preview";
+import { MarkdownMessage, type ProjectNavigation } from "./chat-markdown";
 export function WorkflowNodeDetails({
   run,
   node,
@@ -21,6 +20,7 @@ export function WorkflowNodeDetails({
   setEdit,
   onClose,
   onTrace,
+  projectNavigation,
   onError,
 }: {
   run: WorkflowRun;
@@ -29,6 +29,7 @@ export function WorkflowNodeDetails({
   setEdit: (node: WorkflowNode) => void;
   onClose: () => void;
   onTrace: (id: string) => void;
+  projectNavigation: ProjectNavigation;
   onError: (message: string) => void;
 }) {
   const [attemptId, setAttemptId] = useState(""),
@@ -36,7 +37,6 @@ export function WorkflowNodeDetails({
       attempt: WorkflowAttempt;
       operations: WorkflowOperation[];
     } | null>(null),
-    [artifact, setArtifact] = useState(""),
     [busy, setBusy] = useState(false);
   const attempts = run.attempts.filter((a) => a.nodeId === node.id),
     focusedAttempt = attemptId || attempts.at(-1)?.id || "";
@@ -115,7 +115,7 @@ export function WorkflowNodeDetails({
           )}
           {attemptData.attempt.result && (
             <>
-              <MarkdownMessage content={attemptData.attempt.result.text} />
+              <MarkdownMessage content={attemptData.attempt.result.text} projectNavigation={projectNavigation} />
               {attemptData.attempt.result.sources.map((s) => (
                 <p key={s}>
                   {/^https?:\/\//.test(s) ? (
@@ -131,7 +131,7 @@ export function WorkflowNodeDetails({
                 <p key={i}>{s}</p>
               ))}
               {attemptData.attempt.result.artifacts.map((p) => (
-                <button key={p} onClick={() => setArtifact(p)}>
+                <button key={p} onClick={() => projectNavigation.onOpenFile({ path: p })}>
                   {p}
                 </button>
               ))}
@@ -183,73 +183,6 @@ export function WorkflowNodeDetails({
           ))}
         </>
       )}
-      {artifact && (
-        <WorkflowArtifact
-          key={artifact}
-          workspaceId={run.workspaceId}
-          path={artifact}
-        />
-      )}
     </aside>
-  );
-}
-function WorkflowArtifact({
-  workspaceId,
-  path,
-}: {
-  workspaceId: string;
-  path: string;
-}) {
-  const [data, setData] = useState<{
-      kind: string;
-      content?: string;
-      extension: string;
-      name: string;
-    } | null>(null),
-    [error, setError] = useState("");
-  useEffect(() => {
-    let active = true;
-    void fetch(
-      `/api/local/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(path)}`,
-    )
-      .then(async (r) => {
-        const v = (await r.json()) as {
-          kind: string;
-          content?: string;
-          extension: string;
-          name: string;
-          message?: string;
-        };
-        if (!r.ok) throw new Error(v.message);
-        if (active) setData(v);
-      })
-      .catch((e) => {
-        if (active) setError(e.message);
-      });
-    return () => {
-      active = false;
-    };
-  }, [workspaceId, path]);
-  const url = `/api/local/workspaces/${workspaceId}/files/asset?path=${encodeURIComponent(path)}`;
-  return (
-    <section className="wf-artifact">
-      <strong>{path}</strong>
-      <a href={`${url}&download=1`}>下载</a>
-      {error && <p>{error}</p>}
-      {data?.kind === "text" &&
-        (data.extension === ".md" ? (
-          <MarkdownMessage content={data.content ?? ""} />
-        ) : (
-          <CodePreview
-            content={data.content ?? ""}
-            extension={data.extension}
-            name={data.name}
-          />
-        ))}
-      {data?.kind === "pdf" && <iframe title={path} src={url} />}
-      <a href={url} target="_blank" rel="noreferrer">
-        打开产物
-      </a>
-    </section>
   );
 }

@@ -1623,6 +1623,14 @@ export default function Home() {
     setFileTabsByProject((current) => openFileTab(current, activeProject.id, file.path));
   }
 
+  useEffect(() => {
+    if (activeView !== "workflow" || !previewNavigation) return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById("workspace-file-tabpanel")?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeView, previewNavigation]);
+
   function toggleProjectDirectory(file: ProjectFile) {
     if (!activeProject || file.kind !== "directory") return;
     const isExpanded = activeFileTree.expandedPaths.includes(file.path);
@@ -1922,7 +1930,7 @@ export default function Home() {
   const modeSwitch=<nav className="mode-switch" aria-label="工作模式"><button className={appMode==="workspace"?"active":""} onClick={()=>changeMode("workspace")}>聊天</button><button className={appMode==="workflow"?"active":""} onClick={()=>changeMode("workflow")}>Workflow</button></nav>;
   return (
     <main
-      className={`app-shell ${activeView !== "workspace" ? "library-mode" : ""} ${sidebarVisible ? "" : "sidebar-collapsed"} ${filePanelVisible ? "" : "file-panel-collapsed"}`}
+      className={`app-shell ${activeView !== "workspace" && activeView !== "workflow" ? "library-mode" : ""} ${sidebarVisible ? "" : "sidebar-collapsed"} ${filePanelVisible ? "" : "file-panel-collapsed"}`}
       style={
         {
           "--sidebar-width": `${sidebarWidth}px`,
@@ -2209,8 +2217,13 @@ export default function Home() {
         </button>
       )}
 
-      {activeView === "workspace" ? (
+      {activeView === "workspace" || activeView === "workflow" ? (
         <>
+      {activeView === "workflow" ? (
+        <WorkflowWorkspace key={activeProjectId} conversationId={workflowActiveIds[activeProjectId]??""} onConversationChange={id=>chooseWorkflow(id)} modeSwitch={modeSwitch} onSidebar={()=>setSidebarOpen(true)} workspaceId={activeProjectId} config={activeAgentConfig}
+          model={selectedModel} models={availableModels} onConfigure={() => setActiveView("subagent")} onTrace={openTrace}
+          onOpenFiles={() => setFilePanelOpen(true)} onOpenFile={openProjectFile} onFilesChanged={refreshProjectFiles} />
+      ) : (
       <section className="chat-column">
         <header className="chat-header">
           <div className="header-title-group">
@@ -2423,6 +2436,7 @@ export default function Home() {
           </ComposerSurface>
         </div>
       </section>
+      )}
 
       <aside className={`artifact-panel workspace-panel ${filePanelOpen ? "mobile-open" : ""}`}>
         <div className="workspace-tabs-bar">
@@ -2543,6 +2557,7 @@ export default function Home() {
         ) : activeFilePath === null ? (
           <section
             id="workspace-file-tabpanel"
+            tabIndex={-1}
             className="workspace-tab-content workspace-file-browser"
             role="tabpanel"
             aria-labelledby={fileTabId(activeProject.id, null)}
@@ -2586,6 +2601,7 @@ export default function Home() {
         ) : (
           <section
             id="workspace-file-tabpanel"
+            tabIndex={-1}
             className="workspace-tab-content workspace-preview"
             role="tabpanel"
             aria-labelledby={fileTabId(activeProject.id, activeFilePath)}
@@ -2711,9 +2727,6 @@ export default function Home() {
         </button>
       )}
         </>
-      ) : activeView === "workflow" ? (
-        <WorkflowWorkspace key={activeProjectId} conversationId={workflowActiveIds[activeProjectId]??""} onConversationChange={id=>chooseWorkflow(id)} modeSwitch={modeSwitch} onSidebar={()=>setSidebarOpen(true)} workspaceId={activeProjectId} config={activeAgentConfig}
-          model={selectedModel} models={availableModels} onConfigure={() => setActiveView("subagent")} onTrace={openTrace} />
       ) : <section className="management-workspace"><header className="chat-header"><button className="management-back" onClick={()=>setActiveView(appMode)}>返回对话</button>{modeSwitch}</header>{activeView === "agent" ? (
         <AgentPromptPage
           value={agentPrompts.main}

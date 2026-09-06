@@ -13,6 +13,7 @@ import type {
 import { WorkflowGraph, layoutWorkflow } from "./workflow-graph";
 import { WorkflowAssets } from "./workflow-assets";
 import { WorkflowSettings, WorkflowLimits } from "./workflow-settings";
+import type { ProjectNavigation } from "./chat-markdown";
 import { WorkflowNodeDetails } from "./workflow-node-details";
 
 export type WorkflowToolsProps = {
@@ -23,6 +24,7 @@ export type WorkflowToolsProps = {
   onBack: () => void;
   onStarted: (id: string) => void;
   workspaceId: string;
+  projectNavigation: ProjectNavigation;
   config: ProjectAgentConfig;
   model?: AgentModelOverride;
   models: Array<AgentModelOverride & { label: string }>;
@@ -70,6 +72,7 @@ export function WorkflowTools({
   onBack,
   onStarted,
   workspaceId,
+  projectNavigation,
   config,
   model,
   models,
@@ -653,6 +656,7 @@ export function WorkflowTools({
           setEdit={setEdit}
           onClose={() => (page === "node" ? onBack() : setSelected(""))}
           onTrace={onTrace}
+          projectNavigation={projectNavigation}
           onError={setError}
         />
       )}

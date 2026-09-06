@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ArrowUp, Cpu, MoreHorizontal, Play, Square, Menu } from "lucide-react";
+import { ArrowUp, Cpu, MoreHorizontal, Play, Square, Menu, PanelRight } from "lucide-react";
 import {
   workflowApi as api,
   workflowBase,
@@ -18,21 +18,29 @@ import {
 import { WorkflowTools, type WorkflowToolsProps } from "./workflow-tools";
 import { WorkflowMessages, type WorkflowOpen } from "./workflow-messages";
 import { WorkflowDialog } from "./workflow-dialog";
+import { createWorkflowFileRefresh } from "@/lib/workflow-file-refresh";
+import type { ProjectFileTarget } from "@/lib/markdown-links";
 import { ChatComposer } from "./chat-composer";
 type Props = Omit<
   WorkflowToolsProps,
-  "page" | "runId" | "nodeId" | "planVersion" | "onBack" | "onStarted"
+  "page" | "runId" | "nodeId" | "planVersion" | "onBack" | "onStarted" | "projectNavigation"
 > & {
   conversationId: string;
   onConversationChange: (id: string) => void;
   modeSwitch: ReactNode;
   onSidebar: () => void;
+  onOpenFiles: () => void;
+  onOpenFile: (target: ProjectFileTarget, workspaceId: string) => void;
+  onFilesChanged: (workspaceId: string) => void;
 };
 export function WorkflowWorkspace({
   conversationId,
   onConversationChange,
   modeSwitch,
   onSidebar,
+  onOpenFiles,
+  onOpenFile,
+  onFilesChanged,
   ...tools
 }: Props) {
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot | null>(null),
@@ -80,7 +88,7 @@ export function WorkflowWorkspace({
         if (disposed) return;
         setSnapshot(d);
         const run = d.runs.at(-1);
-        if (run && (!stream || !stream.url.includes(`/runs/${run.id}/`))) {
+        if (run && (!stream || stream.readyState === EventSource.CLOSED || !stream.url.includes(`/runs/${run.id}/`))) {
           stream?.close();
           stream = new EventSource(
             `${workflowBase}/runs/${run.id}/events?after=${run.seq}`,
@@ -108,6 +116,26 @@ export function WorkflowWorkspace({
       stream?.close();
     };
   }, [conversationId, draftKey]);
+  const filesChanged = useRef(onFilesChanged);
+  useEffect(() => { filesChanged.current = onFilesChanged; }, [onFilesChanged]);
+  const fileRefresh = useRef<ReturnType<typeof createWorkflowFileRefresh> | null>(null);
+  useEffect(() => {
+    const refresh = createWorkflowFileRefresh(() => filesChanged.current(tools.workspaceId));
+    fileRefresh.current = refresh;
+    return () => { refresh.dispose(); fileRefresh.current = null; };
+  }, [conversationId, tools.workspaceId]);
+  useEffect(() => {
+    if (snapshot?.conversation.id === conversationId && snapshot.conversation.workspaceId === tools.workspaceId)
+      fileRefresh.current?.observe(snapshot.runs);
+  }, [snapshot, conversationId, tools.workspaceId]);
+  const projectNavigation = {
+    baseDirectory: "",
+    onOpenFile: (target: ProjectFileTarget) => {
+      setPage(null);
+      onOpenFile(target, tools.workspaceId);
+    },
+  };
+
   function changeDraft(text: string) {
     setDraft(text);
     localStorage.setItem(draftKey, text);
@@ -207,6 +235,7 @@ export function WorkflowWorkspace({
       key={`${page}:${focus.runId ?? ""}`}
       {...tools}
       {...focus}
+      projectNavigation={projectNavigation}
       page={page}
       onBack={() => setPage(null)}
       onStarted={(id) => {
@@ -244,6 +273,10 @@ export function WorkflowWorkspace({
           </h1>
         </div>
         {modeSwitch}
+        <button className="mobile-icon-button artifact-trigger" type="button"
+          aria-label="打开项目文件面板" onClick={onOpenFiles}>
+          <PanelRight size={19} />
+        </button>
         <details className="wf-popover">
           <summary aria-label="对话更多操作">
             <MoreHorizontal size={20} />
@@ -264,6 +297,7 @@ export function WorkflowWorkspace({
         <>
           <WorkflowMessages
             snapshot={snapshot}
+            projectNavigation={projectNavigation}
             onOpen={open}
             onError={setError}
           />

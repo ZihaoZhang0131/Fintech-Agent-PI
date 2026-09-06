@@ -7,6 +7,26 @@ const stylesheet = await readFile(
   "utf8",
 );
 
+test("Workflow shares project files and connects all Markdown output to project navigation", async () => {
+  const [page, workspace, messages, details] = await Promise.all(
+    ["app/page.tsx", "components/workflow-workspace.tsx", "components/workflow-messages.tsx", "components/workflow-node-details.tsx"]
+      .map((path) => readFile(new URL(`../${path}`, import.meta.url), "utf8")),
+  );
+  assert.match(page, /activeView === "workspace" \|\| activeView === "workflow"/);
+  assert.match(page, /activeView !== "workspace" && activeView !== "workflow" \? "library-mode"/);
+  assert.equal((page.match(/artifact-panel workspace-panel/g) ?? []).length, 1);
+  assert.match(workspace, /aria-label="打开项目文件面板"/);
+  assert.match(workspace, /snapshot\.conversation\.workspaceId === tools\.workspaceId/);
+  assert.match(workspace, /stream\.readyState === EventSource\.CLOSED/);
+  for (const source of [messages, details]) {
+    const renderers = source.match(/<MarkdownMessage\b[^>]*\/>/g) ?? [];
+    assert.ok(renderers.length);
+    for (const renderer of renderers) assert.match(renderer, /projectNavigation=/);
+  }
+  assert.match(details, /projectNavigation\.onOpenFile\(\{ path: p \}\)/);
+  assert.doesNotMatch(details, /WorkflowArtifact|files\/content/);
+});
+
 test("active workflow nodes show restrained progress feedback", () => {
   assert.match(
     stylesheet,

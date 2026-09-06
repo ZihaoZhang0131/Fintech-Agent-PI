@@ -3,12 +3,14 @@ import remarkGfm from "remark-gfm";
 import { FileCode, FileText, FileImage, File } from "lucide-react";
 import { parseMarkdownLink, type ProjectFileTarget } from "@/lib/markdown-links";
 
+export type ProjectNavigation = {
+  baseDirectory: string;
+  onOpenFile: (target: ProjectFileTarget) => void;
+};
+
 type MarkdownMessageProps = {
   content: string;
-  projectNavigation?: {
-    baseDirectory: string;
-    onOpenFile: (target: ProjectFileTarget) => void;
-  };
+  projectNavigation?: ProjectNavigation;
 };
 
 // Keep Markdown normalization next to its renderer so the workspace entry point

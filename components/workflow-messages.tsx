@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Maximize2, MoreHorizontal } from "lucide-react";
-import { MarkdownMessage } from "./chat-markdown";
+import { MarkdownMessage, type ProjectNavigation } from "./chat-markdown";
 import {
   WorkflowGraph,
   WORKFLOW_STATUS,
@@ -133,10 +133,12 @@ function Approvals({
 }
 export function WorkflowMessages({
   snapshot,
+  projectNavigation,
   onOpen,
   onError,
 }: {
   snapshot: WorkflowSnapshot | null;
+  projectNavigation: ProjectNavigation;
   onOpen: WorkflowOpen;
   onError: (s: string) => void;
 }) {
@@ -172,7 +174,7 @@ export function WorkflowMessages({
                   key={message.id}
                   className={`wf-message ${message.role}`}
                 >
-                  <MarkdownMessage content={message.content} />
+                  <MarkdownMessage content={message.content} projectNavigation={projectNavigation} />
                 </article>
               );
             const revision = run.revisions.find(
@@ -206,7 +208,7 @@ export function WorkflowMessages({
                       {revision.plan.nodes.length}
                     </span>
                   </summary>
-                  <p>{message.content}</p>
+                  <MarkdownMessage content={message.content} projectNavigation={projectNavigation} />
                   <div className="wf-plan-actions">
                     <button
                       aria-label="展开 DAG"
