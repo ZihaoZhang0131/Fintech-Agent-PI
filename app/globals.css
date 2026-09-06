@@ -4566,6 +4566,9 @@ button.workspace-file-row:hover,
 .wf-node.completed .wf-node-status {color:#518468}
 .wf-node.running,.wf-node.recovering,.wf-node.selected {border-color:var(--primary,#c76540)}
 .wf-node.running .wf-node-status,.wf-node.blocked .wf-node-status,.wf-node.waiting_approval .wf-node-status {color:var(--primary,#c76540)}
+.wf-node.running .wf-node-status,.wf-node.recovering .wf-node-status {display:inline-flex;align-items:center;gap:6px;color:var(--primary,#c76540)}
+.wf-node.running .wf-node-status::before,.wf-node.recovering .wf-node-status::before {content:"";width:6px;height:6px;flex:none;border-radius:50%;background:currentColor;animation:wf-active-pulse 1.6s ease-in-out infinite}
+@keyframes wf-active-pulse {0%,100% {opacity:.45;transform:scale(.78);box-shadow:0 0 0 0 rgb(199 101 64 / 0)} 50% {opacity:1;transform:scale(1);box-shadow:0 0 0 4px rgb(199 101 64 / .12)}}
 .wf-detail-overlay {position:fixed;inset:0;z-index:80;background:#0003;display:flex;justify-content:flex-end;padding:28px}
 .workflow-workspace {display:flex;min-width:0;flex:1;overflow:auto;color:inherit;background:var(--background,#fafaf8);font-size:14px}
 .wf-tools button,.wf-tools input,.wf-tools textarea,.wf-tools select {font:inherit;color:inherit}

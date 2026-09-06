@@ -85,7 +85,7 @@ npm run mcp:setup
 
 4. 打开 `http://localhost:3000`。
 
-`npm run dev` 会同时启动网页、仅监听 `127.0.0.1` 的本机 Agent Runtime，以及默认监听 `127.0.0.1:8080` 的 AKTools HTTP 数据服务；退出项目时会一并停止它。数据服务首次只需运行一次 `npm run aktools:setup` 安装。若设置了非默认的 `AKTOOLS_BASE_URL`，项目会保留该外部服务，不会代为启动或停止。请不要直接使用 `npm run dev:site`，否则文件夹选择和项目文件工具不会工作。
+`npm run dev` 会同时启动网页、仅监听 `127.0.0.1` 的本机 Agent Runtime，以及默认监听 `127.0.0.1:8080` 的 AKTools HTTP 数据服务；退出项目时会一并停止它。数据服务首次只需运行一次 `npm run aktools:setup` 安装。默认端口被其他服务占用时，项目会自动选择空闲端口，并把实际 `AKTOOLS_BASE_URL` 传给 Runtime、网页服务和 Skill/Bash 子进程；实际地址以启动日志为准，不会写入数据库。已确认的 AKTools 服务会被复用，退出时仅停止本次启动的服务。若设置了非默认的 `AKTOOLS_BASE_URL`，项目会保留该外部服务，不会代为启动或停止；探测失败会显示诊断，但应用仍可启动。版本探测 404、超时或身份不匹配不等于依赖未安装；仅在启动日志明确指出解释器或依赖缺失时重新运行 setup。请不要直接使用 `npm run dev:site`，否则文件夹选择和项目文件工具不会工作。
 
 ## 本地项目模型
 

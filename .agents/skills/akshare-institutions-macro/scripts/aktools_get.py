@@ -44,6 +44,8 @@ def main() -> int:
             raw = response.read().decode("utf-8", "replace")
     except HTTPError as error:
         print(f"AKTools HTTP {error.code}: {error.read().decode('utf-8', 'replace')}", file=sys.stderr)
+        if error.code == 404:
+            print("请通过 run_skill_script 运行 scripts/aktools_status.py 核验服务身份，再核对 Reference 接口名及版本；404 不能证明依赖未安装或端点未注册。", file=sys.stderr)
         return 1
     except (URLError, TimeoutError) as error:
         print(f"无法访问 AKTools（{BASE_URL}）：{error}。请先运行 scripts/aktools_status.py。", file=sys.stderr)

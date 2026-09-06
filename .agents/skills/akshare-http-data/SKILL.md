@@ -9,7 +9,7 @@ description: 当用户需要通过本机 AKTools HTTP 服务获取 AKShare 的�
 
 Skill 内的 `scripts/` 和 `references/` 是**资源标识，不是项目工作目录中的文件路径**。不要用 Bash、`find` 或 `python3 scripts/...` 查找或运行它们。
 
-1. 首次取数前调用 `run_skill_script`，参数为 `name="akshare-http-data"`、`path="scripts/aktools_status.py"`、`args=[]`。服务不可用时，告知用户先在应用目录执行一次 `npm run aktools:setup`，然后重新执行 `npm run dev`；开发启动脚本会自动启动并管理默认的本机服务。不要自行安装依赖或启动后台服务。
+1. 首次取数前调用 `run_skill_script`，参数为 `name="akshare-http-data"`、`path="scripts/aktools_status.py"`、`args=[]`。服务不可用时，根据 `error_kind`、实际 `base_url` 和应用启动日志报告原因。默认端口冲突时应用会自动换端口，脚本通过 `AKTOOLS_BASE_URL` 接收实际地址；请通过 `npm run dev` 启动应用。只有应用明确报告解释器或依赖缺失时才建议 `npm run aktools:setup`；不要自行安装依赖或启动后台服务。HTTP 404 应先核验服务身份与接口版本，不能推断未安装或端点未注册；500 保留原始错误。工具 `completed` 仅表示执行结束，须检查退出码及结果；脚本已输出 HTTP 错误说明解释器已运行，不应将普通 Bash 的沙箱权限错误概括为本机 Python 不可用。
 2. 根据用户的自然语言需求，调用 `read_skill_resource` 读取下表中对应的一级 Reference，参数固定为 `name="akshare-http-data"` 和表中的 `path`。每个一级 Reference 的“精确接口定位”表会给出中文名称、函数名和下一份卡片路径。
 3. 从定位表复制**完整函数名**与卡片路径，再读取那一份接口卡，确认参数、字段和数据口径。函数名必须与定位表和卡片的 `###` 标题完全一致；不得删减后缀、翻译、猜测或拼接名称。
 4. 仅在接口与参数明确后调用 `run_skill_script` 运行 `scripts/aktools_get.py`。定位表找不到匹配项时，继续读取其他主题索引或告知用户未在快照中找到；不得试探 API 路径、HTTP 方法、参数或函数名。跨主题研究可依次读取多份 Reference。

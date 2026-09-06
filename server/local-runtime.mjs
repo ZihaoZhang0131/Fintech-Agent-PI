@@ -434,6 +434,7 @@ function commandEnvironment(permissionMode, commandHome, commandTemporaryDirecto
     XDG_CACHE_HOME: path.join(commandHome, ".cache"),
   };
   if (process.env.USER) environment.USER = process.env.USER;
+  if (process.env.AKTOOLS_BASE_URL) environment.AKTOOLS_BASE_URL = process.env.AKTOOLS_BASE_URL;
   return environment;
 }
 

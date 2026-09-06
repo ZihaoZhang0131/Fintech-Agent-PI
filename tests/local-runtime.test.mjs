@@ -153,6 +153,24 @@ test("Python interpreter resolution skips the macOS developer-tool shim", async 
 });
 
 test("local runtime runs shell and Python Skill scripts in the current Bash sandbox", async (t) => {
+  const requests = [];
+  const dataServer = createServer((request, response) => {
+    requests.push(request.url);
+    response.setHeader("Content-Type", "application/json");
+    if (request.url === "/version") response.end(JSON.stringify({ ak_current_version: "1.18.83", at_current_version: "0.0.91" }));
+    else { response.writeHead(404); response.end(JSON.stringify({ error: "fixture endpoint missing" })); }
+  });
+  await new Promise((resolve) => dataServer.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => dataServer.close(resolve)));
+  const selectedUrl = `http://127.0.0.1:${dataServer.address().port}`;
+  const previous = { AKTOOLS_BASE_URL: process.env.AKTOOLS_BASE_URL, DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY };
+  process.env.AKTOOLS_BASE_URL = selectedUrl;
+  process.env.DEEPSEEK_API_KEY = "must-not-leak";
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "pi-skill-script-"));
   t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
   const dataDirectory = path.join(temporaryRoot, "data");
@@ -164,7 +182,7 @@ test("local runtime runs shell and Python Skill scripts in the current Bash sand
     files: [
       { path: "SKILL.md", data: encoded("---\nname: script-skill\ndescription: 可运行的本机脚本。\n---\n\n运行 scripts/hello.sh 或 scripts/hello.py。") },
       { path: "scripts/hello.sh", data: encoded("printf 'skill script works\\n'\n") },
-      { path: "scripts/hello.py", data: encoded("print('python skill works')\n") },
+      { path: "scripts/hello.py", data: encoded("import os\nprint('python skill works')\nprint(os.environ.get('AKTOOLS_BASE_URL'))\nprint('secret=' + os.environ.get('DEEPSEEK_API_KEY', ''))\n") },
     ],
   });
   const server = createServer(createLocalRuntimeHandler({ dataDirectory, token: "script-token", mcpManager: { listServers() {} } }));
@@ -173,11 +191,11 @@ test("local runtime runs shell and Python Skill scripts in the current Bash sand
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const headers = { Authorization: "Bearer script-token", "Content-Type": "application/json" };
-  async function runScript(scriptPath) {
-    const started = await fetch(`${baseUrl}/skills/${encodeURIComponent(imported.id)}/scripts/run`, {
+  async function runScript(scriptPath, skillId = imported.id, args = []) {
+    const started = await fetch(`${baseUrl}/skills/${encodeURIComponent(skillId)}/scripts/run`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ workspaceId: workspace.id, path: scriptPath, args: [], approvalMode: "auto", permissionMode: "sandbox" }),
+      body: JSON.stringify({ workspaceId: workspace.id, path: scriptPath, args, approvalMode: "auto", permissionMode: "sandbox" }),
     });
     assert.equal(started.status, 201);
     const job = await started.json();
@@ -198,6 +216,19 @@ test("local runtime runs shell and Python Skill scripts in the current Bash sand
   assert.equal(pythonFinished.result.exitCode, 0, pythonFinished.result.stderr);
   assert.match(pythonFinished.result.stdout, /python skill works/);
   assert.doesNotMatch(pythonFinished.command, /\/usr\/bin\/python3/);
+  assert.ok(pythonFinished.result.stdout.includes(selectedUrl));
+  assert.match(pythonFinished.result.stdout, /secret=\n/);
+  assert.doesNotMatch(pythonFinished.result.stdout, /must-not-leak/);
+  const status = await runScript("scripts/aktools_status.py", "bundled:akshare-http-data");
+  assert.equal(status.result.exitCode, 0, status.result.stderr);
+  assert.equal(JSON.parse(status.result.stdout).base_url, selectedUrl);
+  const failed = await runScript("scripts/aktools_get.py", "bundled:akshare-http-data", ["error_case"]);
+  assert.equal(failed.status, "completed");
+  assert.equal(failed.result.exitCode, 1);
+  assert.match(failed.result.stderr, /HTTP 404/);
+  assert.match(failed.result.stderr, /fixture endpoint missing/);
+  assert.deepEqual(requests, ["/version", "/api/public/error_case"]);
+
 });
 
 test("local runtime protects MCP discovery and tool-call routes", async (t) => {

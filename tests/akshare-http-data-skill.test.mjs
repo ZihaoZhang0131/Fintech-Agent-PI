@@ -109,3 +109,34 @@ test("AKTools scripts encode parameters, limit rows, support no-argument calls, 
   assert.equal(failed.code, 1);
   assert.match(failed.stderr, /AKTools HTTP 503/);
 });
+
+test("status script rejects HTTP errors, unrelated JSON and non-JSON without recommending installation", async (t) => {
+  let body;
+  let code;
+  const server = createServer((_request, response) => { response.writeHead(code); response.end(body); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const environment = { AKTOOLS_BASE_URL: `http://127.0.0.1:${server.address().port}` };
+  for (const [nextBody, nextCode, kind] of [
+    ['{"message":"Hello Java"}', 200, "identity_mismatch"],
+    ['{"ak_current_version":"1", "at_current_version":" "}', 200, "identity_mismatch"],
+    ["[]", 200, "identity_mismatch"],
+    ["<html>hello</html>", 200, "invalid_json"],
+    ['{"error":"Not Found"}', 404, "http_error"],
+    ['{"error":"upstream failure"}', 500, "http_error"],
+  ]) {
+    body = nextBody; code = nextCode;
+    const result = await runPython("aktools_status.py", [], environment);
+    assert.equal(result.code, 1);
+    const diagnostic = JSON.parse(result.stderr);
+    assert.equal(diagnostic.available, false);
+    assert.equal(diagnostic.error_kind, kind);
+    assert.equal(diagnostic.base_url, environment.AKTOOLS_BASE_URL);
+    assert.doesNotMatch(diagnostic.suggestion, /pip install|npm run aktools:setup/);
+  }
+  body = '{"error":"original upstream failure"}'; code = 500;
+  const failed = await runPython("aktools_get.py", ["error_case"], environment);
+  assert.equal(failed.code, 1);
+  assert.match(failed.stderr, /HTTP 500.*original upstream failure/);
+  assert.doesNotMatch(failed.stderr, /未注册|未安装/);
+});

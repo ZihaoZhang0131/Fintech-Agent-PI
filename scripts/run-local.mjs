@@ -4,13 +4,13 @@ import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_AKTOOLS_URL, startAktools, stopAktools } from "./aktools-service.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mode = process.argv[2] === "start" ? "start" : "dev";
 const token = randomBytes(32).toString("hex");
 const requestedPort = Number(process.env.LOCAL_RUNTIME_PORT) || 4318;
-const defaultAktoolsUrl = "http://127.0.0.1:8080";
-const aktoolsUrl = (process.env.AKTOOLS_BASE_URL || defaultAktoolsUrl).replace(/\/$/, "");
+const requestedAktoolsUrl = process.env.AKTOOLS_BASE_URL || DEFAULT_AKTOOLS_URL;
 const localDataDirectory = process.env.PI_LOCAL_DATA_DIR
   ? path.resolve(process.env.PI_LOCAL_DATA_DIR)
   : path.join(root, ".local-data");
@@ -41,70 +41,6 @@ async function chooseRuntimePort(preferredPort) {
   }
 }
 
-async function isAktoolsAvailable(baseUrl) {
-  try {
-    const response = await fetch(`${baseUrl}/version`, { signal: AbortSignal.timeout(1_000) });
-    if (!response.ok) return false;
-    const version = await response.json();
-    return typeof version === "object" && version !== null && (
-      typeof version.ak_current_version === "string" || typeof version.at_current_version === "string"
-    );
-  } catch {
-    return false;
-  }
-}
-
-function usesManagedAktoolsUrl(baseUrl) {
-  try {
-    const url = new URL(baseUrl);
-    return url.protocol === "http:" && url.hostname === "127.0.0.1" && url.port === "8080";
-  } catch {
-    return false;
-  }
-}
-
-async function waitForAktools(child) {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    if (await isAktoolsAvailable(aktoolsUrl)) return;
-    if (child.exitCode !== null || child.signalCode !== null) break;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  stopAktools(child);
-  throw new Error(`AKTools 未能在 ${aktoolsUrl} 启动。请运行 npm run aktools:setup 后重试。`);
-}
-
-function stopAktools(child) {
-  if (!child?.pid) return;
-  try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch (error) {
-    if (error?.code !== "ESRCH") child.kill("SIGTERM");
-  }
-}
-
-async function startAktools() {
-  if (!usesManagedAktoolsUrl(aktoolsUrl)) {
-    console.log(`使用外部 AKTools 服务：${aktoolsUrl}`);
-    return null;
-  }
-  if (await isAktoolsAvailable(aktoolsUrl)) {
-    console.log(`检测到已运行的 AKTools 服务：${aktoolsUrl}`);
-    return null;
-  }
-  if (!existsSync(managedAktoolsPython)) {
-    throw new Error("未安装 AKTools。请先运行 npm run aktools:setup，再重新启动项目。");
-  }
-  console.log(`启动 AKTools HTTP 数据服务：${aktoolsUrl}`);
-  const child = spawn(managedAktoolsPython, ["-m", "aktools", "--host", "127.0.0.1", "--port", "8080"], {
-    cwd: root,
-    env: process.env,
-    detached: true,
-    stdio: "inherit",
-  });
-  await waitForAktools(child);
-  return child;
-}
-
 function startPandocProvisioning() {
   if (existsSync(managedPandoc) && existsSync(managedDocumentPython) && existsSync(documentReadyMarker)) {
     console.log(`检测到可用文档组件：${managedPandoc}`);
@@ -116,6 +52,7 @@ function startPandocProvisioning() {
     env: process.env,
     stdio: "inherit",
   });
+  child.on("error", (error) => console.error(`文档组件初始化失败：${error.message}`));
   child.on("exit", (code, signal) => {
     if (code !== 0) {
       console.error(`文档组件初始化未完成（${signal ?? code}）。应用仍可使用，稍后重新启动会自动重试。`);
@@ -124,72 +61,82 @@ function startPandocProvisioning() {
   return child;
 }
 
-const availablePort = await chooseRuntimePort(requestedPort);
-const port = String(availablePort);
-if (availablePort !== requestedPort) {
-  console.log(`Local Runtime port ${requestedPort} is in use; using ${availablePort} instead.`);
-}
-const environment = {
-  ...process.env,
-  LOCAL_RUNTIME_PORT: port,
-  LOCAL_RUNTIME_TOKEN: token,
-  LOCAL_RUNTIME_URL: `http://127.0.0.1:${port}`,
-};
-
+const startup = new AbortController();
 let aktools;
 let pandocProvisioner;
-try {
-  aktools = await startAktools();
-  pandocProvisioner = startPandocProvisioning();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-  process.exit();
-}
-
-const runtimeArguments = mode === "dev"
-  ? [
-      "--experimental-strip-types",
-      "--watch",
-      `--watch-path=${path.join(root, "server")}`,
-      `--watch-path=${path.join(root, ".agents", "skills")}`,
-      path.join(root, "server/local-runtime.mjs"),
-    ]
-  : ["--experimental-strip-types", path.join(root, "server/local-runtime.mjs")];
-const runtime = spawn(process.execPath, runtimeArguments, {
-  cwd: root,
-  env: environment,
-  stdio: "inherit",
-});
-const vinext = spawn(path.join(root, "node_modules/.bin/vinext"), [mode], {
-  cwd: root,
-  env: environment,
-  stdio: "inherit",
-});
-
+let runtime;
+let vinext;
 let stopping = false;
+let stopPromise;
+
 function stop(exitCode = 0) {
-  if (stopping) return;
+  if (stopping) return stopPromise;
   stopping = true;
-  runtime.kill("SIGTERM");
-  vinext.kill("SIGTERM");
-  stopAktools(aktools);
-  pandocProvisioner?.kill("SIGTERM");
+  startup.abort();
   process.exitCode = exitCode;
+  runtime?.kill("SIGTERM");
+  vinext?.kill("SIGTERM");
+  pandocProvisioner?.kill("SIGTERM");
+  stopPromise = stopAktools(aktools);
+  return stopPromise;
 }
 
-runtime.on("exit", (code, signal) => {
-  if (!stopping) {
-    console.error(`Local Agent Runtime stopped unexpectedly (${signal ?? code}).`);
-    stop(code || 1);
+function watchChild(child, label) {
+  child.on("error", (error) => {
+    if (!stopping) {
+      console.error(`${label} 启动失败：${error.message}`);
+      void stop(1);
+    }
+  });
+  child.on("exit", (code, signal) => {
+    if (!stopping) {
+      console.error(`${label} 已退出（${signal ?? code}）。`);
+      void stop(code || (signal ? 1 : 0));
+    }
+  });
+  if (child.exitCode !== null || child.signalCode !== null) {
+    throw new Error(`${label} 在启动期间已退出。`);
   }
-});
-aktools?.on("exit", (code, signal) => {
-  if (!stopping) {
-    console.error(`AKTools HTTP 数据服务意外停止（${signal ?? code}）。`);
-    stop(code || 1);
+}
+
+process.on("SIGINT", () => void stop(0));
+process.on("SIGTERM", () => void stop(0));
+
+try {
+  const availablePort = await chooseRuntimePort(requestedPort);
+  if (availablePort !== requestedPort) {
+    console.log(`Local Runtime port ${requestedPort} is in use; using ${availablePort} instead.`);
   }
-});
-vinext.on("exit", (code) => stop(code || 0));
-process.on("SIGINT", () => stop(0));
-process.on("SIGTERM", () => stop(0));
+  const service = await startAktools({
+    python: managedAktoolsPython, cwd: root, baseUrl: requestedAktoolsUrl, signal: startup.signal,
+  });
+  aktools = service.child;
+  startup.signal.throwIfAborted();
+  if (aktools) watchChild(aktools, "AKTools HTTP 数据服务");
+  const environment = {
+    ...process.env,
+    AKTOOLS_BASE_URL: service.baseUrl,
+    LOCAL_RUNTIME_PORT: String(availablePort),
+    LOCAL_RUNTIME_TOKEN: token,
+    LOCAL_RUNTIME_URL: `http://127.0.0.1:${availablePort}`,
+  };
+  pandocProvisioner = startPandocProvisioning();
+  const runtimeArguments = mode === "dev"
+    ? [
+        "--experimental-strip-types",
+        "--watch",
+        `--watch-path=${path.join(root, "server")}`,
+        `--watch-path=${path.join(root, ".agents", "skills")}`,
+        path.join(root, "server/local-runtime.mjs"),
+      ]
+    : ["--experimental-strip-types", path.join(root, "server/local-runtime.mjs")];
+  runtime = spawn(process.execPath, runtimeArguments, { cwd: root, env: environment, stdio: "inherit" });
+  watchChild(runtime, "Local Agent Runtime");
+  vinext = spawn(path.join(root, "node_modules/.bin/vinext"), [mode], { cwd: root, env: environment, stdio: "inherit" });
+  watchChild(vinext, "网页服务");
+} catch (error) {
+  if (!stopping) console.error(error instanceof Error ? error.message : error);
+  await stop(stopping ? process.exitCode : 1);
+  // A signal may have arrived while startAktools was still returning ownership.
+  await stopAktools(aktools);
+}
