@@ -149,12 +149,13 @@ try {
 
 const runtimeArguments = mode === "dev"
   ? [
+      "--experimental-strip-types",
       "--watch",
       `--watch-path=${path.join(root, "server")}`,
       `--watch-path=${path.join(root, ".agents", "skills")}`,
       path.join(root, "server/local-runtime.mjs"),
     ]
-  : [path.join(root, "server/local-runtime.mjs")];
+  : ["--experimental-strip-types", path.join(root, "server/local-runtime.mjs")];
 const runtime = spawn(process.execPath, runtimeArguments, {
   cwd: root,
   env: environment,

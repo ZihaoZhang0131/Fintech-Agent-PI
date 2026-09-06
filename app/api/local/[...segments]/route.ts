@@ -19,8 +19,8 @@ async function forward(request: Request, context: RouteContext) {
   ) {
     return Response.json({ message: "本机 Runtime 路径无效。" }, { status: 400 });
   }
-  if (segments[0] === "trace-ingest") {
-    return Response.json({ message: "Trace 写入端点仅供本机 Agent 服务使用。" }, { status: 403 });
+  if (segments[0] === "trace-ingest" || (segments[0] === "models" && segments[2] === "resolve")) {
+    return Response.json({ message: "此端点仅供本机 Agent 服务使用。" }, { status: 403 });
   }
 
   const incomingUrl = new URL(request.url);
@@ -37,6 +37,7 @@ async function forward(request: Request, context: RouteContext) {
       },
       body,
       cache: "no-store",
+      signal: request.signal,
     });
     const headers = new Headers({ "Cache-Control": "no-store" });
     for (const name of [

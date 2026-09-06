@@ -4602,3 +4602,129 @@ button.workspace-file-row:hover,
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Workflow shares the chat shell; configuration and inspection are separate surfaces. */
+.mode-switch {display:flex;align-items:center;gap:2px;flex-shrink:0;padding:3px;border-radius:8px;background:var(--surface-muted,#f0f0ed);font-size:13px;margin-left:auto}
+.mode-switch button {border:0;background:transparent;color:inherit;border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+.mode-switch .active {background:var(--surface,#fff);box-shadow:0 1px 3px #0001}
+.wf-conversation {display:flex;flex-direction:column;min-width:0;width:100%;height:100dvh;overflow:hidden}
+.wf-conversation .chat-header {min-height:64px;gap:14px;flex-shrink:0}
+.wf-conversation .header-title-group {min-width:0;flex:1}
+.wf-conversation .chat-header h1 {overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wf-message-scroll {flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.wf-message-list {max-width:850px;margin:0 auto;padding:28px 28px 40px;display:flex;flex-direction:column;gap:26px}
+.wf-welcome {padding-top:clamp(40px,15vh,160px);text-align:center}
+.wf-welcome h2 {font-size:24px;font-weight:500;margin-bottom:14px}
+.wf-welcome p {font-size:14px;color:var(--muted-foreground,#85857e)}
+.wf-message {font-size:15px;line-height:1.8;min-width:0;overflow-wrap:anywhere}
+.wf-message.user {align-self:flex-end;max-width:85%;padding:9px 16px;border-radius:16px;background:var(--surface-muted,#efefeb)}
+.wf-message.assistant {width:100%}
+.wf-message .markdown-body {font-size:inherit}
+.wf-plan-message {position:relative}
+.wf-plan-message>details>summary {cursor:pointer;font-size:14px;padding-right:64px;list-style-position:inside}
+.wf-plan-message>details>summary span {color:var(--muted-foreground,#83837e);font-size:12px;margin-left:10px}
+.wf-plan-message p {font-size:14px;color:var(--muted-foreground,#77776f);margin:8px 0}
+.wf-plan-actions {position:absolute;right:0;top:0;display:flex;align-items:center;gap:8px}
+.wf-plan-actions button,.wf-stop-small {display:inline-flex;align-items:center;justify-content:center;border:0;padding:5px;color:inherit;background:transparent;cursor:pointer}
+.wf-popover {position:relative;flex-shrink:0}
+.wf-popover>summary {list-style:none;display:flex;align-items:center;cursor:pointer;padding:5px}
+.wf-popover>summary::-webkit-details-marker {display:none}
+.wf-popover>div {position:absolute;right:0;top:32px;z-index:30;background:var(--surface,#fff);border:1px solid var(--border,#e5e5e0);box-shadow:0 5px 20px #0001;border-radius:9px;padding:5px;min-width:160px;display:flex;flex-direction:column}
+.wf-popover>div>button {text-align:left;white-space:nowrap;padding:9px 12px;background:transparent;border:0;border-radius:5px;color:inherit;cursor:pointer;font-size:13px}
+.wf-popover button:hover {background:var(--surface-muted,#f2f2ef)}
+.wf-composer-menu>div {top:auto;bottom:32px;left:0;right:auto}
+.wf-conversation .composer-wrap {flex-shrink:0;width:100%;max-width:906px;align-self:center}
+.wf-conversation .composer-options {overflow:visible}
+.wf-conversation .composer textarea {min-height:48px}
+.wf-connection-error {margin:0 0 8px;color:var(--muted-foreground,#8a6c50);font-size:13px;overflow-wrap:anywhere}
+.wf-execution {font-size:13px;color:var(--muted-foreground,#85857e)}
+.wf-approvals {color:var(--foreground,#444);font-size:14px}
+.wf-approvals pre {white-space:pre-wrap;overflow-wrap:anywhere;background:#00000005;padding:12px;border-radius:8px}
+.wf-row {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wf-row small {color:#888;font-size:12px}
+.wf-approvals button {border:1px solid #ddd;background:transparent;border-radius:6px;padding:6px 12px;cursor:pointer;color:inherit}
+.wf-inline-graph {width:100%;max-height:260px;overflow:auto;margin-top:8px;border-bottom:1px solid var(--border,#e5e5df)}
+.wf-graph-scroll {overflow:auto;max-width:100%}
+.wf-graph {position:relative}
+.wf-graph svg {position:absolute;inset:0;color:#b2b7b9}
+.wf-node {position:absolute;width:220px;min-height:96px;border:1px solid var(--border,#ddd);background:var(--surface,#fff);border-radius:9px;padding:12px 14px;display:flex;flex-direction:column;align-items:flex-start!important;gap:4px;text-align:left;font:inherit;cursor:pointer;color:inherit}
+.wf-node strong {font-size:14px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.wf-node span {font-size:12px;color:#888}
+.wf-node.completed .wf-node-status {color:#518468}
+.wf-node.running,.wf-node.recovering,.wf-node.selected {border-color:var(--primary,#c76540)}
+.wf-node.running .wf-node-status,.wf-node.blocked .wf-node-status,.wf-node.waiting_approval .wf-node-status {color:var(--primary,#c76540)}
+.wf-detail-overlay {position:fixed;inset:0;z-index:80;background:#0003;display:flex;justify-content:flex-end;padding:28px}
+.workflow-workspace {display:flex;min-width:0;flex:1;overflow:auto;color:inherit;background:var(--background,#fafaf8);font-size:14px}
+.wf-tools button,.wf-tools input,.wf-tools textarea,.wf-tools select {font:inherit;color:inherit}
+.wf-tools button {cursor:pointer;border:1px solid var(--border,#ddd);border-radius:6px;background:transparent;padding:6px 9px;display:inline-flex;align-items:center;gap:5px;justify-content:center}
+.wf-tools button:hover {background:#00000005}
+.wf-tools button:disabled {opacity:.45;cursor:default}
+.wf-tools input:not([type=checkbox]),.wf-tools textarea,.wf-tools select {border:1px solid var(--border,#ddd);border-radius:6px;background:var(--surface,#fff);padding:9px;max-width:100%;min-width:0}
+.wf-tools textarea {min-height:84px;resize:vertical}
+.wf-tools label:not(.wf-check) {display:flex;flex-direction:column;gap:7px}
+.wf-tools .wf-primary {background:var(--primary,#c76540);border-color:transparent;color:white}
+.wf-main {flex:1;min-width:0;display:flex;flex-direction:column;overflow:auto}
+.wf-toolbar {display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:54px;padding:12px 20px;border-bottom:1px solid var(--border,#e5e5df)}
+.wf-tools-assets .wf-toolbar,.wf-tools-settings .wf-toolbar {border:0}
+.wf-tools-assets .wf-library {width:min(340px,40%);padding:24px;border-right:1px solid var(--border,#e5e5df);overflow:auto}
+.wf-library h2 {font-size:17px;margin:0 0 18px}
+.wf-list {display:flex;flex-direction:column;gap:18px;margin-top:20px}
+.wf-list article {padding:0 0 18px;border-bottom:1px solid var(--border,#e5e5df)}
+.wf-list article p {color:#888}
+.wf-list article select,.wf-list article>.wf-row {margin:10px 0}
+.wf-list small {display:block;color:#888;margin:5px 0}
+.wf-create,.wf-settings {max-width:720px;width:100%;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:22px}
+.wf-create {padding-top:0}
+.wf-create fieldset {border:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.wf-check {display:flex;align-items:center;gap:8px}
+.wf-check input {accent-color:var(--primary,#c76540)}
+.wf-settings-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.wf-template-inputs {display:flex;flex-direction:column;gap:18px}
+.wf-graph-toolbar {display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px}
+.wf-graph-toolbar>select {flex:1;width:100px}
+.wf-graph-container {flex:1;overflow:auto;padding:12px}
+.wf-traces {padding:15px}
+.wf-traces button {margin:8px 6px 0 0}
+.wf-detail-overlay .wf-tools {width:min(1100px,100%);flex:initial;border-radius:12px;box-shadow:0 10px 50px #0002}
+.wf-inspector {width:min(400px,100%);flex-shrink:0;padding:24px;overflow:auto;border-left:1px solid var(--border,#ddd);display:flex;flex-direction:column;gap:16px;background:var(--surface,#fff)}
+.wf-inspector>header {display:flex;justify-content:space-between;align-items:center}
+.wf-inspector pre,.wf-modal pre {white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+.wf-inspector .markdown-body {font-size:14px}
+.wf-tools-node {max-width:560px}
+.wf-tools-node .wf-main {display:none}
+.wf-tools-node .wf-inspector {width:100%;border:0}
+.wf-modal-backdrop {position:fixed;inset:0;background:#0003;display:flex;align-items:center;justify-content:center;z-index:90;padding:20px}
+.wf-modal {background:var(--surface,#fff);border-radius:12px;padding:26px;width:min(540px,100%);max-height:90dvh;overflow:auto;display:flex;flex-direction:column;gap:16px;box-shadow:0 10px 50px #0002}
+.wf-modal h3 {margin:0}
+.wf-modal p {color:#888;font-size:13px}
+.wf-error {font-size:13px;color:#a14e32;padding:12px;overflow-wrap:anywhere}
+.wf-artifact iframe {width:100%;min-height:300px}
+.wf-empty {padding:40px;text-align:center}
+@media(max-width:700px){
+ .wf-message-list {padding:22px 16px 30px;gap:22px}
+ .wf-message.user {max-width:94%}
+ .wf-detail-overlay {padding:0}
+ .wf-detail-overlay .wf-tools {border-radius:0;width:100%}
+ .wf-tools-graph .wf-inspector {position:absolute;right:0;inset-block:0;width:min(420px,100%);z-index:3;box-shadow:-10px 0 30px #0002}
+ .wf-tools-assets {flex-direction:column}
+ .wf-tools-assets .wf-library {width:100%;border-right:0;border-bottom:1px solid #ddd;max-height:42vh;flex-shrink:0}
+ .wf-tools-assets .wf-main {flex-shrink:0;overflow:visible}
+ .wf-conversation .chat-header {gap:5px;padding-inline:12px}
+ .mode-switch button {padding:5px 7px}
+ .wf-plan-message>details>summary span {display:block;margin-left:16px}
+ .wf-graph-toolbar {flex-wrap:wrap}
+}
+
+.wf-floating-error {position:fixed;bottom:28px;left:50%;transform:translateX(-50%);z-index:100;background:var(--popover);border:1px solid var(--border);border-radius:8px;padding:12px 16px;box-shadow:var(--shadow-sm);max-width:min(560px,90vw);display:flex;gap:12px;align-items:center;color:var(--primary);font-size:13px}
+.wf-tools-save .wf-main {display:none}
+.wf-detail-overlay .wf-tools-save {background:transparent;box-shadow:none}
+.wf-settings fieldset {border:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.management-workspace {min-width:0;min-height:0;height:100dvh;display:grid;grid-template-rows:64px minmax(0,1fr)}
+.management-workspace>:last-child {min-height:0;overflow:auto}
+.management-back {background:transparent;border:0;color:inherit;cursor:pointer;font:inherit;font-size:13px}
+
+.subagent-heading-actions { display: flex; align-items: center; gap: 8px; }
+.subagent-more { position: relative; }
+.subagent-more summary { display: flex; cursor: pointer; padding: 8px; border-radius: 6px; list-style: none; }
+.subagent-more summary::-webkit-details-marker { display: none; }
+.subagent-more[open] > button { position: absolute; right: 0; top: 100%; z-index: 5; white-space: nowrap; padding: 10px 14px; background: var(--background, #fff); border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 16px #0001; }

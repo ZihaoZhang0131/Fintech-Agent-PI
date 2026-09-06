@@ -1,3 +1,5 @@
+import { createConfiguredAgent } from "@/server/agent/create-agent";
+import { createProfileTools } from "@/server/agent/profile-tools";
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import { type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
 import { createConfiguredModels } from "@/server/model-registry";
@@ -337,42 +339,10 @@ export async function POST(request: Request) {
     } catch (error) {
       throw new Error(error instanceof Error ? error.message : "专业 Agent 模型不可用。");
     }
-    const childModel = models.getModel(childResolved.piProviderId, childResolved.modelId);
-    if (!childModel) throw new Error("PI 中没有找到专业 Agent 所选模型。");
     const childToolNames = new Set(profile.enabledTools);
-    const childSkills = selectSkillRegistry(
-      allSkills,
-      childToolNames.has("load_skill") ? profile.enabledSkills : [],
-    );
-    const childWorkspaceTools = createWorkspaceTools(workspaceId).filter((tool) =>
-      childToolNames.has(tool.name),
-    );
-    const childDatabaseTools = createLocalDatabaseTools().filter((tool) => childToolNames.has(tool.name));
-    const childDocumentTools = childToolNames.has("generate_document") ? [createDocumentTool(workspaceId)] : [];
-    // MCP discovery is deliberately delayed until this specialized worker is actually invoked.
-    const childMcps = await discoverMcpServers(profile.enabledMcps);
-    const childSkillTracker = createLoadedSkillTracker();
-    const childTools: AgentTool[] = [
-      ...(childToolNames.has("load_skill") && childSkills.list().length > 0
-        ? [
-            createLoadSkillTool(childSkills, childSkillTracker),
-            ...createSkillResourceTools(childSkills, childSkillTracker, workspaceId, {
-              approvalMode: bashApprovalMode,
-              permissionMode: bashPermissionMode,
-            }).filter((tool) => tool.name !== "run_skill_script" || childToolNames.has("bash")),
-          ]
-        : []),
-      ...(childToolNames.has("web_search")
-        ? [createWebSearchTool({ apiKey: process.env.TAVILY_API_KEY })]
-        : []),
-      ...childWorkspaceTools,
-      ...childDatabaseTools,
-      ...childDocumentTools,
-      ...(childToolNames.has("bash")
-        ? [createBashTool(workspaceId, { approvalMode: bashApprovalMode, permissionMode: bashPermissionMode })]
-        : []),
-      ...createMcpAgentTools(childMcps),
-    ];
+    const { tools: childTools, skills: childSkills, mcps: childMcps } = await createProfileTools({
+      profile, registry: allSkills, workspaceId, approvalMode: bashApprovalMode, permissionMode: bashPermissionMode,
+    });
     const childPrompt = [
       `你是${configuredAgent.label}。${configuredAgent.description} 严格区分事实、推断和待验证事项；缺少证据时明确说明，不能编造数据或来源。`,
       `当前项目名称：${JSON.stringify(workspaceName)}。`,
@@ -386,16 +356,10 @@ export async function POST(request: Request) {
         : "本角色没有启用 Word/PDF 文档生成能力，不要声称已生成文档。",
       formatSkillCatalog(childSkills),
     ].join("\n\n");
-    const child = new Agent({
-      initialState: {
-        systemPrompt: childPrompt,
-        model: childModel,
-        thinkingLevel: "off",
-        tools: childTools,
-        messages: [],
-      },
-      streamFn: models.streamSimple.bind(models),
-      getApiKey: () => childResolved.apiKey,
+    const child = createConfiguredAgent({
+      resolved: childResolved,
+      systemPrompt: childPrompt,
+      tools: childTools,
       sessionId: `${payload.conversationId ?? "conversation"}:${agentId}:${crypto.randomUUID()}`,
     });
     const childTraceHandle = traceRecorder?.attachAgent({

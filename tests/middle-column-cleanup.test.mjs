@@ -13,8 +13,8 @@ test("middle column removes secondary welcome and status copy", () => {
 });
 
 test("composer stays accessible without visible placeholder copy", () => {
-  const composerStart = pageSource.indexOf('className="composer"');
-  const composerEnd = pageSource.indexOf("</form>", composerStart);
+  const composerStart = pageSource.indexOf("<ComposerSurface");
+  const composerEnd = pageSource.indexOf("</ComposerSurface>", composerStart);
   const composerSource = pageSource.slice(composerStart, composerEnd);
 
   assert.ok(composerStart > 0);

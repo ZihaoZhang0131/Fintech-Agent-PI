@@ -32,7 +32,7 @@ test("project UI separates the main Agent prompt from SubAgent management", () =
 test("chat route lazy-loads MCP only inside a delegated specialized Agent", () => {
   assert.match(route, /createDelegateAgentTool/);
   assert.match(route, /async function runSubAgent/);
-  assert.match(route, /MCP discovery is deliberately delayed/);
+  assert.match(route, /await createProfileTools/);
   assert.match(route, /不能再次委派 Agent/);
   assert.match(route, /agentPrompts\.main/);
   assert.match(route, /resolveGlobalAgentPrompts/);

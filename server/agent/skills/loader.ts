@@ -7,7 +7,7 @@ import akshareChinaMacroSource from "../../../.agents/skills/akshare-china-macro
 import akshareUsMacroSource from "../../../.agents/skills/akshare-us-macro/SKILL.md?raw";
 import akshareEuroMacroSource from "../../../.agents/skills/akshare-euro-macro/SKILL.md?raw";
 import akshareInstitutionsMacroSource from "../../../.agents/skills/akshare-institutions-macro/SKILL.md?raw";
-import { parseSkill, type SkillDefinition, type SkillMetadata, type SkillResource } from "./parser";
+import { parseSkill } from "./parser";
 import { loadLocalSkillState } from "./local";
 
 const BUNDLED_SKILL_SOURCES = [
@@ -22,16 +22,9 @@ const BUNDLED_SKILL_SOURCES = [
   akshareInstitutionsMacroSource,
 ] as const;
 
-export type SkillRegistry = {
-  list(): SkillMetadata[];
-  get(name: string): SkillDefinition | undefined;
-};
-
-export type LocalSkillState = {
-  entries: Array<SkillDefinition & { baseName?: string }>;
-  deletedBundledNames: string[];
-  resourceFilesByName: Record<string, SkillResource[]>;
-};
+export type { SkillRegistry, LocalSkillState } from "./registry.ts";
+export { selectSkillRegistry } from "./registry.ts";
+import type { SkillRegistry, LocalSkillState } from "./registry.ts";
 
 export function loadSkillRegistry(
   enabledNames?: Iterable<string>,
@@ -64,19 +57,4 @@ export function loadSkillRegistry(
 
 export async function loadEffectiveSkillRegistry(enabledNames?: Iterable<string>): Promise<SkillRegistry> {
   return loadSkillRegistry(enabledNames, await loadLocalSkillState());
-}
-
-export function selectSkillRegistry(registry: SkillRegistry, enabledNames?: Iterable<string>): SkillRegistry {
-  const enabled = enabledNames ? new Set(enabledNames) : null;
-  const skills = registry.list()
-    .filter((skill) => !enabled || enabled.has(skill.name))
-    .flatMap((metadata) => {
-      const definition = registry.get(metadata.name);
-      return definition ? [definition] : [];
-    });
-  const byName = new Map(skills.map((skill) => [skill.name, skill]));
-  return {
-    list: () => skills.map(({ id, origin, name, description }) => ({ id, origin, name, description })),
-    get: (name) => byName.get(name),
-  };
 }

@@ -57,12 +57,18 @@ import { ModelLibrary, type ModelProviderItem } from "@/components/model-library
 import { ToolRunStack } from "@/components/tool-run-stack";
 import { UserUsagePage } from "@/components/user-usage-page";
 import { DatabasePage } from "@/components/database-page";
+import { ComposerSurface } from "@/components/chat-composer";
+import { workflowApi, type WorkflowConversation } from "@/lib/workflow-client";
+import { WorkflowWorkspace } from "@/components/workflow-workspace";
 import { TracePage } from "@/components/trace-page";
 import type { CapabilityCatalog, CapabilityItem, CapabilityKind } from "@/lib/capability-types";
 import {
   cloneProjectAgentConfig,
   createCustomSubAgent,
   createDefaultProjectAgentConfig,
+  createEmptyProjectAgentConfig,
+  supplementDefaultAgents,
+  MAX_CUSTOM_SUB_AGENTS,
   createProjectAgentConfigFromLegacy,
   upgradeLegacyDefaultSkillSelection,
   upgradeLegacyDefaultToolSelection,
@@ -198,7 +204,7 @@ const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
 const AGENT_PROFILES_KEY = "pi-research-agent:agent-profiles:v2";
 const AGENT_PROMPTS_KEY = "pi-research-agent:agent-prompts:v1";
 
-type AppView = "workspace" | CapabilityKind | "model" | "agent" | "subagent" | "user" | "database" | "trace";
+type AppView = "workflow" | "workspace" | CapabilityKind | "model" | "agent" | "subagent" | "user" | "database" | "trace";
 
 const SUGGESTIONS = [
   {
@@ -295,7 +301,9 @@ function parseProjectAgentConfigs(value: string | null): Record<string, ProjectA
     return Object.fromEntries(
       Object.entries(parsed).flatMap(([projectId, config]) => {
         if (!config || typeof config !== "object" || !config.profiles || typeof config.profiles !== "object") return [];
-        const base = createDefaultProjectAgentConfig();
+        const base = createEmptyProjectAgentConfig();
+        if (Number.isInteger(config.starterAgentsVersion) && config.starterAgentsVersion! >= 1) base.starterAgentsVersion = config.starterAgentsVersion;
+        if (Array.isArray(config.starterAgentsSkipped)) base.starterAgentsSkipped = config.starterAgentsSkipped.filter((name): name is string => typeof name === "string");
         for (const id of ["main"] as AgentRoleId[]) {
           const profile = config.profiles[id];
           if (!profile || typeof profile !== "object") continue;
@@ -488,6 +496,11 @@ export default function Home() {
   const [fileTabsByProject, setFileTabsByProject] = useState<ProjectFileTabsState>({});
   const [previewCache, setPreviewCache] = useState<Record<string, PreviewCacheEntry>>({});
   const [copiedPreviewPath, setCopiedPreviewPath] = useState("");
+  const [appMode, setAppMode] = useState<"workspace" | "workflow">("workspace");
+  const [workflowConversations,setWorkflowConversations]=useState<WorkflowConversation[]>([]);
+  const [workflowActiveIds,setWorkflowActiveIds]=useState<Record<string,string>>({});
+  const workflowProjectRef=useRef("");
+  useEffect(()=>{let disposed=false;async function refresh(){try{const d=await workflowApi<{conversations:WorkflowConversation[]}>("/conversations");if(!disposed)setWorkflowConversations(d.conversations);}catch{/* runtime connection is shown in the workspace */}}void refresh();const timer=setInterval(()=>void refresh(),4000);window.addEventListener("workflow-conversations-changed",refresh);return()=>{disposed=true;clearInterval(timer);window.removeEventListener("workflow-conversations-changed",refresh);};},[]);
   const [activeView, setActiveView] = useState<AppView>("workspace");
   const [traceFocusId, setTraceFocusId] = useState("");
   const [capabilityCatalog, setCapabilityCatalog] = useState<CapabilityCatalog>({
@@ -533,7 +546,7 @@ export default function Home() {
   );
   const usageActivity = useMemo(() => getUsageActivity(conversations), [conversations]);
   const activeAgentConfig = useMemo(
-    () => agentConfigsByProject[activeProjectId] ?? createDefaultProjectAgentConfig(),
+    () => agentConfigsByProject[activeProjectId] ?? createEmptyProjectAgentConfig(),
     [activeProjectId, agentConfigsByProject],
   );
   const isBusy = status === "connecting" || status === "streaming";
@@ -692,6 +705,9 @@ export default function Home() {
 
   useEffect(() => {
     async function initialize() {
+      if (localStorage.getItem("pi-research-agent:mode:v1") === "workflow") {setActiveView("workflow");setAppMode("workflow");}
+      workflowProjectRef.current=localStorage.getItem("workflow:last-project")??"";
+      try {setWorkflowActiveIds(JSON.parse(localStorage.getItem("workflow:active-conversations")??"{}"));} catch { /* empty selection */ }
       setSidebarWidth(storedNumber(localStorage.getItem(SIDEBAR_WIDTH_KEY), 246, 190, 380));
       setFilePanelWidth(storedNumber(localStorage.getItem(FILE_PANEL_WIDTH_KEY), 380, 300, 680));
       setSidebarVisible(storedBoolean(localStorage.getItem(SIDEBAR_VISIBLE_KEY), true));
@@ -729,7 +745,7 @@ export default function Home() {
           enabledMcps: parseStoredNames(localStorage.getItem(ENABLED_MCPS_KEY)) ?? undefined,
         });
         const availableAgentConfigs = Object.fromEntries(
-          available.map((project) => [project.id, storedAgentConfigs[project.id] ?? cloneProjectAgentConfig(legacyAgentConfig)]),
+          available.map((project) => [project.id, supplementDefaultAgents(storedAgentConfigs[project.id] ?? cloneProjectAgentConfig(legacyAgentConfig))]),
         );
         let normalized = stored.flatMap((conversation) => {
           const projectId =
@@ -754,14 +770,15 @@ export default function Home() {
         if (initialProject && !normalized.some((item) => item.projectId === initialProject.id)) {
           normalized = [makeConversation(initialProject.id), ...normalized];
         }
-        const firstConversation = initialProject
+        const firstConversation = normalized.find(item=>item.id===localStorage.getItem("chat:last-conversation")) ?? (initialProject
           ? normalized.find((item) => item.projectId === initialProject.id)
-          : undefined;
+          : undefined);
         setProjects(available);
         setAgentConfigsByProject(availableAgentConfigs);
         setAgentPrompts(storedAgentPrompts);
         setConversations(normalized);
-        setActiveProjectId(initialProject?.id ?? "");
+        const workflowProject=localStorage.getItem("pi-research-agent:mode:v1")==="workflow" && projectIds.has(workflowProjectRef.current) ? workflowProjectRef.current : "";
+        setActiveProjectId(workflowProject || firstConversation?.projectId || initialProject?.id || "");
         setActiveId(firstConversation?.id ?? "");
         setFileTabsByProject(availableFileTabs);
         setExpandedProjectIds(
@@ -925,7 +942,29 @@ export default function Home() {
     abortRef.current?.abort();
   }
 
+  useEffect(()=>{if(hydrated&&activeId)localStorage.setItem("chat:last-conversation",activeId);},[activeId,hydrated]);
+
+  function chooseWorkflow(id:string,projectId=activeProjectId) {
+    workflowProjectRef.current=projectId;
+    localStorage.setItem("workflow:last-project",projectId);
+    setActiveProjectId(projectId);
+    setWorkflowActiveIds(previous=>{const next={...previous,[projectId]:id};localStorage.setItem("workflow:active-conversations",JSON.stringify(next));return next;});
+    setExpandedProjectIds(previous=>previous.includes(projectId)?previous:[...previous,projectId]);
+    setActiveView("workflow");setSidebarOpen(false);
+  }
+  function changeMode(mode:"workspace"|"workflow") {
+    if(mode === "workspace") {
+      const conversation=conversations.find(c=>c.id===activeId);
+      if(conversation)setActiveProjectId(conversation.projectId);
+    } else if(projects.some(p=>p.id===workflowProjectRef.current)) {
+      setActiveProjectId(workflowProjectRef.current);
+    }
+    setAppMode(mode);
+    setActiveView(mode);
+    localStorage.setItem("pi-research-agent:mode:v1",mode);
+  }
   function newConversation(projectId = activeProjectId) {
+    if(appMode==="workflow"){chooseWorkflow("",projectId);return;}
     if (!projectId) return;
     if (isBusy) stopActiveRun();
     const next = makeConversation(projectId);
@@ -1085,7 +1124,8 @@ export default function Home() {
     setStatus("idle");
   }
 
-  function selectConversation(id: string, projectId: string) {
+  function selectConversation(id: string, projectId: string, mode = appMode) {
+    if(mode==="workflow"){chooseWorkflow(id,projectId);return;}
     if (isBusy && id !== activeId) return;
     setExpandedProjectIds((current) =>
       current.includes(projectId) ? current : [...current, projectId],
@@ -1106,6 +1146,8 @@ export default function Home() {
   }
 
   function openTraceConversation(conversationId: string) {
+    const workflow = workflowConversations.find(c=>c.id===conversationId || c.runIds.includes(conversationId));
+    if(workflow){changeMode("workflow");chooseWorkflow(workflow.id,workflow.workspaceId);return;}
     const conversation = conversations.find((item) => item.id === conversationId);
     if (!conversation) {
       setProjectError("这条 Trace 对应的本地对话已经不存在。");
@@ -1115,7 +1157,8 @@ export default function Home() {
       setActiveView("workspace");
       return;
     }
-    selectConversation(conversation.id, conversation.projectId);
+    changeMode("workspace");
+    selectConversation(conversation.id, conversation.projectId,"workspace");
   }
 
   function toolRunsAreExpanded(messageId: string) {
@@ -1269,7 +1312,7 @@ export default function Home() {
   function updateAgentProfile(id: AgentRoleId, profile: AgentProfile) {
     if (!activeProjectId || isBusy) return;
     setAgentConfigsByProject((current) => {
-      const config = current[activeProjectId] ?? createDefaultProjectAgentConfig();
+      const config = current[activeProjectId] ?? createEmptyProjectAgentConfig();
       return { ...current, [activeProjectId]: { ...config, profiles: { ...config.profiles, [id]: profile } } };
     });
   }
@@ -1282,7 +1325,7 @@ export default function Home() {
   function updateCustomSubAgent(agent: CustomSubAgent) {
     if (!activeProjectId || isBusy) return;
     setAgentConfigsByProject((current) => {
-      const config = current[activeProjectId] ?? createDefaultProjectAgentConfig();
+      const config = current[activeProjectId] ?? createEmptyProjectAgentConfig();
       return {
         ...current,
         [activeProjectId]: {
@@ -1294,6 +1337,7 @@ export default function Home() {
   }
 
   function createCustomSubAgentForProject() {
+    if (activeAgentConfig.customSubAgents.length >= MAX_CUSTOM_SUB_AGENTS) return activeAgentConfig.customSubAgents[0];
     const agent = createCustomSubAgent({
       id: `custom-${makeId()}`,
       label: "新子 Agent",
@@ -1301,7 +1345,7 @@ export default function Home() {
     });
     if (!activeProjectId || isBusy) return agent;
     setAgentConfigsByProject((current) => {
-      const config = current[activeProjectId] ?? createDefaultProjectAgentConfig();
+      const config = current[activeProjectId] ?? createEmptyProjectAgentConfig();
       return { ...current, [activeProjectId]: { ...config, customSubAgents: [...config.customSubAgents, agent] } };
     });
     return agent;
@@ -1310,7 +1354,7 @@ export default function Home() {
   function deleteCustomSubAgent(id: CustomSubAgent["id"]) {
     if (!activeProjectId || isBusy) return;
     setAgentConfigsByProject((current) => {
-      const config = current[activeProjectId] ?? createDefaultProjectAgentConfig();
+      const config = current[activeProjectId] ?? createEmptyProjectAgentConfig();
       return { ...current, [activeProjectId]: { ...config, customSubAgents: config.customSubAgents.filter((agent) => agent.id !== id) } };
     });
   }
@@ -1344,7 +1388,7 @@ export default function Home() {
     const model = availableModels.find((item) => `${item.providerId}:${item.modelId}` === modelId);
     if (model && activeProjectId) {
       setAgentConfigsByProject((current) => {
-        const config = current[activeProjectId] ?? createDefaultProjectAgentConfig();
+        const config = current[activeProjectId] ?? createEmptyProjectAgentConfig();
         return {
           ...current,
           [activeProjectId]: {
@@ -1821,6 +1865,7 @@ export default function Home() {
     window.setTimeout(() => setCopiedPreviewPath(""), 1_500);
   }
 
+  const modeSwitch=<nav className="mode-switch" aria-label="工作模式"><button className={appMode==="workspace"?"active":""} onClick={()=>changeMode("workspace")}>聊天</button><button className={appMode==="workflow"?"active":""} onClick={()=>changeMode("workflow")}>Workflow</button></nav>;
   return (
     <main
       className={`app-shell ${activeView !== "workspace" ? "library-mode" : ""} ${sidebarVisible ? "" : "sidebar-collapsed"} ${filePanelVisible ? "" : "file-panel-collapsed"}`}
@@ -1874,7 +1919,7 @@ export default function Home() {
         <div className="sidebar-divider" aria-hidden="true" />
         <nav className="project-list" aria-label="项目与会话列表">
           {projects.map((project) => {
-            const projectConversations = conversations.filter(
+            const projectConversations = (appMode === "workflow" ? workflowConversations.map(c=>({...c,projectId:c.workspaceId})) : conversations).filter(
               (conversation) => conversation.projectId === project.id,
             );
             const active = project.id === activeProjectId;
@@ -1971,7 +2016,7 @@ export default function Home() {
                   <div className="conversation-list">
                     {projectConversations.map((conversation) => (
                       <div
-                        className={`conversation-row ${conversation.id === activeId ? "active" : ""}`}
+                        className={`conversation-row ${conversation.id === (appMode === "workflow" ? workflowActiveIds[project.id] : activeId) ? "active" : ""}`}
                         key={conversation.id}
                       >
                         <button
@@ -1983,14 +2028,14 @@ export default function Home() {
                             <strong>{conversation.title}</strong>
                           </span>
                         </button>
-                        <button
+                        {appMode === "workspace" && <button
                           className="delete-chat"
                           type="button"
                           aria-label={`删除${conversation.title}`}
                           onClick={() => deleteConversation(conversation.id)}
                         >
                           <Trash2 size={14} />
-                        </button>
+                        </button>}
                       </div>
                     ))}
                   </div>
@@ -2127,6 +2172,7 @@ export default function Home() {
               <h1>{activeConversation?.title ?? activeProject?.name ?? "本地项目工作台"}</h1>
             </div>
           </div>
+          {modeSwitch}
           <button
             className="mobile-icon-button artifact-trigger"
             type="button"
@@ -2231,7 +2277,7 @@ export default function Home() {
         </div>
 
         <div className="composer-wrap">
-          <form className="composer" onSubmit={handleSubmit}>
+          <ComposerSurface onSubmit={handleSubmit}>
             <textarea
               ref={textareaRef}
               value={input}
@@ -2320,7 +2366,7 @@ export default function Home() {
                 </button>
               )}
             </div>
-          </form>
+          </ComposerSurface>
         </div>
       </section>
 
@@ -2611,7 +2657,10 @@ export default function Home() {
         </button>
       )}
         </>
-      ) : activeView === "agent" ? (
+      ) : activeView === "workflow" ? (
+        <WorkflowWorkspace key={activeProjectId} conversationId={workflowActiveIds[activeProjectId]??""} onConversationChange={id=>chooseWorkflow(id)} modeSwitch={modeSwitch} onSidebar={()=>setSidebarOpen(true)} workspaceId={activeProjectId} config={activeAgentConfig}
+          model={selectedModel} models={availableModels} onConfigure={() => setActiveView("subagent")} onTrace={openTrace} />
+      ) : <section className="management-workspace"><header className="chat-header"><button className="management-back" onClick={()=>setActiveView(appMode)}>返回对话</button>{modeSwitch}</header>{activeView === "agent" ? (
         <AgentPromptPage
           value={agentPrompts.main}
           onChange={updateAgentPrompt}
@@ -2623,6 +2672,7 @@ export default function Home() {
           models={availableModels}
           onCustomUpdate={updateCustomSubAgent}
           onCreateCustom={createCustomSubAgentForProject}
+          onSupplementDefaults={() => setAgentConfigsByProject(current => ({ ...current, [activeProjectId]: supplementDefaultAgents(current[activeProjectId] ?? createEmptyProjectAgentConfig(), true) }))}
           onDeleteCustom={deleteCustomSubAgent}
         />
       ) : activeView === "model" ? (
@@ -2632,7 +2682,7 @@ export default function Home() {
           error={modelsError}
           onSaveAndTest={saveAndTestModelProvider}
           onDelete={deleteModelProvider}
-          onClose={() => setActiveView("workspace")}
+          onClose={() => setActiveView(appMode)}
         />
       ) : activeView === "user" ? (
         <UserUsagePage activity={usageActivity} />
@@ -2644,7 +2694,7 @@ export default function Home() {
           onOpenConversation={openTraceConversation}
         />
       ) : activeView === "database" ? (
-        <DatabasePage onClose={() => setActiveView("workspace")} />
+        <DatabasePage onClose={() => setActiveView(appMode)} />
       ) : (
         <CapabilityLibrary
           key={activeView}
@@ -2672,9 +2722,9 @@ export default function Home() {
           onSkillWriteResource={activeView === "skill" ? writeSkillResource : undefined}
           onSkillDeleteResource={activeView === "skill" ? deleteSkillResource : undefined}
           onSkillExport={activeView === "skill" ? exportSkill : undefined}
-          onClose={() => setActiveView("workspace")}
+          onClose={() => setActiveView(appMode)}
         />
-      )}
+      )}</section>}
       {pathProject && (
         <div
           className="project-dialog-backdrop"

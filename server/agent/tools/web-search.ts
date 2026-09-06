@@ -92,10 +92,9 @@ function throwIfAborted(signal?: AbortSignal) {
   }
 }
 
-export function createWebSearchTool({
-  apiKey,
-  client = tavily({ apiKey, clientName: "pi-research-agent" }),
-}: CreateWebSearchToolOptions = {}): AgentTool<typeof webSearchParameters, WebSearchDetails> {
+export function createWebSearchTool(options: CreateWebSearchToolOptions = {}): AgentTool<typeof webSearchParameters, WebSearchDetails> {
+  const apiKey = options.apiKey ?? process.env.TAVILY_API_KEY;
+  const client = options.client ?? tavily({ apiKey, clientName: "pi-research-agent" });
   return {
     name: "web_search",
     label: "Tavily 网络搜索",
@@ -105,6 +104,7 @@ export function createWebSearchTool({
     executionMode: "parallel",
     execute: async (_toolCallId, params, signal, onUpdate) => {
       throwIfAborted(signal);
+      if (!options.client && !apiKey?.trim()) throw new Error("联网搜索权限已开启，但服务端未配置 TAVILY_API_KEY。请配置搜索服务密钥后重试，或提供项目资料供 Agent 读取。");
       onUpdate?.({
         content: [{ type: "text", text: `正在搜索：${params.query}` }],
         details: {

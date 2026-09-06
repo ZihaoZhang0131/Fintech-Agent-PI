@@ -1,8 +1,8 @@
 "use client";
 
-import { Bot, ChevronDown, Plus, Trash2, X } from "lucide-react";
+import { Bot, ChevronDown, MoreHorizontal, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { AgentProfile, CustomSubAgent, ProjectAgentConfig, SubAgentId } from "@/lib/agent-profiles";
+import { MAX_CUSTOM_SUB_AGENTS, type AgentProfile, type CustomSubAgent, type ProjectAgentConfig, type SubAgentId } from "@/lib/agent-profiles";
 import type { CapabilityCatalog } from "@/lib/capability-types";
 
 type ModelOption = { providerId: string; providerLabel: string; modelId: string; label: string };
@@ -13,6 +13,7 @@ type SubAgentLibraryProps = {
   models: ModelOption[];
   onCustomUpdate: (agent: CustomSubAgent) => void;
   onCreateCustom: () => CustomSubAgent;
+  onSupplementDefaults: () => void;
   onDeleteCustom: (id: CustomSubAgent["id"]) => void;
 };
 
@@ -38,7 +39,7 @@ export function AgentPromptPage({ value, onChange }: { value: string; onChange: 
   );
 }
 
-export function SubAgentLibrary({ catalog, config, models, onCustomUpdate, onCreateCustom, onDeleteCustom }: SubAgentLibraryProps) {
+export function SubAgentLibrary({ catalog, config, models, onCustomUpdate, onCreateCustom, onDeleteCustom, onSupplementDefaults }: SubAgentLibraryProps) {
   const [selectedId, setSelectedId] = useState<SubAgentId | null>(null);
   const selected = useMemo(
     () => config.customSubAgents.find((agent) => agent.id === selectedId) ?? null,
@@ -59,8 +60,12 @@ export function SubAgentLibrary({ catalog, config, models, onCustomUpdate, onCre
       <div className="agent-page-body subagent-page">
         <header className="agent-page-heading subagent-page-heading">
           <span><Bot size={18} /><h1>SubAgent</h1></span>
-          <button type="button" className="subagent-add" onClick={createAgent}><Plus size={16} />新增</button>
+          <div className="subagent-heading-actions">
+            <button type="button" className="subagent-add" disabled={config.customSubAgents.length >= MAX_CUSTOM_SUB_AGENTS} onClick={createAgent}><Plus size={16} />新增</button>
+            <details className="subagent-more"><summary aria-label="更多 Agent 操作"><MoreHorizontal size={18} /></summary><button type="button" onClick={(event) => { onSupplementDefaults(); event.currentTarget.closest("details")?.removeAttribute("open"); }}>补充默认 Agent</button></details>
+          </div>
         </header>
+        {!!config.starterAgentsSkipped?.length && <p className="subagent-empty" role="status">已达到 {MAX_CUSTOM_SUB_AGENTS} 个 Agent 上限，未添加：{config.starterAgentsSkipped.join("、")}。腾出位置后可在更多菜单中补充。</p>}
         {config.customSubAgents.length ? (
           <div className="subagent-list">
             {config.customSubAgents.map((agent) => {

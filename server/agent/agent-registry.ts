@@ -1,6 +1,6 @@
 import {
   AGENT_ROLE_IDS,
-  createDefaultProjectAgentConfig,
+  createEmptyProjectAgentConfig,
   upgradeLegacyDefaultSkillSelection,
   upgradeLegacyDefaultToolSelection,
   type AgentModelOverride,
@@ -9,10 +9,10 @@ import {
   type CustomSubAgent,
   type ProjectAgentConfig,
   type SubAgentId,
-} from "@/lib/agent-profiles";
-import { createDefaultAgentPromptConfig, type AgentPromptConfig } from "@/lib/agent-prompts";
-import { AGENT_TOOL_NAMES, BUNDLED_SKILL_NAMES } from "./capability-policy";
-import { MCP_SERVER_IDS } from "./mcp/registry";
+} from "../../lib/agent-profiles.ts";
+import { createDefaultAgentPromptConfig, type AgentPromptConfig } from "../../lib/agent-prompts.ts";
+import { AGENT_TOOL_NAMES, BUNDLED_SKILL_NAMES } from "./capability-policy.ts";
+import { MCP_SERVER_IDS } from "./mcp/registry.ts";
 
 export type AgentRoleDefinition = {
   id: string;
@@ -137,7 +137,7 @@ export function resolveProjectAgentConfig(input: unknown, legacy?: {
   enabledTools?: unknown;
   enabledMcps?: unknown;
 }, skillNames: readonly string[] = BUNDLED_SKILL_NAMES): ProjectAgentConfig {
-  const defaults = createDefaultProjectAgentConfig();
+  const defaults = createEmptyProjectAgentConfig();
   const candidate = input && typeof input === "object" ? input as Partial<ProjectAgentConfig> : {};
   const requestedProfiles = candidate.profiles && typeof candidate.profiles === "object"
     ? candidate.profiles as Partial<Record<AgentRoleId, unknown>>
@@ -199,7 +199,7 @@ export function getConfiguredSubAgent(config: ProjectAgentConfig, id: string) {
 }
 
 export function publicAgentRoles(skillNames: readonly string[] = BUNDLED_SKILL_NAMES) {
-  const defaults = createDefaultProjectAgentConfig();
+  const defaults = createEmptyProjectAgentConfig();
   return AGENT_ROLE_IDS.map((id) => {
     const role = AGENT_ROLE_REGISTRY[id];
     return {

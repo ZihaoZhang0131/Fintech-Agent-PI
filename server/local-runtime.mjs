@@ -1,3 +1,4 @@
+import { createWorkflowHttp } from "./workflow/http.mjs";
 import { createServer } from "node:http";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -1008,13 +1009,16 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
   const localDatabase = createLocalDatabase(dataDirectory);
   const traceStore = createTraceStore(dataDirectory);
   const skillStore = createSkillStore(dataDirectory);
-  return async function handle(request, response) {
+  const workflow = createWorkflowHttp({dataDirectory, skillStore, traceStore, localDatabase, commandManager, findWorkspace: id => findWorkspace(dataDirectory, id), readJsonBody, sendJson});
+  const handle = async function handle(request, response) {
     try {
       if (!token || request.headers.authorization !== `Bearer ${token}`) {
         return sendJson(response, 401, { message: "本机 Runtime 鉴权失败。" });
       }
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+
+      if (await workflow.handle(request, response, url, segments)) return;
 
       if (request.method === "GET" && url.pathname === "/health") {
         return sendJson(response, 200, { status: "ok", platform: process.platform });
@@ -1298,6 +1302,8 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
       return sendJson(response, status, { message });
     }
   };
+  handle.close = async () => { await workflow.close(); traceStore.close(); localDatabase.close(); };
+  return handle;
 }
 
 async function start() {
@@ -1306,7 +1312,8 @@ async function start() {
   const dataDirectory = process.env.PI_LOCAL_DATA_DIR ?? path.join(process.cwd(), ".local-data");
   if (!token) throw new Error("缺少 LOCAL_RUNTIME_TOKEN，必须通过 npm run dev 启动。");
   const mcpManager = createMcpManager();
-  const server = createServer(createLocalRuntimeHandler({ dataDirectory, token, mcpManager }));
+  const handler = createLocalRuntimeHandler({ dataDirectory, token, mcpManager });
+  const server = createServer(handler);
   server.listen(port, "127.0.0.1", () => {
     console.log(`Local Agent Runtime ready on http://127.0.0.1:${port}`);
   });
@@ -1314,6 +1321,7 @@ async function start() {
   const stop = async () => {
     if (stopping) return;
     stopping = true;
+    await handler.close();
     await mcpManager.close();
     server.close(() => {
       process.exitCode = 0;

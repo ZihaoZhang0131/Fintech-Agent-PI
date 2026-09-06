@@ -108,11 +108,30 @@ export function createLocalDatabase(dataDirectory) {
     }
   }
 
-  function mutate(sql) {
+  function mutate(sql, operationId) {
     const statement = requireMutationSql(sql);
-    database.exec(statement);
-    const result = database.prepare("SELECT changes() AS changes").get();
-    return { sql: statement, changes: Number(result?.changes ?? 0) };
+    if (!operationId) {
+      database.exec(statement);
+      return {sql: statement, changes: Number(database.prepare("SELECT changes() AS changes").get()?.changes ?? 0)};
+    }
+    if (/\bworkflow_ledger\b/i.test(statement)) throw new Error("不能修改内部操作记录。");
+    // Attached ledger commits atomically with the business mutation in rollback journal mode.
+    database.exec("ATTACH DATABASE '" + path.join(dataDirectory, "workflow-sql-ledger.sqlite").replaceAll("'", "''") + "' AS workflow_ledger");
+    try {
+      database.exec("CREATE TABLE IF NOT EXISTS workflow_ledger.operations(id TEXT PRIMARY KEY, sql TEXT NOT NULL, result TEXT NOT NULL)");
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        const old = database.prepare("SELECT sql, result FROM workflow_ledger.operations WHERE id=?").get(operationId);
+        if (old) {
+          if (old.sql !== statement) throw new Error("操作 ID 已用于其他 SQL。");
+          database.exec("COMMIT"); return JSON.parse(old.result);
+        }
+        database.exec(statement);
+        const result = {sql: statement, changes: Number(database.prepare("SELECT changes() AS changes").get()?.changes ?? 0)};
+        database.prepare("INSERT INTO workflow_ledger.operations VALUES(?,?,?)").run(operationId,statement,JSON.stringify(result));
+        database.exec("COMMIT");return result;
+      } catch(error) { database.exec("ROLLBACK");throw error; }
+    } finally {database.exec("DETACH DATABASE workflow_ledger");}
   }
 
   return { databasePath, listTables, describeTable, query, mutate, close: () => database.close() };
