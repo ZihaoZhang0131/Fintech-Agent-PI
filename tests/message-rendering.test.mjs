@@ -9,7 +9,9 @@ const styleSource = await readFile(new URL("../app/globals.css", import.meta.url
 
 test("chat messages render GitHub-flavored Markdown", () => {
   assert.match(markdownSource, /import remarkGfm from "remark-gfm"/);
-  assert.match(markdownSource, /<ReactMarkdown remarkPlugins=\{\[remarkGfm\]\} components=/);
+  assert.match(markdownSource, /remarkPlugins=\{projectNavigation && knownProjectFiles\?\.length/);
+  assert.match(markdownSource, /\? \[remarkGfm, \[remarkProjectFiles,/);
+  assert.match(markdownSource, /: \[remarkGfm\]\} components=/);
   assert.match(markdownSource, /\(\[。！？\.!\?：:\]\)\\s\*/);
   assert.match(pageSource, /<MarkdownMessage content=\{message\.content\} projectNavigation=/);
   assert.match(styleSource, /\.markdown-body table\s*\{/);

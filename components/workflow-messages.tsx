@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Maximize2, MoreHorizontal } from "lucide-react";
+import { workflowArtifactPaths } from "@/lib/workflow-links";
 import { MarkdownMessage, type ProjectNavigation } from "./chat-markdown";
 import {
   WorkflowGraph,
@@ -168,13 +169,14 @@ export function WorkflowMessages({
           snapshot.messages.map((message) => {
             const run = snapshot.runs.find((r) => r.id === message.runId);
             if (!run) return null;
+            const knownProjectFiles = workflowArtifactPaths(run);
             if (message.kind !== "plan")
               return (
                 <article
                   key={message.id}
                   className={`wf-message ${message.role}`}
                 >
-                  <MarkdownMessage content={message.content} projectNavigation={projectNavigation} />
+                  <MarkdownMessage content={message.content} projectNavigation={projectNavigation} knownProjectFiles={knownProjectFiles} />
                 </article>
               );
             const revision = run.revisions.find(
@@ -208,7 +210,7 @@ export function WorkflowMessages({
                       {revision.plan.nodes.length}
                     </span>
                   </summary>
-                  <MarkdownMessage content={message.content} projectNavigation={projectNavigation} />
+                  <MarkdownMessage content={message.content} projectNavigation={projectNavigation} knownProjectFiles={knownProjectFiles} />
                   <div className="wf-plan-actions">
                     <button
                       aria-label="展开 DAG"

@@ -66,7 +66,9 @@ test("planner decision terminates the current PI tool round instead of waiting o
   const runners = createWorkflowRunners({
     ...f,
     localDatabase: f.db,
-    invokeAgent: async ({ tools }) => {
+    invokeAgent: async ({ tools, prompt }) => {
+      assert.match(prompt, /Markdown 链接 \[名称\]\(项目相对路径\)/);
+      assert.match(tools.find(t => t.name === "finish_workflow").description, /来源、日期等说明放在链接目标之外/);
       const submit = tools.find((t) => t.name === "submit_plan");
       const accepted = await submit.execute("call-1", {
         plan: { title: "test", nodes: [node] },
@@ -116,7 +118,9 @@ test("node recovery queries committed state after lost response rather than repe
     ...f,
     localDatabase: f.db,
     profileTools,
-    invokeAgent: async ({ tools, input }) => {
+    invokeAgent: async ({ tools, input, prompt }) => {
+      assert.match(prompt, /artifacts 字段仍填写原始项目相对路径字符串/);
+      assert.match(tools.find(t => t.name === "complete_node").description, /不得用省略号截断 URL/);
       pass++;
       if (pass === 1) {
         await tools

@@ -12,6 +12,7 @@ import {
   terminalWorkflow as inactive,
 } from "@/lib/workflow-client";
 import { WORKFLOW_STATUS } from "./workflow-graph";
+import { workflowArtifactPaths, allowWorkflowSourceLink, workflowSourceIsPlainText } from "@/lib/workflow-links";
 import { MarkdownMessage, type ProjectNavigation } from "./chat-markdown";
 export function WorkflowNodeDetails({
   run,
@@ -40,6 +41,8 @@ export function WorkflowNodeDetails({
     [busy, setBusy] = useState(false);
   const attempts = run.attempts.filter((a) => a.nodeId === node.id),
     focusedAttempt = attemptId || attempts.at(-1)?.id || "";
+  const knownProjectFiles = workflowArtifactPaths(run,
+    attemptData?.attempt.id === focusedAttempt ? attemptData.attempt : undefined);
   useEffect(() => {
     if (!focusedAttempt) return;
     let disposed = false;
@@ -115,17 +118,12 @@ export function WorkflowNodeDetails({
           )}
           {attemptData.attempt.result && (
             <>
-              <MarkdownMessage content={attemptData.attempt.result.text} projectNavigation={projectNavigation} />
+              <MarkdownMessage content={attemptData.attempt.result.text} projectNavigation={projectNavigation} knownProjectFiles={knownProjectFiles} />
               {attemptData.attempt.result.sources.map((s) => (
-                <p key={s}>
-                  {/^https?:\/\//.test(s) ? (
-                    <a href={s} target="_blank" rel="noreferrer">
-                      {s}
-                    </a>
-                  ) : (
-                    s
-                  )}
-                </p>
+                workflowSourceIsPlainText(s) ? <p key={s}>{s}</p> : (
+                  <MarkdownMessage key={s} content={s} projectNavigation={projectNavigation}
+                    knownProjectFiles={knownProjectFiles} allowLink={allowWorkflowSourceLink} />
+                )
               ))}
               {attemptData.attempt.result.issues.map((s, i) => (
                 <p key={i}>{s}</p>

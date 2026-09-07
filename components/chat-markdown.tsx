@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { remarkProjectFiles } from "@/lib/remark-project-files";
 import { FileCode, FileText, FileImage, File } from "lucide-react";
 import { parseMarkdownLink, type ProjectFileTarget } from "@/lib/markdown-links";
 
@@ -11,11 +12,13 @@ export type ProjectNavigation = {
 type MarkdownMessageProps = {
   content: string;
   projectNavigation?: ProjectNavigation;
+  knownProjectFiles?: readonly string[];
+  allowLink?: (href: string) => boolean;
 };
 
 // Keep Markdown normalization next to its renderer so the workspace entry point
 // only owns conversation state and event handling.
-export function MarkdownMessage({ content, projectNavigation }: MarkdownMessageProps) {
+export function MarkdownMessage({ content, projectNavigation, knownProjectFiles, allowLink }: MarkdownMessageProps) {
   const normalizedContent = content.replace(
     /([。！？.!?：:])\s*(#{1,6}\s+)/g,
     "$1\n\n$2",
@@ -23,8 +26,11 @@ export function MarkdownMessage({ content, projectNavigation }: MarkdownMessageP
 
   return (
     <div className={`markdown-body${projectNavigation ? " project-markdown" : ""}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={projectNavigation ? {
+      <ReactMarkdown remarkPlugins={projectNavigation && knownProjectFiles?.length
+        ? [remarkGfm, [remarkProjectFiles, { paths: knownProjectFiles }]]
+        : [remarkGfm]} components={projectNavigation ? {
         a: ({ href, children }) => {
+          if (allowLink && (!href || !allowLink(href))) return <span>{children}</span>;
           const link = parseMarkdownLink(href, projectNavigation);
           if (link.kind === "external") return <a href={link.href} target="_blank" rel="noopener noreferrer">{children}</a>;
           if (link.kind === "inactive") return <span>{children}</span>;
