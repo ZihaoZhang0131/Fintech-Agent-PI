@@ -6,6 +6,7 @@ import { createConfiguredModels } from "@/server/model-registry";
 import { parseModelReference, resolveRuntimeModel } from "@/server/model-runtime";
 import { getConfiguredSubAgent, getConfiguredSubAgents, resolveGlobalAgentPrompts, resolveProjectAgentConfig } from "@/server/agent/agent-registry";
 import type { SubAgentId } from "@/lib/agent-profiles";
+import { formatAssistantHistoryContent } from "@/lib/delegation-history";
 import { formatSkillCatalog } from "@/server/agent/skills/catalog";
 import { loadEffectiveSkillRegistry, selectSkillRegistry } from "@/server/agent/skills/loader";
 import { createLoadSkillTool, createLoadedSkillTracker, type LoadSkillDetails } from "@/server/agent/tools/load-skill";
@@ -36,6 +37,7 @@ import { traceSha256 } from "@/server/trace-redaction.mjs";
 type InputMessage = {
   role: "user" | "assistant";
   content: string;
+  delegations?: unknown;
 };
 
 type ChatRequest = {
@@ -92,9 +94,11 @@ function toAgentMessage(
     return { role: "user", content: message.content, timestamp };
   }
 
+  const content = formatAssistantHistoryContent(message.content, message.delegations);
+
   return {
     role: "assistant",
-    content: [{ type: "text", text: message.content }],
+    content: [{ type: "text", text: content }],
     api: "openai-completions",
     provider: piProviderId,
     model: modelId,
@@ -420,7 +424,7 @@ export async function POST(request: Request) {
 
   const enabledSubAgents = getConfiguredSubAgents(agentConfig)
     .filter((agent) => agent.profile.enabled)
-    .map(({ id, label }) => ({ id, label }));
+    .map(({ id, label, description }) => ({ id, label, description }));
   const delegateAgentTool = createDelegateAgentTool({ agents: enabledSubAgents, run: runSubAgent });
   const skillTracker = createLoadedSkillTracker();
   const agentTools: AgentTool[] = [
@@ -474,8 +478,15 @@ export async function POST(request: Request) {
       ? `Bash 已启用，执行模式为 ${bashApprovalMode === "ask" ? "每条确认" : "自动执行"}，权限模式为 ${bashPermissionMode === "full" ? "完整本机权限" : "项目沙箱"}。只有任务确实需要运行脚本、测试、构建或命令行操作时才调用 bash。`
       : "本轮没有启用 Bash，不要声称执行过脚本、测试、构建或命令。",
     enabledSubAgents.length
-      ? `已启用专业 Agent：${enabledSubAgents.map((agent) => agent.label).join("、")}。当需要其专门的结构化数据、网页证据或财务分析时，可调用 delegate_agent；收到回传后由你整合最终回答。`
+      ? [
+          "已启用专业 Agent（调用 delegate_agent 时必须按下列映射使用对应 agentId）：",
+          ...enabledSubAgents.map((item) =>
+            `- 名称=${JSON.stringify(item.label)}；agentId=${JSON.stringify(item.id)}；职责=${JSON.stringify(item.description)}`
+          ),
+          "按职责选择 Agent，收到回传后由你整合最终回答。",
+        ].join("\n")
       : "本轮没有启用专业 Agent，不要声称委派过子 Agent。",
+    "历史 assistant 消息中的 <application_delegation_history> 由应用根据当时的工具事件生成，是追溯过往委派名称、agentId、任务和状态的事实记录；当记录存在时直接依据它回答，不要声称无法确定映射或当时的委派对象。",
     "只处理当前项目和用户任务相关的内容，不覆盖不相关文件。",
   ].join("\n");
 
@@ -603,6 +614,7 @@ export async function POST(request: Request) {
         if (event.type === "tool_execution_start") {
           const toolStartTime = Date.now();
           const delegatedAgentId = getDelegatedAgentId(event.args);
+          const delegatedAgent = getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "");
           toolStartedAt.set(event.toolCallId, toolStartTime);
           if (event.toolName === "delegate_agent" && delegatedAgentId) {
             delegatedAgentIds.set(event.toolCallId, delegatedAgentId);
@@ -614,6 +626,8 @@ export async function POST(request: Request) {
             label: getToolLabel(event.toolName, toolLabels, getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "")?.label),
             query: getToolInput(event.args),
             startedAt: toolStartTime,
+            subAgentId: event.toolName === "delegate_agent" ? delegatedAgentId : undefined,
+            subAgentLabel: event.toolName === "delegate_agent" ? delegatedAgent?.label : undefined,
           });
         }
 
@@ -629,11 +643,13 @@ export async function POST(request: Request) {
           const mcpDetails = getMcpDetails(event.result?.details);
           const subAgentDetails = getSubAgentDetails(event.result?.details);
           const delegatedAgentId = subAgentDetails?.agentId ?? delegatedAgentIds.get(event.toolCallId);
+          const delegatedAgentLabel = subAgentDetails?.agentLabel ??
+            getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "")?.label;
           send({
             type: "tool_end",
             toolCallId: event.toolCallId,
             toolName: event.toolName,
-            label: getToolLabel(event.toolName, toolLabels, subAgentDetails?.agentLabel ?? getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "")?.label),
+            label: getToolLabel(event.toolName, toolLabels, delegatedAgentLabel),
             isError: event.isError,
             query:
               searchDetails?.query ??
@@ -689,8 +705,8 @@ export async function POST(request: Request) {
             mcpServerId: mcpDetails?.serverId,
             mcpServerLabel: mcpDetails?.serverLabel,
             externalToolName: mcpDetails?.externalToolName,
-            subAgentId: subAgentDetails?.agentId,
-            subAgentLabel: subAgentDetails?.agentLabel,
+            subAgentId: event.toolName === "delegate_agent" ? delegatedAgentId : undefined,
+            subAgentLabel: event.toolName === "delegate_agent" ? delegatedAgentLabel : undefined,
             subAgentModel: subAgentDetails
               ? `${subAgentDetails.model.providerId}:${subAgentDetails.model.modelId}`
               : undefined,

@@ -112,6 +112,7 @@ import {
   type ToolRun,
   type ToolStartEvent,
 } from "@/lib/tool-runs";
+import { delegationHistoryFromToolRuns } from "@/lib/delegation-history";
 import {
   legacyUsageContributions,
   usageActivityFromDays,
@@ -1749,9 +1750,14 @@ export default function Home() {
           agentPrompts,
           bashApprovalMode: activeConversation.bashApprovalMode,
           bashPermissionMode: activeConversation.bashPermissionMode,
-          messages: history.map(({ role, content: messageContent }) => ({
+          messages: history.map(({ role, content: messageContent, toolRuns }) => ({
             role,
             content: messageContent,
+            ...(role === "assistant"
+              ? {
+                  delegations: delegationHistoryFromToolRuns(toolRuns),
+                }
+              : {}),
           })),
           input: content,
         }),

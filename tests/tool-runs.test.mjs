@@ -116,3 +116,28 @@ test("tool run reducer retains delegated Agent metadata for its history row", ()
   assert.equal(runs[0].subAgentModel, "deepseek:deepseek-v4-flash");
   assert.equal(runs[0].label, "委派数据研究员 Agent");
 });
+
+test("delegated Agent identity survives a failed end event without result details", () => {
+  let runs = applyToolStart(undefined, {
+    type: "tool_start",
+    toolCallId: "delegate-failed",
+    toolName: "delegate_agent",
+    label: "委派研报Agent Agent",
+    query: "研究公司",
+    startedAt: 6_000,
+    subAgentId: "custom-research-12345678",
+    subAgentLabel: "研报Agent",
+  });
+  runs = applyToolEnd(runs, {
+    type: "tool_end",
+    toolCallId: "delegate-failed",
+    toolName: "delegate_agent",
+    label: "委派研报Agent Agent",
+    isError: true,
+    completedAt: 6_100,
+  });
+
+  assert.equal(runs[0].status, "error");
+  assert.equal(runs[0].subAgentId, "custom-research-12345678");
+  assert.equal(runs[0].subAgentLabel, "研报Agent");
+});

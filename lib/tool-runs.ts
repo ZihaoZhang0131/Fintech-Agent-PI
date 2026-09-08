@@ -40,6 +40,8 @@ export type ToolStartEvent = {
   label: string;
   query?: string;
   startedAt: number;
+  subAgentId?: string;
+  subAgentLabel?: string;
 };
 
 export type ToolEndEvent = {
@@ -92,6 +94,8 @@ export function applyToolStart(runs: ToolRun[] | undefined, event: ToolStartEven
       query: event.query,
       status: "running",
       startedAt: event.startedAt,
+      subAgentId: event.subAgentId,
+      subAgentLabel: event.subAgentLabel,
     },
   ];
 }
@@ -125,8 +129,8 @@ export function applyToolEnd(runs: ToolRun[] | undefined, event: ToolEndEvent): 
     mcpServerId: event.mcpServerId,
     mcpServerLabel: event.mcpServerLabel,
     externalToolName: event.externalToolName,
-    subAgentId: event.subAgentId,
-    subAgentLabel: event.subAgentLabel,
+    subAgentId: event.subAgentId ?? existing?.subAgentId,
+    subAgentLabel: event.subAgentLabel ?? existing?.subAgentLabel,
     subAgentModel: event.subAgentModel,
   };
 

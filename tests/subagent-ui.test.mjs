@@ -46,3 +46,10 @@ test("delegated Agent events use the selected Agent name in their display label"
   assert.match(route, /getConfiguredSubAgent\(agentConfig/);
   assert.doesNotMatch(route, /委派专业 Agent/);
 });
+
+test("chat history returns persisted delegation facts to the main Agent", () => {
+  assert.match(page, /delegationHistoryFromToolRuns\(toolRuns\)/);
+  assert.match(route, /formatAssistantHistoryContent\(message\.content, message\.delegations\)/);
+  assert.match(route, /application_delegation_history/);
+  assert.match(route, /agentId=\$\{JSON\.stringify\(item\.id\)\}/);
+});

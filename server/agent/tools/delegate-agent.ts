@@ -20,7 +20,7 @@ export type SubAgentDetails = {
 };
 
 export function createDelegateAgentTool(options: {
-  agents: Array<{ id: SubAgentId; label: string }>;
+  agents: Array<{ id: SubAgentId; label: string; description: string }>;
   run: (
     agentId: SubAgentId,
     task: string,
@@ -31,6 +31,9 @@ export function createDelegateAgentTool(options: {
   if (!options.agents.length) return undefined;
   const allowedIds = new Set(options.agents.map((agent) => agent.id));
   const labelById = new Map(options.agents.map((agent) => [agent.id, agent.label]));
+  const agentDirectory = options.agents
+    .map((agent) => `${agent.id} = ${JSON.stringify(agent.label)}（${agent.description}）`)
+    .join("；");
   let invocationCount = 0;
   const parameters = Type.Unsafe<Record<string, unknown>>({
     type: "object",
@@ -40,7 +43,7 @@ export function createDelegateAgentTool(options: {
       agentId: {
         type: "string",
         enum: options.agents.map((agent) => agent.id),
-        description: "要委派的已启用专业 Agent。",
+        description: `要委派的已启用专业 Agent ID。名称与 ID 映射：${agentDirectory}`,
       },
       task: {
         type: "string",
@@ -55,7 +58,7 @@ export function createDelegateAgentTool(options: {
     name: "delegate_agent",
     label: "委派专业 Agent",
     description:
-      "将明确的只读研究子任务委派给已启用专业 Agent。只在确实需要结构化数据、网页证据或专项财务分析时调用；最多委派两次，并在收到结果后自行整合。",
+      `将明确的子任务委派给职责匹配的已启用专业 Agent。最多委派两次，并在收到结果后自行整合。可用 Agent：${agentDirectory}`,
     parameters,
     executionMode: "parallel",
     execute: async (toolCallId, raw, signal) => {
