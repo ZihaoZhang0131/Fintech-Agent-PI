@@ -35,6 +35,8 @@ import { TraceRecorder } from "@/server/agent/trace/trace-recorder";
 import { LocalRuntimeTraceSink } from "@/server/agent/trace/trace-sink";
 import { traceSha256 } from "@/server/trace-redaction.mjs";
 
+const SUB_AGENT_TIMEOUT_MS = 300_000;
+
 type InputMessage = {
   role: "user" | "assistant";
   content: string;
@@ -387,7 +389,7 @@ export async function POST(request: Request) {
             .join("\n");
         }
       });
-      const timeout = setTimeout(() => { childTimedOut = true; child.abort(); }, 60_000);
+      const timeout = setTimeout(() => { childTimedOut = true; child.abort(); }, SUB_AGENT_TIMEOUT_MS);
       const abort = () => child.abort();
       parentSignal?.addEventListener("abort", abort, { once: true });
       try {
