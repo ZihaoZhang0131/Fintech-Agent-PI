@@ -30,7 +30,8 @@ test("collapsed tool activity shows only total run time beside its disclosure", 
   assert.match(toolRunSource, /className="tool-run-summary"/);
   assert.match(toolRunSource, /aria-expanded=\{expanded\}/);
   assert.match(toolRunSource, /`本次运行 \$\{formatRunDuration\(displayedDurationMs\)\}`/);
-  assert.match(pageSource, /message\.id === assistantId \? \{ \.\.\.message, durationMs: event\.durationMs \}/);
+  assert.match(pageSource, /message\.id === assistantId[\s\S]*durationMs: event\.durationMs/);
+  assert.match(pageSource, /event\.usage\?\.totalTokens !== undefined[\s\S]*tokenUsage: event\.usage\.totalTokens/);
   assert.match(toolRunSource, /\{expanded && \(/);
   assert.match(pageSource, /isBusy && activeMessageId === messageId/);
   assert.doesNotMatch(toolRunSource, /Agent 执行|className="tool-run-stack"/);

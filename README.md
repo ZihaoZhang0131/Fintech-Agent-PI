@@ -114,7 +114,7 @@ npm test
 ## 数据位置
 
 - API Key：可保存在本地 `.env`（兼容 DeepSeek）或由“模型”页面保存到 `.local-data/model-providers.json`；两者均被 Git 忽略，后者以本机文件权限保护且接口不会返回明文密钥。
-- 对话记录：保存在当前浏览器的 `localStorage` 中。
+- 对话记录：保存在 `.local-data/chat.sqlite`；首次升级会自动迁移当前浏览器 `localStorage` 中的旧会话。
 - 技能、工具与 MCP 开关：保存在当前浏览器的 `localStorage` 中；MCP 首次连接成功后默认启用。
 - 项目绑定关系：保存在应用目录下的 `.local-data/workspaces.json`，该目录已被 Git 忽略。
 - 本地数据库：全应用共享的 SQLite 文件保存在 `.local-data/database.sqlite`；用户页面仅支持只读 SQL，启用相应能力的 Agent 可直接写入。

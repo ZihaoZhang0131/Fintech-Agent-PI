@@ -47,6 +47,37 @@ async function chooseRuntimePort(preferredPort) {
   }
 }
 
+async function waitForRuntime(url, authorizationToken, signal, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    signal.throwIfAborted();
+    try {
+      const response = await fetch(`${url}/health`, {
+        headers: { Authorization: `Bearer ${authorizationToken}` },
+        signal,
+      });
+      if (response.ok) return;
+      lastError = new Error(`Local Runtime health check returned ${response.status}.`);
+    } catch (error) {
+      if (signal.aborted) throw error;
+      lastError = error;
+    }
+    await new Promise((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal.reason ?? new Error("启动已取消。"));
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, 100);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  throw new Error(`Local Agent Runtime 在 ${timeoutMs}ms 内未就绪：${lastError instanceof Error ? lastError.message : "未知错误"}`);
+}
+
 function startPandocProvisioning() {
   if (existsSync(managedPandoc) && existsSync(managedDocumentPython) && existsSync(documentReadyMarker)) {
     console.log(`检测到可用文档组件：${managedPandoc}`);
@@ -129,6 +160,7 @@ try {
     LOCAL_RUNTIME_PORT: String(availablePort),
     LOCAL_RUNTIME_TOKEN: token,
     LOCAL_RUNTIME_URL: `http://127.0.0.1:${availablePort}`,
+    PI_STRICT_APP_PORT: "1",
   };
   pandocProvisioner = startPandocProvisioning();
   const runtimeArguments = mode === "dev"
@@ -142,7 +174,12 @@ try {
     : ["--experimental-strip-types", path.join(root, "server/local-runtime.mjs")];
   runtime = spawn(process.execPath, runtimeArguments, { cwd: root, env: environment, stdio: "inherit" });
   watchChild(runtime, "Local Agent Runtime");
-  vinext = spawn(path.join(root, "node_modules/.bin/vinext"), [mode], { cwd: root, env: environment, stdio: "inherit" });
+  await waitForRuntime(environment.LOCAL_RUNTIME_URL, token, startup.signal);
+  vinext = spawn(
+    path.join(root, "node_modules/.bin/vinext"),
+    [mode, "--hostname", "localhost", "--port", "3000"],
+    { cwd: root, env: environment, stdio: "inherit" },
+  );
   watchChild(vinext, "网页服务");
 } catch (error) {
   if (!stopping) console.error(error instanceof Error ? error.message : error);

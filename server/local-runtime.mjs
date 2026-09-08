@@ -1,5 +1,6 @@
 import { createTraceQuery } from "./trace-query.mjs";
 import { createWorkflowHttp } from "./workflow/http.mjs";
+import { createChatStore, MAX_CONVERSATION_BYTES } from "./chat-store.mjs";
 import { createServer } from "node:http";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -1010,6 +1011,7 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
   const commandManager = createCommandManager({ dataDirectory });
   const localDatabase = createLocalDatabase(dataDirectory);
   const traceStore = createTraceStore(dataDirectory);
+  const chatStore = createChatStore(dataDirectory);
   const skillStore = createSkillStore(dataDirectory);
   const workflow = createWorkflowHttp({dataDirectory, skillStore, traceStore, localDatabase, commandManager, findWorkspace: id => findWorkspace(dataDirectory, id), readJsonBody, sendJson});
   const traceQuery = createTraceQuery(traceStore, workflow.store, (id) => findWorkspace(dataDirectory, id)?.path);
@@ -1028,6 +1030,39 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
       }
       if (request.method === "GET" && url.pathname === "/workspaces") {
         return sendJson(response, 200, { workspaces: await readWorkspaceRegistry(dataDirectory) });
+      }
+      if (request.method === "GET" && url.pathname === "/chat/conversations") {
+        const workspaceIds = new Set((await readWorkspaceRegistry(dataDirectory)).map((item) => item.id));
+        return sendJson(response, 200, {
+          conversations: chatStore.list().filter((conversation) => workspaceIds.has(conversation.projectId)),
+          migrationRequired: chatStore.migrationRequired(),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/chat/conversations/import") {
+        const payload = await readJsonBody(request, MAX_CONVERSATION_BYTES);
+        const workspaceIds = new Set((await readWorkspaceRegistry(dataDirectory)).map((item) => item.id));
+        if (!Array.isArray(payload.conversations) || payload.conversations.some((conversation) => !workspaceIds.has(conversation?.projectId))) {
+          throw Object.assign(new Error("待迁移的会话包含未绑定项目。"), { status: 400 });
+        }
+        const result = chatStore.importLegacy(payload.conversations);
+        return sendJson(response, 200, {
+          ...result,
+          conversations: result.conversations.filter((conversation) => workspaceIds.has(conversation.projectId)),
+        });
+      }
+      if (segments[0] === "chat" && segments[1] === "conversations" && segments[2] && segments.length === 3) {
+        if (request.method === "PUT") {
+          const payload = await readJsonBody(request, MAX_CONVERSATION_BYTES);
+          await findWorkspace(dataDirectory, payload.projectId);
+          return sendJson(
+            response,
+            200,
+            { conversation: chatStore.put(payload, segments[2]) },
+          );
+        }
+        if (request.method === "DELETE") {
+          return sendJson(response, 200, chatStore.remove(segments[2]));
+        }
       }
       if (request.method === "GET" && url.pathname === "/mcp/servers") {
         return sendJson(response, 200, {
@@ -1225,6 +1260,7 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
             dataDirectory,
             workspaces.filter((item) => item.id !== workspace.id),
           );
+          chatStore.removeWorkspace(workspace.id);
           return sendJson(response, 200, { removed: workspace.id });
         }
         if (request.method === "GET" && segments[2] === "files" && segments.length === 3) {
@@ -1321,7 +1357,7 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
       return sendJson(response, status, { message });
     }
   };
-  handle.close = async () => { await workflow.close(); traceStore.close(); localDatabase.close(); };
+  handle.close = async () => { await workflow.close(); chatStore.close(); traceStore.close(); localDatabase.close(); };
   return handle;
 }
 

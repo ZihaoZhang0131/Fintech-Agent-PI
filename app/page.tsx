@@ -80,6 +80,7 @@ import {
 } from "@/lib/agent-profiles";
 import { createDefaultAgentPromptConfig, type AgentPromptConfig } from "@/lib/agent-prompts";
 import { shouldSubmitComposerKey } from "@/lib/composer-keyboard";
+import { createConversationPersistence, type ConversationPersistence } from "@/lib/chat-persistence";
 import {
   getLoadedFileTreeEntries,
   getProjectFileTree,
@@ -213,6 +214,8 @@ const SELECTED_MODEL_KEY = "pi-research-agent:selected-model:v1";
 const AGENT_PROFILES_KEY = "pi-research-agent:agent-profiles:v2";
 const AGENT_PROMPTS_KEY = "pi-research-agent:agent-prompts:v1";
 const USAGE_LEGACY_MIGRATION_KEY = "pi-research-agent:usage-sqlite-migrated:v1";
+const CHAT_LEGACY_MIGRATION_KEY = "pi-research-agent:chat-sqlite-migrated:v1";
+const CHAT_BOOT_RETRY_DELAYS_MS = [0, 100, 250, 500, 1_000, 2_000];
 
 type AppView = "workflow" | "workspace" | CapabilityKind | "model" | "agent" | "subagent" | "user" | "database" | "trace";
 
@@ -291,6 +294,18 @@ function parseStoredConversations(value: string | null): Array<Conversation & { 
   } catch {
     return [];
   }
+}
+
+function readLegacyConversations() {
+  const byId = new Map<string, Conversation & { projectId?: string }>();
+  for (const conversation of [
+    ...parseStoredConversations(localStorage.getItem(LEGACY_STORAGE_KEY)),
+    ...parseStoredConversations(localStorage.getItem(STORAGE_KEY)),
+  ]) {
+    const previous = byId.get(conversation.id);
+    if (!previous || conversation.updatedAt >= previous.updatedAt) byId.set(conversation.id, conversation);
+  }
+  return [...byId.values()];
 }
 
 function parseStoredNames(value: string | null) {
@@ -431,6 +446,10 @@ async function responseJson<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 async function fileToBase64(file: File) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = "";
@@ -484,6 +503,7 @@ export default function Home() {
   const [hydrated, setHydrated] = useState(false);
   const [projectLoading, setProjectLoading] = useState(true);
   const [projectError, setProjectError] = useState("");
+  const [chatSaveError, setChatSaveError] = useState("");
   const [projectMenuId, setProjectMenuId] = useState("");
   const [pathProject, setPathProject] = useState<LocalProject | null>(null);
   const [removeProjectCandidate, setRemoveProjectCandidate] = useState<LocalProject | null>(null);
@@ -546,6 +566,32 @@ export default function Home() {
   const directoryRequestRef = useRef<Record<string, number>>({});
   const previewRequestRef = useRef<Record<string, number>>({});
   const fileTreesByProjectRef = useRef<ProjectFileTreeState>({});
+  const chatPersistenceReadyRef = useRef(false);
+  const chatPersistenceRef = useRef<ConversationPersistence<Conversation> | null>(null);
+  if (!chatPersistenceRef.current) {
+    chatPersistenceRef.current = createConversationPersistence<Conversation>({
+      put: async (conversation) => {
+        await responseJson(
+          await fetch(`/api/local/chat/conversations/${encodeURIComponent(conversation.id)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(conversation),
+            cache: "no-store",
+          }),
+        );
+      },
+      remove: async (id) => {
+        await responseJson(
+          await fetch(`/api/local/chat/conversations/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+            cache: "no-store",
+          }),
+        );
+      },
+      onError: (error) => setChatSaveError(`会话未保存，正在重试：${error.message}`),
+      onSaved: () => setChatSaveError(""),
+    });
+  }
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId),
@@ -735,6 +781,8 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+
     async function initialize() {
       if (localStorage.getItem("pi-research-agent:mode:v1") === "workflow") {setActiveView("workflow");setAppMode("workflow");}
       workflowProjectRef.current=localStorage.getItem("workflow:last-project")??"";
@@ -743,111 +791,151 @@ export default function Home() {
       setFilePanelWidth(storedNumber(localStorage.getItem(FILE_PANEL_WIDTH_KEY), 380, 300, 680));
       setSidebarVisible(storedBoolean(localStorage.getItem(SIDEBAR_VISIBLE_KEY), true));
       setFilePanelVisible(storedBoolean(localStorage.getItem(FILE_PANEL_VISIBLE_KEY), true));
-      const stored = parseStoredConversations(
-        localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY),
-      );
-      try {
-        const payload = await responseJson<{ workspaces: LocalProject[] }>(
-          await fetch("/api/local/workspaces", { cache: "no-store" }),
-        );
-        const available = payload.workspaces;
-        const remembered = localStorage.getItem(ACTIVE_PROJECT_KEY);
-        const initialProject =
-          available.find((project) => project.id === remembered) ?? available[0] ?? null;
-        const projectIds = new Set(available.map((project) => project.id));
-        const storedExpandedProjectIds =
-          parseStoredNames(localStorage.getItem(EXPANDED_PROJECTS_KEY)) ?? [];
-        const availableExpandedProjectIds = storedExpandedProjectIds.filter((projectId) =>
-          projectIds.has(projectId),
-        );
-        const storedFileTabs = parseProjectFileTabs(localStorage.getItem(FILE_TABS_KEY));
-        const availableFileTabs = Object.fromEntries(
-          Object.entries(storedFileTabs).filter(([projectId]) => projectIds.has(projectId)),
-        );
-        const storedAgentConfigValue = localStorage.getItem(AGENT_PROFILES_KEY);
-        const storedAgentConfigs = parseProjectAgentConfigs(storedAgentConfigValue);
-        const storedAgentPromptValue = localStorage.getItem(AGENT_PROMPTS_KEY);
-        const storedAgentPrompts = storedAgentPromptValue === null
-          ? migrateLegacyProjectAgentPrompts(storedAgentConfigValue, initialProject?.id)
-          : parseGlobalAgentPrompts(storedAgentPromptValue);
-        const legacyAgentConfig = createProjectAgentConfigFromLegacy({
-          enabledSkills: parseStoredNames(localStorage.getItem(ENABLED_SKILLS_KEY)) ?? undefined,
-          enabledTools: parseStoredNames(localStorage.getItem(ENABLED_TOOLS_KEY) ?? localStorage.getItem(LEGACY_ENABLED_TOOLS_KEY)) ?? undefined,
-          enabledMcps: parseStoredNames(localStorage.getItem(ENABLED_MCPS_KEY)) ?? undefined,
-        });
-        const availableAgentConfigs = Object.fromEntries(
-          available.map((project) => [project.id, supplementDefaultAgents(storedAgentConfigs[project.id] ?? cloneProjectAgentConfig(legacyAgentConfig))]),
-        );
-        let normalized: Conversation[] = stored.flatMap((conversation) => {
-          const projectId =
-            conversation.projectId && projectIds.has(conversation.projectId)
+      const stored = readLegacyConversations();
+      for (let attempt = 0; !disposed; attempt += 1) {
+        const delay = CHAT_BOOT_RETRY_DELAYS_MS[Math.min(attempt, CHAT_BOOT_RETRY_DELAYS_MS.length - 1)];
+        if (delay) await wait(delay);
+        if (disposed) return;
+        try {
+          const [workspacePayload, initialChatPayload] = await Promise.all([
+            responseJson<{ workspaces: LocalProject[] }>(
+              await fetch("/api/local/workspaces", { cache: "no-store" }),
+            ),
+            responseJson<{ conversations: Conversation[]; migrationRequired: boolean }>(
+              await fetch("/api/local/chat/conversations", { cache: "no-store" }),
+            ),
+          ]);
+          const available = workspacePayload.workspaces;
+          const remembered = localStorage.getItem(ACTIVE_PROJECT_KEY);
+          const initialProject =
+            available.find((project) => project.id === remembered) ?? available[0] ?? null;
+          const projectIds = new Set(available.map((project) => project.id));
+          const normalize = (
+            source: Array<Conversation & { projectId?: string }>,
+            allowProjectFallback: boolean,
+            finishInterruptedRuns: boolean,
+          ): Conversation[] => source.flatMap((conversation) => {
+            const projectId = conversation.projectId && projectIds.has(conversation.projectId)
               ? conversation.projectId
-              : initialProject?.id;
-          const bashApprovalMode: Conversation["bashApprovalMode"] =
-            conversation.bashApprovalMode === "ask" ? "ask" : "auto";
-          const bashPermissionMode: Conversation["bashPermissionMode"] =
-            conversation.bashPermissionMode === "full" ? "full" : "sandbox";
-          return projectId
-            ? [
-                {
-                  ...conversation,
-                  messages: conversation.messages.map((message) => ({ ...message, toolRuns: message.toolRuns && finishToolRuns(message.toolRuns, "执行已中断") })),
-                  projectId,
-                  bashApprovalMode,
-                  bashPermissionMode,
-                },
-              ]
-            : [];
-        });
-        if (initialProject && !normalized.some((item) => item.projectId === initialProject.id)) {
-          normalized = [makeConversation(initialProject.id), ...normalized];
-        }
-        const firstConversation = normalized.find(item=>item.id===localStorage.getItem("chat:last-conversation")) ?? (initialProject
-          ? normalized.find((item) => item.projectId === initialProject.id)
-          : undefined);
-        setProjects(available);
-        setAgentConfigsByProject(availableAgentConfigs);
-        setAgentPrompts(storedAgentPrompts);
-        setConversations(normalized);
-        const workflowProject=localStorage.getItem("pi-research-agent:mode:v1")==="workflow" && projectIds.has(workflowProjectRef.current) ? workflowProjectRef.current : "";
-        setActiveProjectId(workflowProject || firstConversation?.projectId || initialProject?.id || "");
-        setActiveId(firstConversation?.id ?? "");
-        setFileTabsByProject(availableFileTabs);
-        setExpandedProjectIds(
-          availableExpandedProjectIds.length > 0
-            ? availableExpandedProjectIds
-            : initialProject
-              ? [initialProject.id]
-              : [],
-        );
-        if (initialProject) {
-          localStorage.setItem(ACTIVE_PROJECT_KEY, initialProject.id);
-        }
-        if (localStorage.getItem(USAGE_LEGACY_MIGRATION_KEY) !== "done") {
-          const contributions = legacyUsageContributions(stored);
-          for (let index = 0; index < contributions.length || index === 0; index += 10_000) {
-            await responseJson(
-              await fetch("/api/local/usage/import", {
+              : allowProjectFallback
+                ? initialProject?.id
+                : undefined;
+            if (!projectId) return [];
+            return [{
+              ...conversation,
+              messages: finishInterruptedRuns
+                ? conversation.messages.map((message) => ({
+                    ...message,
+                    toolRuns: message.toolRuns && finishToolRuns(message.toolRuns, "执行已中断"),
+                  }))
+                : conversation.messages,
+              projectId,
+              bashApprovalMode: conversation.bashApprovalMode === "ask" ? "ask" : "auto",
+              bashPermissionMode: conversation.bashPermissionMode === "full" ? "full" : "sandbox",
+            }];
+          });
+          const legacyConversations = normalize(stored, true, false);
+          let persistedConversations = initialChatPayload.conversations;
+          const originMigrationRequired = localStorage.getItem(CHAT_LEGACY_MIGRATION_KEY) !== "done";
+          if (initialChatPayload.migrationRequired || (originMigrationRequired && legacyConversations.length > 0)) {
+            const migrated = await responseJson<{ conversations: Conversation[]; imported: number }>(
+              await fetch("/api/local/chat/conversations/import", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ contributions: contributions.slice(index, index + 10_000) }),
+                body: JSON.stringify({ conversations: legacyConversations }),
+                cache: "no-store",
               }),
             );
-            if (contributions.length === 0) break;
+            persistedConversations = migrated.conversations;
+            localStorage.setItem(CHAT_LEGACY_MIGRATION_KEY, "done");
           }
-          localStorage.setItem(USAGE_LEGACY_MIGRATION_KEY, "done");
+          const canonicalConversations = normalize(persistedConversations, false, false);
+          let normalized = normalize(persistedConversations, false, true);
+          let defaultConversation: Conversation | undefined;
+          if (initialProject && !normalized.some((item) => item.projectId === initialProject.id)) {
+            defaultConversation = makeConversation(initialProject.id);
+            normalized = [defaultConversation, ...normalized];
+          }
+          const storedExpandedProjectIds =
+            parseStoredNames(localStorage.getItem(EXPANDED_PROJECTS_KEY)) ?? [];
+          const availableExpandedProjectIds = storedExpandedProjectIds.filter((projectId) =>
+            projectIds.has(projectId),
+          );
+          const storedFileTabs = parseProjectFileTabs(localStorage.getItem(FILE_TABS_KEY));
+          const availableFileTabs = Object.fromEntries(
+            Object.entries(storedFileTabs).filter(([projectId]) => projectIds.has(projectId)),
+          );
+          const storedAgentConfigValue = localStorage.getItem(AGENT_PROFILES_KEY);
+          const storedAgentConfigs = parseProjectAgentConfigs(storedAgentConfigValue);
+          const storedAgentPromptValue = localStorage.getItem(AGENT_PROMPTS_KEY);
+          const storedAgentPrompts = storedAgentPromptValue === null
+            ? migrateLegacyProjectAgentPrompts(storedAgentConfigValue, initialProject?.id)
+            : parseGlobalAgentPrompts(storedAgentPromptValue);
+          const legacyAgentConfig = createProjectAgentConfigFromLegacy({
+            enabledSkills: parseStoredNames(localStorage.getItem(ENABLED_SKILLS_KEY)) ?? undefined,
+            enabledTools: parseStoredNames(localStorage.getItem(ENABLED_TOOLS_KEY) ?? localStorage.getItem(LEGACY_ENABLED_TOOLS_KEY)) ?? undefined,
+            enabledMcps: parseStoredNames(localStorage.getItem(ENABLED_MCPS_KEY)) ?? undefined,
+          });
+          const availableAgentConfigs = Object.fromEntries(
+            available.map((project) => [project.id, supplementDefaultAgents(storedAgentConfigs[project.id] ?? cloneProjectAgentConfig(legacyAgentConfig))]),
+          );
+          const firstConversation = normalized.find(item=>item.id===localStorage.getItem("chat:last-conversation")) ?? (initialProject
+            ? normalized.find((item) => item.projectId === initialProject.id)
+            : undefined);
+          if (disposed) return;
+          chatPersistenceRef.current?.seed(canonicalConversations);
+          chatPersistenceReadyRef.current = true;
+          setProjects(available);
+          setAgentConfigsByProject(availableAgentConfigs);
+          setAgentPrompts(storedAgentPrompts);
+          setConversations(normalized);
+          for (const conversation of normalized) void chatPersistenceRef.current?.save(conversation, conversation === defaultConversation);
+          const workflowProject=localStorage.getItem("pi-research-agent:mode:v1")==="workflow" && projectIds.has(workflowProjectRef.current) ? workflowProjectRef.current : "";
+          setActiveProjectId(workflowProject || firstConversation?.projectId || initialProject?.id || "");
+          setActiveId(firstConversation?.id ?? "");
+          setFileTabsByProject(availableFileTabs);
+          setExpandedProjectIds(
+            availableExpandedProjectIds.length > 0
+              ? availableExpandedProjectIds
+              : initialProject
+                ? [initialProject.id]
+                : [],
+          );
+          if (initialProject) localStorage.setItem(ACTIVE_PROJECT_KEY, initialProject.id);
+          if (localStorage.getItem(USAGE_LEGACY_MIGRATION_KEY) !== "done") {
+            const contributions = legacyUsageContributions(stored);
+            for (let index = 0; index < contributions.length || index === 0; index += 10_000) {
+              await responseJson(
+                await fetch("/api/local/usage/import", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ contributions: contributions.slice(index, index + 10_000) }),
+                }),
+              );
+              if (contributions.length === 0) break;
+            }
+            localStorage.setItem(USAGE_LEGACY_MIGRATION_KEY, "done");
+          }
+          await loadUsageActivity();
+          if (disposed) return;
+          setProjectError("");
+          setProjectLoading(false);
+          setHydrated(true);
+          void loadModelCatalog();
+          return;
+        } catch (error) {
+          if (disposed) return;
+          const message = error instanceof Error ? error.message : "本机项目 Runtime 不可用。";
+          setProjectError(`正在重试本机 Runtime：${message}（历史不会被覆盖）`);
         }
-        await loadUsageActivity();
-      } catch (error) {
-        setProjectError(error instanceof Error ? error.message : "本机项目 Runtime 不可用。");
-      } finally {
-        setProjectLoading(false);
-        setHydrated(true);
       }
     }
 
     void initialize();
     void loadModelCatalog();
+    return () => {
+      disposed = true;
+    };
   }, [loadModelCatalog, loadUsageActivity]);
 
   useEffect(() => {
@@ -895,11 +983,6 @@ export default function Home() {
 
     void loadCapabilities();
   }, [capabilityRefreshVersion]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
-  }, [conversations, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -968,11 +1051,18 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [activeConversation?.messages, status]);
 
-  function updateConversation(id: string, updater: (conversation: Conversation) => Conversation) {
+  function updateConversation(
+    id: string,
+    updater: (conversation: Conversation) => Conversation,
+    immediate = false,
+  ) {
     setConversations((current) =>
-      current
-        .map((conversation) => (conversation.id === id ? updater(conversation) : conversation))
-        .sort((a, b) => b.updatedAt - a.updatedAt),
+      current.map((conversation) => {
+        if (conversation.id !== id) return conversation;
+        const updated = updater(conversation);
+        if (chatPersistenceReadyRef.current) void chatPersistenceRef.current?.save(updated, immediate);
+        return updated;
+      }).sort((a, b) => b.updatedAt - a.updatedAt),
     );
   }
 
@@ -1016,6 +1106,7 @@ export default function Home() {
     if (isBusy) stopActiveRun();
     const next = makeConversation(projectId);
     setConversations((current) => [next, ...current]);
+    if (chatPersistenceReadyRef.current) void chatPersistenceRef.current?.save(next, true);
     setExpandedProjectIds((current) =>
       current.includes(projectId) ? current : [...current, projectId],
     );
@@ -1117,6 +1208,9 @@ export default function Home() {
         return next;
       });
       setConversations(remainingConversations);
+      for (const conversation of conversations) {
+        if (conversation.projectId === project.id) void chatPersistenceRef.current?.delete(conversation.id);
+      }
       const projectPrefix = `${project.id}\u0000`;
       for (const key of Object.keys(directoryRequestRef.current)) {
         if (key.startsWith(projectPrefix)) directoryRequestRef.current[key] += 1;
@@ -1157,6 +1251,7 @@ export default function Home() {
     const target = conversations.find((item) => item.id === id);
     if (!target) return;
     if (isBusy && id === activeId) stopActiveRun();
+    if (chatPersistenceReadyRef.current) void chatPersistenceRef.current?.delete(id);
     setConversations((current) => {
       const remaining = current.filter((item) => item.id !== id);
       const sameProject = remaining.filter((item) => item.projectId === target.projectId);
@@ -1166,6 +1261,7 @@ export default function Home() {
       }
       const replacement = makeConversation(target.projectId);
       if (id === activeId) setActiveId(replacement.id);
+      if (chatPersistenceReadyRef.current) void chatPersistenceRef.current?.save(replacement, true);
       return [replacement, ...remaining];
     });
     setStatus("idle");
@@ -1412,7 +1508,7 @@ export default function Home() {
       ...conversation,
       bashApprovalMode: conversation.bashApprovalMode === "auto" ? "ask" : "auto",
       updatedAt: timestampNow(),
-    }));
+    }), true);
   }
 
   function toggleBashPermissionMode() {
@@ -1425,7 +1521,7 @@ export default function Home() {
       ...conversation,
       bashPermissionMode: "sandbox",
       updatedAt: timestampNow(),
-    }));
+    }), true);
   }
 
   function selectModel(modelId: string) {
@@ -1484,7 +1580,7 @@ export default function Home() {
       ...conversation,
       bashPermissionMode: "full",
       updatedAt: timestampNow(),
-    }));
+    }), true);
     setFullPermissionConversationId("");
   }
 
@@ -1518,7 +1614,7 @@ export default function Home() {
             : message,
         ),
         updatedAt: timestampNow(),
-      }));
+      }), true);
     } catch (error) {
       const message = error instanceof Error ? error.message : "工具审批失败。";
       setProjectError(message);
@@ -1707,12 +1803,15 @@ export default function Home() {
       traceStatus: "recording",
     };
 
-    updateConversation(conversationId, (conversation) => ({
-      ...conversation,
-      title: conversation.messages.length === 0 ? makeTitle(content) : conversation.title,
-      messages: [...conversation.messages, userMessage, assistantMessage],
+    const pendingConversation: Conversation = {
+      ...activeConversation,
+      title: activeConversation.messages.length === 0 ? makeTitle(content) : activeConversation.title,
+      messages: [...activeConversation.messages, userMessage, assistantMessage],
       updatedAt: timestampNow(),
-    }));
+    };
+    setConversations((current) => current
+      .map((conversation) => conversation.id === conversationId ? pendingConversation : conversation)
+      .sort((a, b) => b.updatedAt - a.updatedAt));
     setInput("");
     setStatus("connecting");
     setDurationMs(null);
@@ -1723,6 +1822,7 @@ export default function Home() {
     activeTraceIdRef.current = traceId;
 
     try {
+      await chatPersistenceRef.current?.saveNow(pendingConversation);
       const response = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1865,19 +1965,18 @@ export default function Home() {
             updateConversation(conversationId, (conversation) => ({
               ...conversation,
               messages: conversation.messages.map((message) =>
-                message.id === assistantId ? { ...message, durationMs: event.durationMs } : message,
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      durationMs: event.durationMs,
+                      ...(event.usage?.totalTokens !== undefined
+                        ? { tokenUsage: event.usage.totalTokens }
+                        : {}),
+                    }
+                  : message,
               ),
               updatedAt: timestampNow(),
-            }));
-            if (event.usage?.totalTokens !== undefined) {
-              updateConversation(conversationId, (conversation) => ({
-                ...conversation,
-                messages: conversation.messages.map((message) =>
-                  message.id === assistantId ? { ...message, tokenUsage: event.usage?.totalTokens } : message,
-                ),
-                updatedAt: timestampNow(),
-              }));
-            }
+            }), true);
             refreshProjectFiles(activeProject.id);
           }
           if (event.type === "error") throw new Error(event.message);
@@ -1898,7 +1997,7 @@ export default function Home() {
               : item,
           ),
           updatedAt: timestampNow(),
-        }));
+        }), true);
       }
     } finally {
       updateConversation(conversationId, (conversation) => ({
@@ -1906,7 +2005,8 @@ export default function Home() {
         messages: conversation.messages.map((message) => message.id === assistantId
           ? { ...message, toolRuns: finishToolRuns(message.toolRuns, controller.signal.aborted ? "已停止" : "执行已结束或连接中断") }
           : message),
-      }));
+        updatedAt: timestampNow(),
+      }), true);
       abortRef.current = null;
       if (activeTraceIdRef.current === traceId) activeTraceIdRef.current = null;
     }
@@ -2125,6 +2225,7 @@ export default function Home() {
         </nav>
 
         {projectError && <div className="sidebar-error">{projectError}</div>}
+        {chatSaveError && <div className="sidebar-error">{chatSaveError}</div>}
         <nav className="sidebar-capability-nav" aria-label="Agent 能力管理">
           <button
             className={activeView === "agent" ? "active" : ""}
