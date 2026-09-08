@@ -90,7 +90,7 @@ test("document Runtime generates plain DOCX and PDF without LibreOffice", async 
   await mkdir(workspaceDirectory);
   await mkdir(dataDirectory);
   await writeFile(fakePandoc, "fixture\n");
-  await writeFile(path.join(dataDirectory, "documents-ready-v2"), "fixture\n");
+  await writeFile(path.join(dataDirectory, "documents-ready-v3"), "fixture\n");
   await writeFile(fakePython, `#!/bin/sh
 docx="$3"
 printf 'PKstub' > "$docx"
@@ -164,7 +164,7 @@ test("document implementation keeps Pandoc provisioning and non-executable Markd
   assert.match(setup, /reportlab==4\.4\.9/);
   assert.match(setup, /pypdfium2==5\.12\.1/);
   assert.match(startup, /startPandocProvisioning/);
-  assert.match(startup, /documents-ready-v2/);
+  assert.match(startup, /documents-ready-v3/);
   assert.match(runtime, /文档组件尚未初始化完成/);
   assert.match(runtime, /verification: "structural"/);
   assert.match(chatRoute, /严禁为了文档生成调用 Bash、npm、Pandoc、Python/);

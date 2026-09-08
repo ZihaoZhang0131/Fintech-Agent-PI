@@ -18,7 +18,7 @@ const localDataDirectory = process.env.PI_LOCAL_DATA_DIR
 const managedAktoolsPython = path.join(localDataDirectory, "aktools-venv", "bin", "python");
 const managedPandoc = path.join(localDataDirectory, "pandoc", "bin", "pandoc");
 const managedDocumentPython = path.join(localDataDirectory, "documents-venv", "bin", "python");
-const documentReadyMarker = path.join(localDataDirectory, "documents-ready-v2");
+const documentReadyMarker = path.join(localDataDirectory, "documents-ready-v3");
 
 function readOptionalEnvironmentFile(filePath) {
   if (!existsSync(filePath)) return {};

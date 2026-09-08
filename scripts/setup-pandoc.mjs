@@ -30,8 +30,8 @@ const destination = path.join(dataDirectory, "pandoc", "bin", "pandoc");
 const documentEnvironment = path.join(dataDirectory, "documents-venv");
 const documentPython = path.join(documentEnvironment, "bin", "python");
 const downloadTimeoutSeconds = 300;
-const documentPackages = ["python-docx==1.2.0", "reportlab==4.4.9", "Pillow==12.3.0", "pypdfium2==5.12.1"];
-const documentReadyMarker = path.join(dataDirectory, "documents-ready-v2");
+const documentPackages = ["python-docx==1.2.0", "reportlab==4.4.9", "Pillow==12.3.0", "pypdfium2==5.12.1", "XlsxWriter==3.2.9"];
+const documentReadyMarker = path.join(dataDirectory, "documents-ready-v3");
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {

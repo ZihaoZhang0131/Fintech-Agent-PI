@@ -1,9 +1,10 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 
 export type DocumentToolDetails = {
   kind: "document";
   path: string;
+  chartsPath?: string;
   format: "docx" | "pdf";
   size: number;
   pageCount: number;
@@ -11,22 +12,38 @@ export type DocumentToolDetails = {
   verification?: "structural" | "rendered";
 };
 
-const chartParameters = Type.Object({
+const chartNumber = Type.Number({ minimum: -1e12, maximum: 1e12 });
+const chartMetadata = {
   id: Type.String({ pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$" }),
-  type: Type.Union([Type.Literal("bar"), Type.Literal("line")]),
   title: Type.Optional(Type.String({ maxLength: 200 })),
-  labels: Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 48 }),
-  series: Type.Array(
-    Type.Object({
+  xTitle: Type.Optional(Type.String({ maxLength: 200 })),
+  yTitle: Type.Optional(Type.String({ maxLength: 200 })),
+  xUnit: Type.Optional(Type.String({ maxLength: 200 })),
+  yUnit: Type.Optional(Type.String({ maxLength: 200 })),
+  source: Type.Optional(Type.String({ maxLength: 1000, description: "绘图数据来源及指标口径；不要编造。" })),
+  dataDate: Type.Optional(Type.String({ maxLength: 200 })),
+  caption: Type.Optional(Type.String({ maxLength: 1000 })),
+  truncated: Type.Optional(Type.Boolean({ description: "查询数据是否截断；true 时拒绝绘图，须先聚合或缩小范围。" })),
+};
+const chartParameters = Type.Union([
+  Type.Object({
+    ...chartMetadata,
+    type: Type.Union(["bar", "line", "stacked_bar", "pie", "doughnut"].map(value => Type.Literal(value))),
+    labels: Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 48 }),
+    series: Type.Array(Type.Object({
       name: Type.String({ minLength: 1, maxLength: 80 }),
-      values: Type.Array(Type.Number({ minimum: -1_000_000_000_000, maximum: 1_000_000_000_000 }), {
-        minItems: 1,
-        maxItems: 48,
-      }),
-    }),
-    { minItems: 1, maxItems: 8 },
-  ),
-});
+      values: Type.Array(chartNumber, { minItems: 1, maxItems: 48 }),
+    }), { minItems: 1, maxItems: 8 }),
+  }),
+  Type.Object({
+    ...chartMetadata,
+    type: Type.Literal("scatter"),
+    series: Type.Array(Type.Object({
+      name: Type.String({ minLength: 1, maxLength: 80 }),
+      points: Type.Array(Type.Object({ x: chartNumber, y: chartNumber }), { minItems: 1, maxItems: 500 }),
+    }), { minItems: 1, maxItems: 8 }),
+  }),
+]);
 
 const documentParameters = Type.Object({
   format: Type.Union([Type.Literal("docx"), Type.Literal("pdf")], {
@@ -51,25 +68,13 @@ const documentParameters = Type.Object({
   ),
   charts: Type.Optional(
     Type.Array(chartParameters, {
-      description: "可选基础图表。使用 {{chart:图表ID}} 占位符插入 Markdown 正文。",
+      description: "Word 原生可编辑图表；每个 {{chart:图表ID}} 占位符在正文独立一行使用一次。含图 PDF 由 Word 转换，同时保存 .charts.json 供 Agent 读取。",
       maxItems: 12,
     }),
   ),
 });
 
-type DocumentRequest = {
-  format: "docx" | "pdf";
-  filename: string;
-  markdown: string;
-  referenceDocxPath?: string;
-  charts?: Array<{
-    id: string;
-    type: "bar" | "line";
-    title?: string;
-    labels: string[];
-    series: Array<{ name: string; values: number[] }>;
-  }>;
-};
+type DocumentRequest = Static<typeof documentParameters>;
 
 type CreateDocumentToolOptions = {
   fetchImpl?: typeof fetch;
@@ -112,6 +117,7 @@ export function createDocumentTool(
     execute: async (_toolCallId, request, signal) => {
       const result = await runtimeRequest<{
         path: string;
+        chartsPath?: string;
         format: "docx" | "pdf";
         size: number;
         pageCount: number;
@@ -125,7 +131,7 @@ export function createDocumentTool(
         content: [
           {
             type: "text",
-            text: `已生成 ${result.format.toUpperCase()} 文档：${result.path}（${resultDescription}）。最终回答应明确告诉用户该文件路径。`,
+            text: `已生成 ${result.format.toUpperCase()} 文档：${result.path}（${resultDescription}）。最终回答应明确告诉用户该文件路径。${result.chartsPath ? ` 绘图数据与配置：${result.chartsPath}。同时返回此路径供下游复核，不必读取图片。` : ""}`,
           },
         ],
         details: { kind: "document", ...result },

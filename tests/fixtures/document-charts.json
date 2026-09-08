@@ -1,0 +1,10 @@
+{
+  "charts": [
+    {"id":"trend","type":"line","title":"营业收入变化","labels":["2022年","2023年","2024年","2025年"],"series":[{"name":"公司甲","values":[80,100,95,120]},{"name":"公司乙","values":[60,75,90,110]}],"xTitle":"年份","yTitle":"营业收入","yUnit":"亿元","source":"固定测试样本，非实际公司数据","dataDate":"2025-12-31","caption":"两家公司收入总体增长，中间年份存在波动。"},
+    {"id":"comparison","type":"bar","title":"业务利润对比","labels":["智能制造及设备服务业务","企业软件及技术服务业务","海外市场拓展业务"],"series":[{"name":"2024年","values":[24,-8,10]},{"name":"2025年","values":[31,-3,18]}],"yTitle":"利润","yUnit":"亿元","source":"固定测试样本","dataDate":"2025-12-31","caption":"负数表示亏损，柱状图保留零基线。"},
+    {"id":"composition","type":"stacked_bar","title":"收入结构变化","labels":["2023年","2024年","2025年"],"series":[{"name":"产品","values":[60,65,70]},{"name":"服务","values":[20,25,35]},{"name":"其他","values":[5,7,10]}],"yUnit":"亿元","source":"固定测试样本","dataDate":"2025-12-31"},
+    {"id":"relation","type":"scatter","title":"研发投入与收入的关系","series":[{"name":"企业样本","points":[{"x":2,"y":30},{"x":5,"y":42},{"x":9,"y":65},{"x":15,"y":70}]}],"xTitle":"研发投入","xUnit":"亿元","yTitle":"营业收入","yUnit":"亿元","source":"固定测试样本","dataDate":"2025-12-31","caption":"散点展示样本关系，不代表因果关系。"},
+    {"id":"share","type":"pie","title":"产品收入占比","labels":["产品甲","产品乙","产品丙"],"series":[{"name":"收入","values":[60,25,15]}],"source":"固定测试样本","dataDate":"2025-12-31"},
+    {"id":"region","type":"doughnut","title":"地区收入占比","labels":["国内","海外"],"series":[{"name":"收入","values":[75,25]}],"source":"固定测试样本","dataDate":"2025-12-31"}
+  ]
+}

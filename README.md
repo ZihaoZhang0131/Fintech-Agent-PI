@@ -32,6 +32,18 @@
 
 支持暂停、继续、停止、节点表单与自然语言修改、节点尝试和 Trace 查看，以及全局模板的版本保存、跨项目映射和参数复用。恢复时节点先核验实际状态，不会机械重复写入。详细状态、存储和接口见 [Agent Workflow 文档](docs/agent-workflow.md)。
 
+## Word 与 PDF 图表报告
+
+写作 Agent 启用 `generate_document` 后，可根据已有数据生成折线、分组柱状、堆积柱状、散点、饼图和环形图。Word 内保存原生图表及内嵌 XLSX 数据，可通过 Word 的“编辑数据”修改；同时输出 `报告.docx.charts.json` 或 `报告.pdf.charts.json`，供后续 Agent 读取、计算与重绘。来源、单位、日期和图注由写作 Agent 根据实际资料填写，不从图片猜数字。
+
+工具沿用 `charts` 参数和正文独立一行的 `{{chart:图表ID}}` 占位符。分类图使用 `labels` 与 `series: [{name, values}]`，散点图使用 `series: [{name, points: [{x, y}]}]`；公共字段包括 `title`、`xTitle`、`yTitle`、`xUnit`、`yUnit`、`source`、`dataDate`、`caption`。类型分别为 `line`、`bar`、`stacked_bar`、`scatter`、`pie`、`doughnut`。每份报告最多 12 图，每张分类图最多 48 标签、8 序列，散点每序列最多 500 点。占比图必须为单序列非负数且总和大于零，缺失数值不自动补零；`truncated: true` 会拒绝绘图。
+
+`npm run dev` 会自动更新受管 Pandoc/Python 图表依赖，也可运行 `npm run documents:setup`。含图 PDF 统一从 DOCX 经 LibreOffice 转换；请安装 LibreOffice 或在应用启动环境设置 `DOCUMENT_SOFFICE_PATH`。未配置时优先检测标准安装位置，再检测 PATH。没有转换组件仍可生成 DOCX，但含图 PDF 会明确失败，不自动换用图片排版。macOS 无界面转换采用任务独立的系统字体配置，亦可显式提供 `FONTCONFIG_FILE`；组件不依赖 Codex 安装目录。
+
+Word 后续手动编辑不会自动更新已导出的 PDF、报告分析文字或 JSON。DOCX 的结构检查不等同于 Word 交互验收；PDF 会逐页渲染并检查图表标题文本。多栏模板中的原生图表暂不支持，需使用单栏正文模板。
+
+验证命令：`node scripts/document-charts-smoke.mjs` 通过真实 Runtime 生成六种图表并比较缓存与内嵌数据，需要配置 LibreOffice；`node scripts/default-agents-smoke.mjs --live --charts` 使用已配置模型，在隔离项目运行数据保存 → 写作绘图 → 下游读取 JSON 复核（会产生模型调用费用）。
+
 ## Skills
 
 项目内置九个渐进加载的投研 Skill：

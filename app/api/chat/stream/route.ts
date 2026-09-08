@@ -1,3 +1,4 @@
+import { DOCUMENT_CHART_GUIDANCE } from "@/server/document-charts.mjs";
 import { createConfiguredAgent } from "@/server/agent/create-agent";
 import { createProfileTools } from "@/server/agent/profile-tools";
 import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
@@ -365,6 +366,7 @@ export async function POST(request: Request) {
         childToolNames.has("generate_document")
           ? "如任务要求 Word 或 PDF，直接调用 generate_document。不要为此调用 Bash、npm、Pandoc 或 Python，也不要把工具失败伪称为已保存的文档。"
           : "本角色没有启用 Word/PDF 文档生成能力，不要声称已生成文档。",
+        childToolNames.has("generate_document") ? DOCUMENT_CHART_GUIDANCE : "",
         formatSkillCatalog(childSkills),
       ].join("\n\n");
       const child = createConfiguredAgent({
@@ -456,6 +458,7 @@ export async function POST(request: Request) {
     enabledToolNames.has("generate_document")
       ? "用户明确要求 Word 或 PDF 文件时，完成内容后直接调用 generate_document。文档内容与写法必须由用户要求或已加载 Skill 决定；不要把该工具当作写作 Skill。严禁为了文档生成调用 Bash、npm、Pandoc、Python、conda、wkhtmltopdf 或在当前项目里安装/探测依赖；这些均由 Local Runtime 管理。若工具返回初始化中或失败，只如实说明该工具错误，不要伪称已保存 Markdown、PDF 或 DOCX。"
       : "本轮没有启用 Word/PDF 文档生成能力，不要声称已经生成文档。",
+    enabledToolNames.has("generate_document") ? DOCUMENT_CHART_GUIDANCE : "",
     enabledToolNames.has("query_local_database") || enabledToolNames.has("list_local_database_tables")
       ? "本地数据库为全应用共享。查询前先查看数据表和结构；只读查询使用本地数据库工具，不要猜测表或数据。"
       : "本轮没有启用本地数据库查询能力，不要声称已经查询数据库。",

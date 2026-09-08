@@ -8,14 +8,12 @@ import os
 import re
 import subprocess
 import sys
+from uuid import uuid4
+from document_native_charts import embed_native_charts
 from pathlib import Path
 
 from docx import Document
 from docx.oxml.ns import qn
-from reportlab.graphics import renderPM
-from reportlab.graphics.charts.barcharts import VerticalBarChart
-from reportlab.graphics.charts.linecharts import HorizontalLineChart
-from reportlab.graphics.shapes import Drawing, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -24,7 +22,6 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image as PdfImage
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from PIL import Image, ImageDraw, ImageFont
 import pypdfium2 as pdfium
 
 
@@ -66,134 +63,23 @@ def configure_cjk_font() -> str:
     return regular_name
 
 
-def render_chart(chart: dict, directory: Path) -> tuple[str, Path]:
-    chart_id = chart["id"]
-    labels = chart["labels"]
-    series = chart["series"]
-    if any(len(item["values"]) != len(labels) for item in series):
-        fail(f"图表 {chart_id} 的每个序列必须与 labels 等长。")
-
-    font = configure_cjk_font()
-    drawing = Drawing(760, 420)
-    title = chart.get("title") or chart_id
-    drawing.add(String(24, 392, title, fontName=font, fontSize=16, fillColor=colors.HexColor("#1f2937")))
-    values = [item["values"] for item in series]
-    if chart["type"] == "bar":
-        graph = VerticalBarChart()
-        graph.x, graph.y, graph.width, graph.height = 60, 70, 650, 270
-        graph.data = values
-        graph.categoryAxis.categoryNames = labels
-        graph.categoryAxis.labels.fontName = font
-        graph.categoryAxis.labels.fontSize = 8
-        graph.valueAxis.labels.fontName = font
-        graph.valueAxis.labels.fontSize = 8
-        graph.barSpacing = 5
-        graph.groupSpacing = 12
-        for index in range(len(values)):
-            graph.bars[index].fillColor = [colors.HexColor("#2563eb"), colors.HexColor("#059669"), colors.HexColor("#d97706"), colors.HexColor("#7c3aed")][index % 4]
-    else:
-        graph = HorizontalLineChart()
-        graph.x, graph.y, graph.width, graph.height = 60, 70, 650, 270
-        graph.data = values
-        graph.categoryAxis.categoryNames = labels
-        graph.categoryAxis.labels.fontName = font
-        graph.categoryAxis.labels.fontSize = 8
-        graph.valueAxis.labels.fontName = font
-        graph.valueAxis.labels.fontSize = 8
-        graph.joinedLines = 1
-        for index in range(len(values)):
-            graph.lines[index].strokeColor = [colors.HexColor("#2563eb"), colors.HexColor("#059669"), colors.HexColor("#d97706"), colors.HexColor("#7c3aed")][index % 4]
-            graph.lines[index].strokeWidth = 2
-    drawing.add(graph)
-    for index, item in enumerate(series):
-        x = 65 + index * 160
-        drawing.add(String(x, 36, f"{item['name']}", fontName=font, fontSize=9, fillColor=colors.HexColor("#374151")))
-    target = directory / f"chart-{chart_id}.png"
-    try:
-        renderPM.drawToFile(drawing, str(target), "PNG", dpi=144)
-    except Exception:
-        render_chart_with_pillow(chart, target)
-    return chart_id, target
-
-
-def pillow_font(size: int):
-    for candidate in ["/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/STHeiti Light.ttc"]:
-        try:
-            return ImageFont.truetype(candidate, size)
-        except OSError:
-            pass
-    return ImageFont.load_default()
-
-
-def render_chart_with_pillow(chart: dict, target: Path) -> None:
-    width, height = 1520, 840
-    image = Image.new("RGB", (width, height), "white")
-    draw = ImageDraw.Draw(image)
-    title_font, label_font = pillow_font(32), pillow_font(18)
-    colors_list = ["#2563eb", "#059669", "#d97706", "#7c3aed"]
-    left, top, right, bottom = 130, 120, 1420, 650
-    values = [value for item in chart["series"] for value in item["values"]]
-    minimum, maximum = min(0, min(values)), max(0, max(values))
-    if minimum == maximum:
-        maximum = minimum + 1
-    span = maximum - minimum
-    draw.text((48, 40), chart.get("title") or chart["id"], font=title_font, fill="#1f2937")
-    draw.line((left, top, left, bottom, right, bottom), fill="#6b7280", width=2)
-    for step in range(5):
-        y = top + (bottom - top) * step / 4
-        value = maximum - span * step / 4
-        draw.line((left, y, right, y), fill="#e5e7eb", width=1)
-        draw.text((18, y - 10), f"{value:.2g}", font=label_font, fill="#4b5563")
-    labels = chart["labels"]
-    group_width = (right - left) / len(labels)
-    for index, label in enumerate(labels):
-        x = left + group_width * (index + 0.5)
-        draw.text((x - 20, bottom + 18), label, font=label_font, fill="#4b5563")
-    if chart["type"] == "bar":
-        bar_width = group_width / (len(chart["series"]) + 2)
-        for series_index, series in enumerate(chart["series"]):
-            for index, value in enumerate(series["values"]):
-                x1 = left + group_width * index + bar_width * (series_index + 1)
-                x2 = x1 + bar_width * 0.8
-                y = bottom - (value - minimum) / span * (bottom - top)
-                draw.rectangle((x1, y, x2, bottom - (-minimum / span * (bottom - top))), fill=colors_list[series_index % len(colors_list)])
-    else:
-        for series_index, series in enumerate(chart["series"]):
-            points = []
-            for index, value in enumerate(series["values"]):
-                x = left + group_width * (index + 0.5)
-                y = bottom - (value - minimum) / span * (bottom - top)
-                points.append((x, y))
-            draw.line(points, fill=colors_list[series_index % len(colors_list)], width=5, joint="curve")
-            for point in points:
-                draw.ellipse((point[0] - 5, point[1] - 5, point[0] + 5, point[1] + 5), fill=colors_list[series_index % len(colors_list)])
-    for index, series in enumerate(chart["series"]):
-        x = left + index * 200
-        draw.rectangle((x, 730, x + 22, 752), fill=colors_list[index % len(colors_list)])
-        draw.text((x + 32, 730), series["name"], font=label_font, fill="#374151")
-    image.save(target, "PNG")
-
-
-def replace_chart_markers(markdown: str, charts: list[dict], directory: Path) -> str:
-    generated: dict[str, Path] = {}
+def replace_chart_markers(markdown: str, charts: list[dict]) -> tuple[str, dict]:
+    markers = {}
     for chart in charts:
-        chart_id, target = render_chart(chart, directory)
-        if chart_id in generated:
+        chart_id = chart["id"]
+        if chart_id in markers:
             fail(f"图表 ID 重复：{chart_id}。")
-        generated[chart_id] = target
-    for chart_id, target in generated.items():
         marker = "{{chart:" + chart_id + "}}"
         if markdown.count(marker) != 1:
             fail(f"图表 {chart_id} 必须在 Markdown 中恰好使用一次 {marker} 占位符。")
-        markdown = markdown.replace(marker, f"![{chart_id}]({target.name})")
+        token = "NativeChart" + uuid4().hex
+        markers[chart_id] = token
+        markdown = markdown.replace(marker, "\n\n" + token + "\n\n")
     if "{{chart:" in markdown:
         fail("Markdown 包含未定义的图表占位符。")
-    allowed_assets = {target.name for target in generated.values()}
-    for match in re.finditer(r"!\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)", markdown):
-        asset = match.group(1).strip("<>")
-        if asset not in allowed_assets:
-            fail("Markdown 图片只能引用本次 charts 参数生成的图表，不能引用远程或本机文件。")
-    return markdown
+    if re.search(r"!\[[^\]]*\]\(", markdown):
+        fail("Markdown 图片只能引用本次 charts 参数生成的图表，不能引用远程或本机文件。")
+    return markdown, markers
 
 
 def apply_default_cjk_styles(document_path: Path) -> None:
@@ -344,7 +230,10 @@ def main() -> None:
     pdf_render_directory = Path(sys.argv[6]).resolve() if len(sys.argv) == 7 else None
     workdir = output.parent
     payload = json.loads(source.read_text(encoding="utf-8"))
-    markdown = replace_chart_markers(payload["markdown"], payload.get("charts") or [], workdir)
+    charts = payload.get("charts") or []
+    markdown, markers = replace_chart_markers(payload["markdown"], charts)
+    if pdf_output and charts:
+        fail("含原生图表的 PDF 必须由生成的 DOCX 经 LibreOffice 转换。")
     markdown_path = workdir / "document.md"
     markdown_path.write_text(markdown, encoding="utf-8")
     pandoc = os.environ.get("PANDOC_PATH")
@@ -371,6 +260,7 @@ def main() -> None:
         fail("Pandoc 未生成有效 DOCX 文件。")
     if not reference:
         apply_default_cjk_styles(output)
+    embed_native_charts(output, charts, markers)
     if pdf_output:
         render_directory = pdf_render_directory or pdf_output.parent / f"{pdf_output.stem}-pages"
         page_count, rendered_pages = render_pdf_from_markdown(markdown, workdir, pdf_output, render_directory)

@@ -17,7 +17,7 @@ async function fixture(t, { missingWeb = false, hang = false } = {}) {
   for (const name of ["run-local.mjs", "aktools-service.mjs"]) {
     await writeFile(path.join(root, "scripts", name), await readFile(new URL(`../scripts/${name}`, import.meta.url)));
   }
-  for (const name of ["documents-ready-v2", "documents-venv/bin/python", "pandoc/bin/pandoc"]) {
+  for (const name of ["documents-ready-v3", "documents-venv/bin/python", "pandoc/bin/pandoc"]) {
     await writeFile(path.join(root, ".local-data", name), "fixture");
   }
   const python = path.join(root, ".local-data/aktools-venv/bin/python");

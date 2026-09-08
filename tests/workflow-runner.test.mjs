@@ -25,6 +25,31 @@ const result = {
   artifacts: [],
   issues: [],
 };
+
+test("writing node records both document and chart snapshot even when the model omits artifacts", async t => {
+  const f = await fixture(t);
+  const attempt = { id: "writing-attempt", nodeId: "node", version: 0, status: "running" };
+  f.update(r => r.attempts.push(attempt));
+  const previousFetch = globalThis.fetch;
+  const reads = [];
+  globalThis.fetch = async url => { reads.push(String(url)); return new Response("fixture"); };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const runners = createWorkflowRunners({
+    ...f, localDatabase: f.db,
+    profileTools: async () => ({ skills: { list: () => [] }, mcps: [], tools: [{
+      name: "generate_document",
+      execute: async () => ({ content: [{ type: "text", text: "generated" }], details: { kind: "document", path: "outputs/report.docx", chartsPath: "outputs/report.charts.json" } }),
+    }] }),
+    invokeAgent: async ({ tools, prompt }) => {
+      assert.match(prompt, /Word 图表内嵌可编辑工作簿/);
+      await tools.find(t => t.name === "generate_document").execute("create-doc", { filename: "report" });
+      await tools.find(t => t.name === "complete_node").execute("complete", { ...result, artifacts: [] });
+    },
+  });
+  const output = await runners.executeNode({ run: f.store.get(f.run.id), node, attempt, store: f.store, update: f.update, signal: new AbortController().signal });
+  assert.deepEqual(output.artifacts, ["outputs/report.docx", "outputs/report.charts.json"]);
+  assert.equal(reads.length, 2);
+});
 async function fixture(t) {
   const directory = await mkdtemp(path.join(tmpdir(), "workflow-runner-"));
   const store = createWorkflowStore(directory),
