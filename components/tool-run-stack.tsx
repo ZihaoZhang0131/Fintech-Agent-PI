@@ -31,6 +31,7 @@ type ToolRunStackProps = Omit<ToolRunDetailProps, "run"> & {
   isRunning: boolean;
   expanded: boolean;
   onToggle: () => void;
+  onSubAgentExpand?: () => void;
 };
 
 function formatRunDuration(durationMs: number) {
@@ -45,6 +46,7 @@ function ToolRunGlyph({ run, now }: { run: ToolRun; now: number }) {
   if (run.status === "running" && now - run.startedAt >= LONG_RUNNING_THRESHOLD_MS) {
     return <LoaderCircle className="tool-run-running-glyph" size={14} aria-label="正在执行" />;
   }
+  if (run.status === "error" || run.status === "rejected") return <CircleX size={14} />;
   if (run.toolName === "delegate_agent") return <Cpu size={14} />;
   if (run.toolName === "bash") return <Terminal size={14} />;
   if (run.toolName.startsWith("mcp__")) return <Plug size={14} />;
@@ -116,6 +118,37 @@ function ToolRunDetail({
   );
 }
 
+function SubAgentToolRow({ run, now, expanded, onToggle, ...detailProps }: ToolRunDetailProps & { now: number; expanded: boolean; onToggle: () => void }) {
+  const waiting = run.children?.some((child) => child.status === "awaiting_approval");
+  return (
+    <div className="subagent-tool-group">
+      <button type="button" className="tool-run-history-row subagent-tool-toggle"
+        aria-expanded={expanded} onClick={onToggle}>
+        <span className="tool-run-history-glyph"><ToolRunGlyph run={run} now={now} /></span>
+        <strong>{run.label}</strong>
+        <span>{run.query}</span>
+        {waiting && <small>待审批</small>}
+        <ChevronDown className="tool-run-chevron" size={14} />
+      </button>
+      {expanded && <div className="subagent-tool-children" aria-label={`${run.label}工具步骤`}>
+        {!run.children?.length && <p className="subagent-tool-empty">{run.children ? "暂无工具调用" : "暂无执行记录"}</p>}
+        {run.children?.map((child) => <div key={child.toolCallId} className="subagent-tool-step">
+          <div className="tool-run-history-row subagent-tool-child">
+            <span className="tool-run-history-glyph"><ToolRunGlyph run={child} now={now} /></span>
+            <strong>{child.label}</strong>
+            <span title={child.query ?? child.summary}>{child.query ?? child.summary}</span>
+            <small>{({ running: "执行中", awaiting_approval: "待审批", success: "完成", rejected: "已拒绝", error: "失败 / 中断" })[child.status]} · {formatRunDuration(child.durationMs ?? now - child.startedAt)}</small>
+          </div>
+          {(child.status === "error" || child.status === "rejected") && child.summary && (
+            <div className="subagent-tool-result">{child.summary}</div>
+          )}
+          <ToolRunDetail run={child} {...detailProps} />
+        </div>)}
+      </div>}
+    </div>
+  );
+}
+
 export function ToolRunStack({
   runs,
   durationMs,
@@ -123,9 +156,11 @@ export function ToolRunStack({
   isRunning,
   expanded,
   onToggle,
+  onSubAgentExpand,
   ...detailProps
 }: ToolRunStackProps) {
   const [now, setNow] = useState(() => Date.now());
+  const [expandedSubAgents, setExpandedSubAgents] = useState<string[]>([]);
   const latestRun = runs.reduce((latest, run) =>
     run.startedAt >= latest.startedAt ? run : latest,
   );
@@ -162,7 +197,15 @@ export function ToolRunStack({
             className={`tool-run-history-list${hasLatestDetail ? " has-detail" : ""}`}
             aria-label="工具调用记录"
           >
-            {runs.map((run) => (
+            {runs.map((run) => run.toolName === "delegate_agent" ? (
+              <SubAgentToolRow key={run.toolCallId} run={run} now={now} {...detailProps}
+                expanded={expandedSubAgents.includes(run.toolCallId)}
+                onToggle={() => {
+                  if (!expandedSubAgents.includes(run.toolCallId)) onSubAgentExpand?.();
+                  setExpandedSubAgents((current) => current.includes(run.toolCallId)
+                    ? current.filter((id) => id !== run.toolCallId) : [...current, run.toolCallId]);
+                }} />
+            ) : (
               <div className="tool-run-history-row" key={run.toolCallId}>
                 <span className="tool-run-history-glyph">
                   <ToolRunGlyph run={run} now={now} />

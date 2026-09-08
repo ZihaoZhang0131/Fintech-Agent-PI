@@ -141,3 +141,46 @@ test("delegated Agent identity survives a failed end event without result detail
   assert.equal(runs[0].subAgentId, "custom-research-12345678");
   assert.equal(runs[0].subAgentLabel, "研报Agent");
 });
+
+test("child tools are isolated by delegation call, survive parent completion and persistence", () => {
+  const parent = (id) => ({ type: "tool_start", toolCallId: id, toolName: "delegate_agent", label: "数据Agent", subAgentId: "custom-data", children: [], startedAt: 100 });
+  const child = (id) => ({ type: "tool_start", parentToolCallId: id, toolCallId: "same-child-id", toolName: "read_project_file", label: "读取文件", startedAt: 110 });
+  let runs = applyToolStart(applyToolStart([], parent("a")), parent("b"));
+  runs = applyToolStart(applyToolStart(runs, child("a")), child("b"));
+  runs = applyToolStart(runs, child("a"));
+  assert.equal(runs[0].children.length, 1);
+  runs = applyToolEnd(runs, { ...child("a"), type: "tool_end", isError: false, completedAt: 150 });
+  assert.equal(runs[0].children[0].status, "success");
+  assert.equal(runs[1].children[0].status, "running");
+  runs = applyToolEnd(runs, { ...parent("a"), type: "tool_end", isError: false, completedAt: 200 });
+  assert.equal(runs[0].children[0].status, "success");
+  assert.deepEqual(JSON.parse(JSON.stringify(runs))[0].children[0].toolCallId, "same-child-id");
+});
+
+test("child end without start is retained and child approval targets only its command", async () => {
+  const { applyToolDecision, finishToolRuns } = await import("../lib/tool-runs.ts");
+  let runs = applyToolStart([], { type: "tool_start", toolCallId: "parent", toolName: "delegate_agent", label: "数据Agent", startedAt: 100 });
+  const event = { parentToolCallId: "parent", toolCallId: "child", toolName: "bash", label: "Bash", query: "pwd", commandId: "command-child", permissionMode: "sandbox" };
+  runs = applyToolApproval(runs, { ...event, type: "tool_approval_required" });
+  assert.equal(runs[0].status, "running");
+  assert.equal(runs[0].children[0].status, "awaiting_approval");
+  runs = applyToolDecision(runs, "command-child", "approve");
+  assert.equal(runs[0].children[0].status, "running");
+  runs = applyToolDecision(runs, "command-child", "reject");
+  assert.equal(runs[0].children[0].status, "rejected");
+  runs = applyToolEnd(runs, { ...event, toolCallId: "missed-start", type: "tool_end", isError: false, completedAt: 200 });
+  assert.equal(runs[0].children[1].status, "success");
+  runs = applyToolStart(runs, { ...event, toolCallId: "unfinished", type: "tool_start", startedAt: 200 });
+  const finished = finishToolRuns(runs, "已停止", 300);
+  assert.equal(finished[0].children[2].status, "error");
+  assert.equal(finished[0].children[2].summary, "已停止");
+  assert.equal(finished[0].children[1].status, "success");
+});
+
+test("parent failure finalizes unfinished children with its reason", () => {
+  let runs = applyToolStart([], { type: "tool_start", toolCallId: "parent", toolName: "delegate_agent", label: "Agent", startedAt: 100 });
+  runs = applyToolStart(runs, { type: "tool_start", parentToolCallId: "parent", toolCallId: "child", toolName: "web_search", label: "搜索", startedAt: 120 });
+  runs = applyToolEnd(runs, { type: "tool_end", toolCallId: "parent", toolName: "delegate_agent", label: "Agent", isError: true, summary: "Subagent 执行超时", completedAt: 600 });
+  assert.equal(runs[0].children[0].status, "error");
+  assert.equal(runs[0].children[0].summary, "Subagent 执行超时");
+});

@@ -7,6 +7,7 @@ export type ToolSource = {
 export type ToolRunStatus = "running" | "awaiting_approval" | "success" | "rejected" | "error";
 
 export type ToolRun = {
+  children?: ToolRun[];
   toolCallId: string;
   toolName: string;
   label: string;
@@ -34,6 +35,8 @@ export type ToolRun = {
 };
 
 export type ToolStartEvent = {
+  children?: ToolRun[];
+  parentToolCallId?: string;
   type: "tool_start";
   toolCallId: string;
   toolName: string;
@@ -45,6 +48,7 @@ export type ToolStartEvent = {
 };
 
 export type ToolEndEvent = {
+  parentToolCallId?: string;
   type: "tool_end";
   toolCallId: string;
   toolName: string;
@@ -73,6 +77,7 @@ export type ToolEndEvent = {
 };
 
 export type ToolApprovalEvent = {
+  parentToolCallId?: string;
   type: "tool_approval_required";
   toolCallId: string;
   toolName: string;
@@ -83,6 +88,11 @@ export type ToolApprovalEvent = {
 };
 
 export function applyToolStart(runs: ToolRun[] | undefined, event: ToolStartEvent): ToolRun[] {
+  if (event.parentToolCallId) {
+    const { parentToolCallId, ...childEvent } = event;
+    return (runs ?? []).map((run) => run.toolCallId === parentToolCallId
+      ? { ...run, children: applyToolStart(run.children, childEvent) } : run);
+  }
   const current = runs ?? [];
   if (current.some((run) => run.toolCallId === event.toolCallId)) return current;
   return [
@@ -94,6 +104,7 @@ export function applyToolStart(runs: ToolRun[] | undefined, event: ToolStartEven
       query: event.query,
       status: "running",
       startedAt: event.startedAt,
+      children: event.children,
       subAgentId: event.subAgentId,
       subAgentLabel: event.subAgentLabel,
     },
@@ -101,10 +112,16 @@ export function applyToolStart(runs: ToolRun[] | undefined, event: ToolStartEven
 }
 
 export function applyToolEnd(runs: ToolRun[] | undefined, event: ToolEndEvent): ToolRun[] {
+  if (event.parentToolCallId) {
+    const { parentToolCallId, ...childEvent } = event;
+    return (runs ?? []).map((run) => run.toolCallId === parentToolCallId
+      ? { ...run, children: applyToolEnd(run.children, childEvent) } : run);
+  }
   const current = runs ?? [];
   const existing = current.find((run) => run.toolCallId === event.toolCallId);
   const completed: ToolRun = {
     toolCallId: event.toolCallId,
+    children: existing?.children && finishToolRuns(existing.children, event.isError ? event.summary || "子任务失败或已中断" : "子任务已结束", event.completedAt),
     toolName: event.toolName,
     label: event.label,
     query: event.query ?? existing?.query,
@@ -142,6 +159,11 @@ export function applyToolApproval(
   runs: ToolRun[] | undefined,
   event: ToolApprovalEvent,
 ): ToolRun[] {
+  if (event.parentToolCallId) {
+    const { parentToolCallId, ...childEvent } = event;
+    return (runs ?? []).map((run) => run.toolCallId === parentToolCallId
+      ? { ...run, children: applyToolApproval(run.children, childEvent) } : run);
+  }
   const current = runs ?? [];
   const existing = current.find((run) => run.toolCallId === event.toolCallId);
   const awaiting: ToolRun = {
@@ -156,4 +178,22 @@ export function applyToolApproval(
   };
   if (!existing) return [...current, awaiting];
   return current.map((run) => (run.toolCallId === event.toolCallId ? { ...existing, ...awaiting } : run));
+}
+
+export function finishToolRuns(runs: ToolRun[] | undefined, reason: string, now = Date.now()): ToolRun[] {
+  return (runs ?? []).map((run) => ({
+    ...run,
+    ...(run.status === "running" || run.status === "awaiting_approval" ? {
+      status: "error" as const, summary: reason, completedAt: now, durationMs: now - run.startedAt,
+    } : {}),
+    ...(run.children ? { children: finishToolRuns(run.children, reason, now) } : {}),
+  }));
+}
+
+export function applyToolDecision(runs: ToolRun[] | undefined, commandId: string, decision: "approve" | "reject"): ToolRun[] {
+  return (runs ?? []).map((run) => ({
+    ...run,
+    ...(run.commandId === commandId ? { status: decision === "approve" ? "running" as const : "rejected" as const } : {}),
+    ...(run.children ? { children: applyToolDecision(run.children, commandId, decision) } : {}),
+  }));
 }

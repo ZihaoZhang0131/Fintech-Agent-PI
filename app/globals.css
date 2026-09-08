@@ -4643,3 +4643,25 @@ button.workspace-file-row:hover,
 .subagent-more summary { display: flex; cursor: pointer; padding: 8px; border-radius: 6px; list-style: none; }
 .subagent-more summary::-webkit-details-marker { display: none; }
 .subagent-more[open] > button { position: absolute; right: 0; top: 100%; z-index: 5; white-space: nowrap; padding: 10px 14px; background: var(--background, #fff); border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 16px #0001; }
+
+/* Delegated tool steps share the chat tool list's compact presentation. */
+.subagent-tool-toggle {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  grid-template-columns: 18px auto minmax(0, 1fr) auto auto;
+}
+.subagent-tool-toggle:hover { background: transparent; }
+.subagent-tool-toggle[aria-expanded="true"] .tool-run-chevron { transform: rotate(180deg); }
+.subagent-tool-toggle > .tool-run-chevron { grid-column: 5; }
+.subagent-tool-group + *, * + .subagent-tool-group { border-top: 1px solid #f0ede7; }
+.subagent-tool-children { margin: 2px 0 5px 9px; padding-left: 14px; border-left: 1px solid #dedbd5; }
+.subagent-tool-child { grid-template-columns: 18px auto minmax(0, 1fr) auto; }
+.subagent-tool-step + .subagent-tool-step { border-top: 1px solid #f0ede7; }
+.subagent-tool-empty, .subagent-tool-result { margin: 3px 0; color: #9a958b; font-size: 9px; overflow-wrap: anywhere; }
+.subagent-tool-result { margin-left: 24px; }
+.subagent-tool-step .tool-run-detail:empty { display: none; }
+.subagent-tool-step small, .subagent-tool-toggle small { white-space: nowrap; font-size: 8px; }

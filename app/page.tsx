@@ -105,6 +105,8 @@ import {
 } from "@/lib/file-tabs";
 import {
   applyToolApproval,
+  applyToolDecision,
+  finishToolRuns,
   applyToolEnd,
   applyToolStart,
   type ToolApprovalEvent,
@@ -776,7 +778,7 @@ export default function Home() {
         const availableAgentConfigs = Object.fromEntries(
           available.map((project) => [project.id, supplementDefaultAgents(storedAgentConfigs[project.id] ?? cloneProjectAgentConfig(legacyAgentConfig))]),
         );
-        let normalized = stored.flatMap((conversation) => {
+        let normalized: Conversation[] = stored.flatMap((conversation) => {
           const projectId =
             conversation.projectId && projectIds.has(conversation.projectId)
               ? conversation.projectId
@@ -789,6 +791,7 @@ export default function Home() {
             ? [
                 {
                   ...conversation,
+                  messages: conversation.messages.map((message) => ({ ...message, toolRuns: message.toolRuns && finishToolRuns(message.toolRuns, "执行已中断") })),
                   projectId,
                   bashApprovalMode,
                   bashPermissionMode,
@@ -1510,11 +1513,7 @@ export default function Home() {
           message.id === messageId
             ? {
                 ...message,
-                toolRuns: message.toolRuns?.map((item) =>
-                  item.commandId === commandId
-                    ? { ...item, status: decision === "approve" ? "running" : "rejected" }
-                    : item,
-                ),
+                toolRuns: applyToolDecision(message.toolRuns, commandId, decision),
               }
             : message,
         ),
@@ -1902,6 +1901,12 @@ export default function Home() {
         }));
       }
     } finally {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) => message.id === assistantId
+          ? { ...message, toolRuns: finishToolRuns(message.toolRuns, controller.signal.aborted ? "已停止" : "执行已结束或连接中断") }
+          : message),
+      }));
       abortRef.current = null;
       if (activeTraceIdRef.current === traceId) activeTraceIdRef.current = null;
     }
@@ -2304,6 +2309,8 @@ export default function Home() {
                             approvalSubmittingIds={approvalSubmittingIds}
                             expanded={toolRunsAreExpanded(message.id)}
                             onToggle={() => toggleToolRuns(message.id)}
+                            onSubAgentExpand={() => setExpandedToolMessageIds((current) =>
+                              current.includes(message.id) ? current : [...current, message.id])}
                             onDecision={(messageId, run, decision) =>
                               void decideBashCommand(messageId, run, decision)
                             }

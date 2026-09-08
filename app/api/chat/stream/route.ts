@@ -1,6 +1,6 @@
 import { createConfiguredAgent } from "@/server/agent/create-agent";
 import { createProfileTools } from "@/server/agent/profile-tools";
-import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import { type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
 import { createConfiguredModels } from "@/server/model-registry";
 import { parseModelReference, resolveRuntimeModel } from "@/server/model-runtime";
@@ -319,12 +319,7 @@ export async function POST(request: Request) {
   if (!model) {
     return Response.json({ message: "PI 中没有找到所选模型。" }, { status: 500 });
   }
-  let emitChildBashApproval: ((value: {
-    parentToolCallId: string;
-    commandId: string;
-    command: string;
-    permissionMode: BashPermissionMode;
-  }) => void) | undefined;
+  let createToolEventForwarder: ((parentToolCallId?: string, labels?: Map<string, string>) => (event: AgentEvent) => void) | undefined;
   let traceRecorder: TraceRecorder | undefined;
 
   async function runSubAgent(
@@ -379,19 +374,10 @@ export async function POST(request: Request) {
         sessionId: `${payload.conversationId ?? "conversation"}:${agentId}:${crypto.randomUUID()}`,
       });
       let finalText = "";
+      const forwardChildTools = createToolEventForwarder?.(parentToolCallId, new Map(childTools.map((tool) => [tool.name, tool.label])));
       child.subscribe((event) => {
         childTraceHandle?.onEvent(event);
-        if (event.type === "tool_execution_update" && parentToolCallId) {
-          const bashDetails = getBashDetails(event.partialResult?.details);
-          if (bashDetails?.status === "pending_approval") {
-            emitChildBashApproval?.({
-              parentToolCallId,
-              commandId: bashDetails.commandId,
-              command: bashDetails.command,
-              permissionMode: bashDetails.permissionMode,
-            });
-          }
-        }
+        forwardChildTools?.(event);
         if (event.type === "message_end" && event.message.role === "assistant") {
           finalText = event.message.content
             .filter((item) => item.type === "text")
@@ -408,6 +394,8 @@ export async function POST(request: Request) {
         clearTimeout(timeout);
         parentSignal?.removeEventListener("abort", abort);
       }
+      if (childTimedOut) throw new Error("Subagent 执行超时");
+      if (parentSignal?.aborted) throw new Error("Subagent 已停止");
       if (!finalText) throw new Error("专业 Agent 未返回可用研究结果。");
       childTraceHandle?.finish(childTimedOut ? new Error("Subagent 执行超时") : undefined, parentSignal?.aborted);
       const limit = 12_000;
@@ -517,8 +505,6 @@ export async function POST(request: Request) {
   const encoder = new TextEncoder();
   const startedAt = Date.now();
   const traceId = requestedTraceId || crypto.randomUUID();
-  const toolStartedAt = new Map<string, number>();
-  const delegatedAgentIds = new Map<string, string>();
   let finalMessage: AssistantMessage | undefined;
   let streamCancelled = false;
   let abortRequested = false;
@@ -597,158 +583,158 @@ export async function POST(request: Request) {
         modelId: resolvedModel.modelId,
         isRoot: true,
       });
-      emitChildBashApproval = ({ parentToolCallId, commandId, command, permissionMode }) => {
-        send({
-          type: "tool_approval_required",
-          toolCallId: parentToolCallId,
-          toolName: "delegate_agent",
-          label: getToolLabel("delegate_agent", toolLabels, getConfiguredSubAgent(agentConfig, delegatedAgentIds.get(parentToolCallId) ?? "")?.label),
-          query: command,
-          commandId,
-          permissionMode,
-        });
-      };
-
-      agent.subscribe((event) => {
-        mainTraceHandle.onEvent(event);
-        if (event.type === "tool_execution_start") {
-          const toolStartTime = Date.now();
-          const delegatedAgentId = getDelegatedAgentId(event.args);
-          const delegatedAgent = getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "");
-          toolStartedAt.set(event.toolCallId, toolStartTime);
-          if (event.toolName === "delegate_agent" && delegatedAgentId) {
-            delegatedAgentIds.set(event.toolCallId, delegatedAgentId);
-          }
-          send({
-            type: "tool_start",
-            toolCallId: event.toolCallId,
-            toolName: event.toolName,
-            label: getToolLabel(event.toolName, toolLabels, getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "")?.label),
-            query: getToolInput(event.args),
-            startedAt: toolStartTime,
-            subAgentId: event.toolName === "delegate_agent" ? delegatedAgentId : undefined,
-            subAgentLabel: event.toolName === "delegate_agent" ? delegatedAgent?.label : undefined,
-          });
-        }
-
-        if (event.type === "tool_execution_end") {
-          const completedAt = Date.now();
-          const searchDetails = getWebSearchDetails(event.result?.details);
-          const skillDetails = getLoadSkillDetails(event.result?.details);
-          const skillResourceDetails = getSkillResourceDetails(event.result?.details);
-          const workspaceDetails = getWorkspaceDetails(event.result?.details);
-          const databaseDetails = getLocalDatabaseDetails(event.result?.details);
-          const documentDetails = getDocumentDetails(event.result?.details);
-          const bashDetails = getBashDetails(event.result?.details);
-          const mcpDetails = getMcpDetails(event.result?.details);
-          const subAgentDetails = getSubAgentDetails(event.result?.details);
-          const delegatedAgentId = subAgentDetails?.agentId ?? delegatedAgentIds.get(event.toolCallId);
-          const delegatedAgentLabel = subAgentDetails?.agentLabel ??
-            getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "")?.label;
-          send({
-            type: "tool_end",
-            toolCallId: event.toolCallId,
-            toolName: event.toolName,
-            label: getToolLabel(event.toolName, toolLabels, delegatedAgentLabel),
-            isError: event.isError,
-            query:
-              searchDetails?.query ??
-              skillDetails?.name ??
-              skillResourceDetails?.path ??
-              workspaceDetails?.path ??
-              databaseDetails?.sql ??
-              databaseDetails?.table ??
-              documentDetails?.path ??
-              bashDetails?.command ??
-              mcpDetails?.summary ??
-              subAgentDetails?.task,
-            summary: skillDetails
-              ? `已加载 ${skillDetails.name}`
-              : skillResourceDetails?.action === "read"
-                ? `已读取 ${skillResourceDetails.path}`
-                : skillResourceDetails?.status === "rejected"
-                  ? "用户已拒绝，脚本未执行"
-                  : skillResourceDetails?.action === "run"
-                    ? `退出码 ${skillResourceDetails.exitCode ?? "无"}`
-              : workspaceDetails?.action === "write"
-                ? `已保存 ${workspaceDetails.path}`
-              : workspaceDetails?.action === "read"
-                  ? `已读取 ${workspaceDetails.path}`
-                  : databaseDetails?.action === "list"
-                    ? `发现 ${databaseDetails.resultCount ?? 0} 张表`
-                    : databaseDetails?.action === "describe"
-                      ? `已查看 ${databaseDetails.table}`
-                      : databaseDetails?.action === "query"
-                        ? `返回 ${databaseDetails.resultCount ?? 0} 行${databaseDetails.truncated ? "（已截断）" : ""}`
-                        : databaseDetails?.action === "mutate"
-                          ? `已修改数据库，影响 ${databaseDetails.resultCount ?? 0} 行`
-                  : documentDetails
-                    ? `已生成 ${documentDetails.format.toUpperCase()}：${documentDetails.path}`
-                  : bashDetails?.status === "rejected"
-                    ? "用户已拒绝，命令未执行"
-                    : bashDetails
-                      ? `退出码 ${bashDetails.exitCode ?? "无"}`
-                      : mcpDetails
-                        ? `${mcpDetails.serverLabel} · ${mcpDetails.externalToolName}`
-                        : subAgentDetails
-                          ? `已收到${subAgentDetails.agentLabel}的研究回传`
-                        : undefined,
-            completedAt,
-            durationMs:
-              bashDetails?.durationMs ??
-              skillResourceDetails?.durationMs ??
-              (toolStartedAt.has(event.toolCallId)
-                ? completedAt - toolStartedAt.get(event.toolCallId)!
-                : undefined),
-            resultCount:
-              searchDetails?.sources.length ?? workspaceDetails?.resultCount ?? databaseDetails?.resultCount ?? mcpDetails?.resultCount,
-            mcpServerId: mcpDetails?.serverId,
-            mcpServerLabel: mcpDetails?.serverLabel,
-            externalToolName: mcpDetails?.externalToolName,
-            subAgentId: event.toolName === "delegate_agent" ? delegatedAgentId : undefined,
-            subAgentLabel: event.toolName === "delegate_agent" ? delegatedAgentLabel : undefined,
-            subAgentModel: subAgentDetails
-              ? `${subAgentDetails.model.providerId}:${subAgentDetails.model.modelId}`
-              : undefined,
-            commandId: bashDetails?.commandId ?? skillResourceDetails?.commandId,
-            permissionMode: bashDetails?.permissionMode ?? skillResourceDetails?.permissionMode,
-            commandStatus: bashDetails?.status ?? skillResourceDetails?.status,
-            exitCode: bashDetails?.exitCode ?? skillResourceDetails?.exitCode,
-            stdout: bashDetails?.stdout ?? skillResourceDetails?.stdout,
-            stderr: bashDetails?.stderr ?? skillResourceDetails?.stderr,
-            truncated: bashDetails?.truncated ?? skillResourceDetails?.truncated ?? databaseDetails?.truncated ?? mcpDetails?.truncated ?? subAgentDetails?.truncated,
-            timedOut: bashDetails?.timedOut ?? skillResourceDetails?.timedOut,
-            sources: searchDetails?.sources.map((source) => ({
-              title: source.title,
-              url: source.url,
-              publishedDate: source.publishedDate,
-            })),
-          });
-          toolStartedAt.delete(event.toolCallId);
-          delegatedAgentIds.delete(event.toolCallId);
-        }
-
-        if (event.type === "tool_execution_update") {
-          const bashDetails = getBashDetails(event.partialResult?.details);
-          const skillResourceDetails = getSkillResourceDetails(event.partialResult?.details);
-          const approval = bashDetails?.status === "pending_approval"
-            ? { command: bashDetails.command, commandId: bashDetails.commandId, permissionMode: bashDetails.permissionMode }
-            : skillResourceDetails?.status === "pending_approval" && skillResourceDetails.command && skillResourceDetails.commandId && skillResourceDetails.permissionMode
-              ? { command: skillResourceDetails.command, commandId: skillResourceDetails.commandId, permissionMode: skillResourceDetails.permissionMode }
-              : undefined;
-          if (approval) {
-            send({
-              type: "tool_approval_required",
+      createToolEventForwarder = (parentToolCallId, labels = toolLabels) => {
+        const toolStartedAt = new Map<string, number>();
+        const delegatedAgentIds = new Map<string, string>();
+        const sendTool = (value: object) => send({ ...value, parentToolCallId });
+        return (event) => {
+          if (event.type === "tool_execution_start") {
+            const toolStartTime = Date.now();
+            const delegatedAgentId = getDelegatedAgentId(event.args);
+            const delegatedAgent = getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "");
+            toolStartedAt.set(event.toolCallId, toolStartTime);
+            if (event.toolName === "delegate_agent" && delegatedAgentId) {
+              delegatedAgentIds.set(event.toolCallId, delegatedAgentId);
+            }
+            sendTool({
+              type: "tool_start",
               toolCallId: event.toolCallId,
               toolName: event.toolName,
-              label: getToolLabel(event.toolName, toolLabels),
-              query: approval.command,
-              commandId: approval.commandId,
-              permissionMode: approval.permissionMode,
+              label: getToolLabel(event.toolName, labels, getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "")?.label),
+              query: getToolInput(event.args),
+              startedAt: toolStartTime,
+              children: event.toolName === "delegate_agent" ? [] : undefined,
+              subAgentId: event.toolName === "delegate_agent" ? delegatedAgentId : undefined,
+              subAgentLabel: event.toolName === "delegate_agent" ? delegatedAgent?.label : undefined,
             });
           }
-        }
 
+          if (event.type === "tool_execution_end") {
+            const completedAt = Date.now();
+            const searchDetails = getWebSearchDetails(event.result?.details);
+            const skillDetails = getLoadSkillDetails(event.result?.details);
+            const skillResourceDetails = getSkillResourceDetails(event.result?.details);
+            const workspaceDetails = getWorkspaceDetails(event.result?.details);
+            const databaseDetails = getLocalDatabaseDetails(event.result?.details);
+            const documentDetails = getDocumentDetails(event.result?.details);
+            const bashDetails = getBashDetails(event.result?.details);
+            const mcpDetails = getMcpDetails(event.result?.details);
+            const subAgentDetails = getSubAgentDetails(event.result?.details);
+            const delegatedAgentId = subAgentDetails?.agentId ?? delegatedAgentIds.get(event.toolCallId);
+            const delegatedAgentLabel = subAgentDetails?.agentLabel ??
+              getConfiguredSubAgent(agentConfig, delegatedAgentId ?? "")?.label;
+            sendTool({
+              type: "tool_end",
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              label: getToolLabel(event.toolName, labels, delegatedAgentLabel),
+              isError: event.isError,
+              query:
+                searchDetails?.query ??
+                skillDetails?.name ??
+                skillResourceDetails?.path ??
+                workspaceDetails?.path ??
+                databaseDetails?.sql ??
+                databaseDetails?.table ??
+                documentDetails?.path ??
+                bashDetails?.command ??
+                mcpDetails?.summary ??
+                subAgentDetails?.task,
+              summary: event.isError
+                ? event.result?.content?.filter((item: { type: string }) => item.type === "text").map((item: { text: string }) => item.text).join("\n").slice(0, 1000) || "工具执行失败"
+                : skillDetails
+                ? `已加载 ${skillDetails.name}`
+                : skillResourceDetails?.action === "read"
+                  ? `已读取 ${skillResourceDetails.path}`
+                  : skillResourceDetails?.status === "rejected"
+                    ? "用户已拒绝，脚本未执行"
+                    : skillResourceDetails?.action === "run"
+                      ? `退出码 ${skillResourceDetails.exitCode ?? "无"}`
+                : workspaceDetails?.action === "write"
+                  ? `已保存 ${workspaceDetails.path}`
+                : workspaceDetails?.action === "read"
+                    ? `已读取 ${workspaceDetails.path}`
+                    : databaseDetails?.action === "list"
+                      ? `发现 ${databaseDetails.resultCount ?? 0} 张表`
+                      : databaseDetails?.action === "describe"
+                        ? `已查看 ${databaseDetails.table}`
+                        : databaseDetails?.action === "query"
+                          ? `返回 ${databaseDetails.resultCount ?? 0} 行${databaseDetails.truncated ? "（已截断）" : ""}`
+                          : databaseDetails?.action === "mutate"
+                            ? `已修改数据库，影响 ${databaseDetails.resultCount ?? 0} 行`
+                    : documentDetails
+                      ? `已生成 ${documentDetails.format.toUpperCase()}：${documentDetails.path}`
+                    : bashDetails?.status === "rejected"
+                      ? "用户已拒绝，命令未执行"
+                      : bashDetails
+                        ? `退出码 ${bashDetails.exitCode ?? "无"}`
+                        : mcpDetails
+                          ? `${mcpDetails.serverLabel} · ${mcpDetails.externalToolName}`
+                          : subAgentDetails
+                            ? `已收到${subAgentDetails.agentLabel}的研究回传`
+                          : undefined,
+              completedAt,
+              durationMs:
+                bashDetails?.durationMs ??
+                skillResourceDetails?.durationMs ??
+                (toolStartedAt.has(event.toolCallId)
+                  ? completedAt - toolStartedAt.get(event.toolCallId)!
+                  : undefined),
+              resultCount:
+                searchDetails?.sources.length ?? workspaceDetails?.resultCount ?? databaseDetails?.resultCount ?? mcpDetails?.resultCount,
+              mcpServerId: mcpDetails?.serverId,
+              mcpServerLabel: mcpDetails?.serverLabel,
+              externalToolName: mcpDetails?.externalToolName,
+              subAgentId: event.toolName === "delegate_agent" ? delegatedAgentId : undefined,
+              subAgentLabel: event.toolName === "delegate_agent" ? delegatedAgentLabel : undefined,
+              subAgentModel: subAgentDetails
+                ? `${subAgentDetails.model.providerId}:${subAgentDetails.model.modelId}`
+                : undefined,
+              commandId: bashDetails?.commandId ?? skillResourceDetails?.commandId,
+              permissionMode: bashDetails?.permissionMode ?? skillResourceDetails?.permissionMode,
+              commandStatus: bashDetails?.status ?? skillResourceDetails?.status,
+              exitCode: bashDetails?.exitCode ?? skillResourceDetails?.exitCode,
+              stdout: bashDetails?.stdout ?? skillResourceDetails?.stdout,
+              stderr: bashDetails?.stderr ?? skillResourceDetails?.stderr,
+              truncated: bashDetails?.truncated ?? skillResourceDetails?.truncated ?? databaseDetails?.truncated ?? mcpDetails?.truncated ?? subAgentDetails?.truncated,
+              timedOut: bashDetails?.timedOut ?? skillResourceDetails?.timedOut,
+              sources: searchDetails?.sources.map((source) => ({
+                title: source.title,
+                url: source.url,
+                publishedDate: source.publishedDate,
+              })),
+            });
+            toolStartedAt.delete(event.toolCallId);
+            delegatedAgentIds.delete(event.toolCallId);
+          }
+
+          if (event.type === "tool_execution_update") {
+            const bashDetails = getBashDetails(event.partialResult?.details);
+            const skillResourceDetails = getSkillResourceDetails(event.partialResult?.details);
+            const approval = bashDetails?.status === "pending_approval"
+              ? { command: bashDetails.command, commandId: bashDetails.commandId, permissionMode: bashDetails.permissionMode }
+              : skillResourceDetails?.status === "pending_approval" && skillResourceDetails.command && skillResourceDetails.commandId && skillResourceDetails.permissionMode
+                ? { command: skillResourceDetails.command, commandId: skillResourceDetails.commandId, permissionMode: skillResourceDetails.permissionMode }
+                : undefined;
+            if (approval) {
+              sendTool({
+                type: "tool_approval_required",
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                label: getToolLabel(event.toolName, labels),
+                query: approval.command,
+                commandId: approval.commandId,
+                permissionMode: approval.permissionMode,
+              });
+            }
+          }
+
+        };
+      };
+      const forwardMainTools = createToolEventForwarder();
+      agent.subscribe((event) => {
+        mainTraceHandle.onEvent(event);
+        forwardMainTools(event);
         if (
           event.type === "message_update" &&
           event.assistantMessageEvent.type === "text_delta"
@@ -809,7 +795,7 @@ export async function POST(request: Request) {
         request.signal.removeEventListener("abort", abortRun);
         if (abortPoll) clearInterval(abortPoll);
         abortPoll = undefined;
-        emitChildBashApproval = undefined;
+        createToolEventForwarder = undefined;
         if (!streamCancelled) {
           try {
             controller.close();
