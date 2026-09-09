@@ -292,3 +292,65 @@ test("trace recorder preserves parallel tools and finalizes an aborted run", asy
   assert.equal(finished.stats.warnings, 1);
   assert.ok(batches.flatMap((batch) => batch.events).some((event) => event.type === "tool_execution_update"));
 });
+
+test("trace recorder keeps transport success but warns on a non-zero bash exit", async () => {
+  const batches = [];
+  let finished;
+  const recorder = new TraceRecorder({
+    id: "trace_bash_exit_12345678",
+    sink: {
+      async start() {},
+      async append(_traceId, batch) {
+        batches.push(structuredClone(batch));
+      },
+      async finish(_traceId, payload) {
+        finished = structuredClone(payload);
+      },
+    },
+    workspaceId: "workspace_bash_exit_12345678",
+    startedAt: Date.now(),
+    modelProvider: "test",
+    modelId: "model",
+    question: "bash exit",
+  });
+  await recorder.start();
+  const main = recorder.attachAgent({
+    scopeKey: "main",
+    agentId: "main",
+    agentLabel: "主 Agent",
+    modelProvider: "test",
+    modelId: "model",
+    isRoot: true,
+  });
+  main.onEvent({ type: "agent_start" });
+  main.onEvent({ type: "turn_start" });
+  main.onEvent({
+    type: "tool_execution_start",
+    toolCallId: "bash-call",
+    toolName: "bash",
+    args: { command: "fixture" },
+  });
+  main.onEvent({
+    type: "tool_execution_end",
+    toolCallId: "bash-call",
+    toolName: "bash",
+    result: {
+      content: [{ type: "text", text: "permission denied" }],
+      details: { exitCode: 126, timedOut: false },
+    },
+    isError: false,
+  });
+  main.onEvent({ type: "agent_end", messages: [] });
+  await recorder.finish();
+  const latest = new Map();
+  for (const span of batches.flatMap((batch) => batch.spans))
+    latest.set(span.id, span);
+  const bash = [...latest.values()].find(
+    (span) => span.kind === "tool" && span.attributes?.toolName === "bash",
+  );
+  assert.equal(bash.status, "success");
+  assert.equal(bash.attributes.exitCode, 126);
+  assert.equal(bash.attributes.commandStatus, "command_failed");
+  assert.equal(finished.status, "success_with_warnings");
+  assert.equal(finished.stats.warnings, 1);
+});

@@ -207,7 +207,11 @@ export function WorkflowMessages({
                     <span>
                       {WORKFLOW_STATUS[run.status]} ·{" "}
                       {Object.keys(graphRun.accepted).length}/
-                      {revision.plan.nodes.length}
+                      {revision.plan.nodes.length} · 检查点{" "}
+                      {graphRun.checkpoints?.filter(
+                        (checkpoint) =>
+                          checkpoint.planVersion <= revision.version,
+                      ).length ?? 0}
                     </span>
                   </summary>
                   <MarkdownMessage content={message.content} projectNavigation={projectNavigation} knownProjectFiles={knownProjectFiles} />

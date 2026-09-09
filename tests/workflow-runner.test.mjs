@@ -16,6 +16,8 @@ const node = {
   task: "写入唯一记录",
   dependencies: [],
   acceptance: "存在一行记录",
+  requires: { tools: [], skills: [], mcps: [] },
+  outputs: [{ id: "result", kind: "text", required: true }],
 };
 const result = {
   status: "completed",
@@ -24,6 +26,7 @@ const result = {
   sources: [],
   artifacts: [],
   issues: [],
+  nextAction: "continue",
 };
 
 test("writing node records both document and chart snapshot even when the model omits artifacts", async t => {
@@ -114,6 +117,29 @@ test("planner decision terminates the current PI tool round instead of waiting o
   });
   assert.equal(decision.type, "plan");
 });
+test("planner rejects submit_plan after an initial plan exists", async (t) => {
+  const f = await fixture(t);
+  f.run.plan = { title: "existing", nodes: [node] };
+  const runners = createWorkflowRunners({
+    ...f,
+    localDatabase: f.db,
+    invokeAgent: async ({ tools }) => {
+      await tools.find((tool) => tool.name === "submit_plan").execute(
+        "second-submit",
+        { plan: f.run.plan, reason: "replace everything" },
+      );
+    },
+  });
+  await assert.rejects(
+    runners.plan({
+      run: f.run,
+      store: f.store,
+      update: f.update,
+      signal: new AbortController().signal,
+    }),
+    /只能用于初始规划/,
+  );
+});
 test("node recovery queries committed state after lost response rather than repeating insert", async (t) => {
   const f = await fixture(t);
   f.db.mutate("CREATE TABLE records (id INTEGER PRIMARY KEY)");
@@ -154,8 +180,12 @@ test("node recovery queries committed state after lost response rather than repe
         throw Error("response lost after commit");
       }
       const context = JSON.parse(input);
-      assert.equal(context.recovery.operations.length, 1);
-      assert.equal(context.recovery.operations[0].status, "completed");
+      assert.equal(context.recovery.operations, undefined);
+      assert.equal(context.recovery.latestAttempt.status, "failed");
+      const reused = await tools
+        .find((t) => t.name === "mutate_local_database")
+        .execute("write-2", { sql: "INSERT INTO records VALUES(1)" });
+      assert.equal(JSON.parse(reused.content[0].text).changes, 1);
       const read = await tools
         .find((t) => t.name === "query_local_database")
         .execute("read-1", { sql: "SELECT COUNT(*) AS n FROM records" });
@@ -208,7 +238,12 @@ test("node recovery queries committed state after lost response rather than repe
     f.store
       .get(f.run.id)
       .operations.filter((o) => o.tool === "mutate_local_database").length,
-    1,
+    2,
+  );
+  assert.ok(
+    f.store
+      .get(f.run.id)
+      .operations.find((operation) => operation.reusedFrom),
   );
 });
 test("write lock serializes mutating tools across separate node attempts", async (t) => {
@@ -275,4 +310,329 @@ test("node preparation failures create a correlated failed trace without changin
   assert.equal(trace.run.context.agentLabel, "test");
   assert.equal(trace.spans[0].status, "error");
   assert.equal(trace.messages[0].content, node.task);
+});
+
+test("required file output is converted to blocked when the declared artifact is missing", async (t) => {
+  const f = await fixture(t);
+  const fileNode = {
+    ...node,
+    requires: { tools: ["generate_document"], skills: [], mcps: [] },
+    outputs: [
+      {
+        id: "report",
+        kind: "file",
+        path: "outputs/report.docx",
+        required: true,
+      },
+    ],
+  };
+  const attempt = {
+    id: "missing-artifact-attempt",
+    nodeId: fileNode.id,
+    nodeRevision: 1,
+    version: 1,
+    status: "running",
+  };
+  f.update((run) => run.attempts.push(attempt));
+  const runners = createWorkflowRunners({
+    ...f,
+    localDatabase: f.db,
+    profileTools: async () => ({
+      skills: { list: () => [] },
+      mcps: [],
+      tools: [{ name: "generate_document", execute: async () => result }],
+    }),
+    invokeAgent: async ({ tools }) => {
+      await tools.find((tool) => tool.name === "complete_node").execute(
+        "complete",
+        { ...result, artifacts: [] },
+      );
+    },
+  });
+  const output = await runners.executeNode({
+    run: f.store.get(f.run.id),
+    node: fileNode,
+    attempt,
+    store: f.store,
+    update: f.update,
+    signal: new AbortController().signal,
+  });
+  assert.equal(output.status, "blocked");
+  assert.equal(output.nextAction, "replan");
+  assert.match(output.issues.join(" "), /outputs\/report\.docx/);
+});
+
+test("node handoff includes direct summaries and every accepted ancestor artifact without full history text", async (t) => {
+  const f = await fixture(t);
+  const a = { ...node, id: "a", title: "a" },
+    b = { ...node, id: "b", title: "b", dependencies: ["a"] },
+    c = { ...node, id: "c", title: "c", dependencies: ["b"] };
+  const huge = "x".repeat(100000);
+  f.update((run) => {
+    run.plan = { title: "ancestors", nodes: [a, b, c] };
+    run.nodeRevisions = { a: 1, b: 1, c: 1 };
+    run.attempts.push(
+      {
+        id: "attempt-a",
+        nodeId: "a",
+        nodeRevision: 1,
+        version: 1,
+        status: "completed",
+        result: {
+          ...result,
+          text: huge,
+          artifacts: ["outputs/a.txt"],
+        },
+      },
+      {
+        id: "attempt-b",
+        nodeId: "b",
+        nodeRevision: 1,
+        version: 1,
+        status: "completed",
+        result: {
+          ...result,
+          text: huge,
+          artifacts: ["outputs/b.txt"],
+        },
+      },
+      {
+        id: "attempt-c",
+        nodeId: "c",
+        nodeRevision: 1,
+        version: 1,
+        status: "running",
+      },
+    );
+    run.accepted = { a: "attempt-a", b: "attempt-b" };
+  });
+  const attempt = f.store.get(f.run.id).attempts.at(-1);
+  const runners = createWorkflowRunners({
+    ...f,
+    localDatabase: f.db,
+    profileTools: async () => ({
+      skills: { list: () => [] },
+      mcps: [],
+      tools: [],
+    }),
+    invokeAgent: async ({ tools, input }) => {
+      const context = JSON.parse(input);
+      assert.equal(context.upstream.length, 1);
+      assert.equal(context.upstream[0].result.textPreview.length, 2000);
+      assert.deepEqual(
+        context.ancestorArtifacts.map((item) => item.nodeId).sort(),
+        ["a", "b"],
+      );
+      assert.ok(input.length < 10000);
+      const read = await tools
+        .find((tool) => tool.name === "read_node_result")
+        .execute("read-a", { attemptId: "attempt-a", offset: 0 });
+      assert.equal(JSON.parse(read.content[0].text).total > 100000, true);
+      await tools
+        .find((tool) => tool.name === "complete_node")
+        .execute("complete", result);
+    },
+  });
+  await runners.executeNode({
+    run: f.store.get(f.run.id),
+    node: c,
+    attempt,
+    store: f.store,
+    update: f.update,
+    signal: new AbortController().signal,
+  });
+});
+
+test("large tool output is stored once and exposed through a compact preview plus paged operation read", async (t) => {
+  const f = await fixture(t);
+  const large = "z".repeat(30000);
+  const attempt = {
+    id: "large-output-attempt",
+    nodeId: node.id,
+    nodeRevision: 1,
+    version: 1,
+    status: "running",
+  };
+  f.update((run) => run.attempts.push(attempt));
+  const runners = createWorkflowRunners({
+    ...f,
+    localDatabase: f.db,
+    profileTools: async () => ({
+      skills: { list: () => [] },
+      mcps: [],
+      tools: [
+        {
+          name: "web_search",
+          execute: async () => ({
+            content: [{ type: "text", text: large }],
+            details: {},
+          }),
+        },
+      ],
+    }),
+    invokeAgent: async ({ tools }) => {
+      const compact = await tools
+        .find((tool) => tool.name === "web_search")
+        .execute("large-call", { query: "test" });
+      const descriptor = JSON.parse(compact.content[0].text);
+      assert.equal(descriptor.truncated, true);
+      assert.equal(descriptor.preview.length, 8000);
+      const page = await tools
+        .find((tool) => tool.name === "read_operation_result")
+        .execute("read-operation", {
+          operationId: descriptor.operationId,
+          offset: 0,
+        });
+      assert.equal(JSON.parse(page.content[0].text).text.length, 20000);
+      await tools
+        .find((tool) => tool.name === "complete_node")
+        .execute("complete", result);
+    },
+  });
+  await runners.executeNode({
+    run: f.store.get(f.run.id),
+    node,
+    attempt,
+    store: f.store,
+    update: f.update,
+    signal: new AbortController().signal,
+  });
+  assert.ok(
+    JSON.stringify(f.store.get(f.run.id).operations[0].result).length > 30000,
+  );
+});
+
+test("non-zero bash exit stays model-visible and records command_failed outcome", async (t) => {
+  const f = await fixture(t);
+  const attempt = {
+    id: "bash-failure-attempt",
+    nodeId: node.id,
+    nodeRevision: 1,
+    version: 1,
+    status: "running",
+  };
+  f.update((run) => run.attempts.push(attempt));
+  const runners = createWorkflowRunners({
+    ...f,
+    localDatabase: f.db,
+    profileTools: async () => ({
+      skills: { list: () => [] },
+      mcps: [],
+      tools: [
+        {
+          name: "bash",
+          execute: async () => ({
+            content: [{ type: "text", text: "stderr" }],
+            details: { exitCode: 126, timedOut: false },
+          }),
+        },
+      ],
+    }),
+    invokeAgent: async ({ tools }) => {
+      const value = await tools
+        .find((tool) => tool.name === "bash")
+        .execute("bash-call", { command: "fixture" });
+      assert.equal(value.details.exitCode, 126);
+      await tools
+        .find((tool) => tool.name === "complete_node")
+        .execute("complete", result);
+    },
+  });
+  await runners.executeNode({
+    run: f.store.get(f.run.id),
+    node,
+    attempt,
+    store: f.store,
+    update: f.update,
+    signal: new AbortController().signal,
+  });
+  const operation = f.store.get(f.run.id).operations[0];
+  assert.equal(operation.outcome, "command_failed");
+  assert.equal(operation.exitCode, 126);
+});
+
+test("an unknown write is not mechanically repeated on the next attempt", async (t) => {
+  const f = await fixture(t);
+  let pass = 0,
+    writes = 0;
+  const runners = createWorkflowRunners({
+    ...f,
+    localDatabase: f.db,
+    profileTools: async () => ({
+      skills: { list: () => [] },
+      mcps: [],
+      tools: [
+        {
+          name: "bash",
+          execute: async () => {
+            writes++;
+            throw new Error("lost after possible side effect");
+          },
+        },
+      ],
+    }),
+    invokeAgent: async ({ tools }) => {
+      pass++;
+      const bash = tools.find((tool) => tool.name === "bash");
+      if (pass === 1) {
+        await bash.execute("write-one", { command: "fixture" });
+        return;
+      }
+      await assert.rejects(
+        bash.execute("write-two", { command: "fixture" }),
+        /结果不确定/,
+      );
+      await tools.find((tool) => tool.name === "complete_node").execute(
+        "complete",
+        {
+          ...result,
+          status: "blocked",
+          nextAction: "input",
+          issues: ["需要核验副作用"],
+        },
+      );
+    },
+  });
+  const first = {
+    id: "unknown-write-one",
+    nodeId: node.id,
+    nodeRevision: 1,
+    version: 1,
+    status: "running",
+  };
+  f.update((run) => run.attempts.push(first));
+  await assert.rejects(
+    runners.executeNode({
+      run: f.store.get(f.run.id),
+      node,
+      attempt: first,
+      store: f.store,
+      update: f.update,
+      signal: new AbortController().signal,
+    }),
+    /possible side effect/,
+  );
+  f.update((run) => {
+    run.attempts[0].status = "failed";
+    run.attempts.push({
+      id: "unknown-write-two",
+      nodeId: node.id,
+      nodeRevision: 1,
+      version: 1,
+      status: "running",
+    });
+  });
+  const second = f.store.get(f.run.id).attempts.at(-1);
+  const output = await runners.executeNode({
+    run: f.store.get(f.run.id),
+    node,
+    attempt: second,
+    store: f.store,
+    update: f.update,
+    signal: new AbortController().signal,
+  });
+  assert.equal(output.status, "blocked");
+  assert.equal(writes, 1);
+  assert.equal(f.store.get(f.run.id).operations.length, 1);
+  assert.equal(f.store.get(f.run.id).operations[0].status, "unknown");
 });

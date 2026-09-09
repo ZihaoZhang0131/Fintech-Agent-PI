@@ -171,7 +171,7 @@ export function WorkflowWorkspace({
   }
   async function send() {
     if (!draft.trim()) {
-      if (active) await action(waiting ? "resume" : "stop");
+      if (active) await action(waiting ? "resume" : "interrupt");
       return;
     }
     if (!tools.workspaceId) throw new Error("请先绑定本地项目。");
@@ -348,9 +348,9 @@ export function WorkflowWorkspace({
                   <button
                     type="button"
                     className="wf-stop-small"
-                    aria-label="停止"
+                    aria-label="中断，可继续"
                     disabled={busy || transition}
-                    onClick={() => void perform(() => action("stop"))}
+                    onClick={() => void perform(() => action("interrupt"))}
                   >
                     <Square size={14} />
                   </button>
@@ -364,7 +364,7 @@ export function WorkflowWorkspace({
                       : waiting
                         ? "继续"
                         : active
-                          ? "停止"
+                          ? "中断，可继续"
                           : "发送"
                   }
                   disabled={

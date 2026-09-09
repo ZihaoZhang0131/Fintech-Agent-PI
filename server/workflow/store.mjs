@@ -5,7 +5,42 @@ import { randomUUID } from "node:crypto";
 export const fail = (message, status = 400) =>
   Object.assign(new Error(message), { status });
 export const terminal = new Set(["completed", "cancelled", "failed"]);
-export function validatePlan(value, agents, maxNodes = 12) {
+const emptyRequirements = () => ({ tools: [], skills: [], mcps: [] });
+const textOutput = () => ({ id: "result", kind: "text", required: true });
+const safeArtifactPath = (value) =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.length <= 1000 &&
+  !value.startsWith("/") &&
+  !value.includes("\\") &&
+  !value.split("/").includes("..") &&
+  !value.includes("\0");
+function normalizeRequirements(value) {
+  if (!value || typeof value !== "object") return emptyRequirements();
+  return Object.fromEntries(
+    ["tools", "skills", "mcps"].map((key) => [
+      key,
+      Array.isArray(value[key])
+        ? [...new Set(value[key].filter((item) => typeof item === "string"))]
+        : [],
+    ]),
+  );
+}
+function normalizeOutputs(value) {
+  if (!Array.isArray(value) || !value.length) return [textOutput()];
+  return value.map((output) => ({
+    id: output.id,
+    kind: output.kind,
+    ...(output.path === undefined ? {} : { path: output.path }),
+    required: output.required === true,
+  }));
+}
+export function validatePlan(
+  value,
+  agents,
+  maxNodes = 12,
+  { strictContracts = false } = {},
+) {
   if (
     !value ||
     !Array.isArray(value.nodes) ||
@@ -13,6 +48,12 @@ export function validatePlan(value, agents, maxNodes = 12) {
     value.nodes.length > maxNodes
   )
     throw fail(`工作流需要 1–${maxNodes} 个节点。`);
+  const profiles = new Map(
+    agents.map((agent) => [
+      typeof agent === "string" ? agent : agent.id,
+      typeof agent === "string" ? undefined : agent,
+    ]),
+  );
   const ids = new Set();
   const nodes = value.nodes.map((n) => {
     if (
@@ -23,7 +64,7 @@ export function validatePlan(value, agents, maxNodes = 12) {
     )
       throw fail("节点 ID 无效或重复。");
     ids.add(n.id);
-    if (!agents.includes(n.agentId))
+    if (!profiles.has(n.agentId))
       throw fail("节点只能使用本次选中的 Subagent。");
     for (const key of ["title", "task", "acceptance"])
       if (
@@ -37,6 +78,66 @@ export function validatePlan(value, agents, maxNodes = 12) {
       n.dependencies.some((d) => typeof d !== "string")
     )
       throw fail("依赖格式无效。");
+    if (
+      strictContracts &&
+      (!n.requires ||
+        !["tools", "skills", "mcps"].every((key) =>
+          Array.isArray(n.requires[key]),
+        ) ||
+        !Array.isArray(n.outputs) ||
+        !n.outputs.length)
+    )
+      throw fail(`节点“${n.title}”必须声明所需能力和预期产物。`);
+    if (
+      strictContracts &&
+      n.outputs.some((output) => typeof output?.required !== "boolean")
+    )
+      throw fail(`节点“${n.title}”的预期产物必须声明 required。`);
+    const requires = normalizeRequirements(n.requires),
+      outputs = normalizeOutputs(n.outputs),
+      profile = profiles.get(n.agentId);
+    const outputIds = new Set();
+    for (const output of outputs) {
+      if (
+        !output ||
+        typeof output.id !== "string" ||
+        !/^[a-zA-Z0-9_-]{1,80}$/.test(output.id) ||
+        !["text", "file"].includes(output.kind) ||
+        typeof output.required !== "boolean"
+      )
+        throw fail(`节点“${n.title}”的预期产物无效。`);
+      if (outputIds.has(output.id))
+        throw fail(`节点“${n.title}”的预期产物 ID 重复。`);
+      outputIds.add(output.id);
+      if (output.kind === "file" && !safeArtifactPath(output.path))
+        throw fail(`节点“${n.title}”的文件产物路径无效。`);
+      if (output.kind === "text" && output.path !== undefined)
+        throw fail(`节点“${n.title}”的文本产物不能声明路径。`);
+    }
+    if (profile) {
+      for (const [key, enabledKey] of [
+        ["tools", "enabledTools"],
+        ["skills", "enabledSkills"],
+        ["mcps", "enabledMcps"],
+      ]) {
+        const enabled = new Set(profile[enabledKey] ?? []),
+          missing = requires[key].filter((name) => !enabled.has(name));
+        if (missing.length)
+          throw fail(`节点“${n.title}”的 Agent 缺少${key}能力：${missing.join("、")}。`);
+      }
+      const fileOutputs = outputs.filter((output) => output.kind === "file");
+      if (fileOutputs.length) {
+        const tools = new Set(requires.tools),
+          enabled = new Set(profile.enabledTools ?? []);
+        for (const output of fileOutputs) {
+          const document = /\.(?:docx|pdf)$/i.test(output.path);
+          if (document && (!tools.has("generate_document") || !enabled.has("generate_document")))
+            throw fail(`节点“${n.title}”生成 ${output.path} 需要 generate_document。`);
+          if (!document && !["write_project_file", "generate_document"].some((name) => tools.has(name) && enabled.has(name)))
+            throw fail(`节点“${n.title}”生成文件需要 write_project_file 或 generate_document。`);
+        }
+      }
+    }
     return {
       id: n.id,
       title: n.title.trim(),
@@ -44,6 +145,8 @@ export function validatePlan(value, agents, maxNodes = 12) {
       acceptance: n.acceptance.trim(),
       agentId: n.agentId,
       dependencies: [...new Set(n.dependencies)],
+      requires,
+      outputs,
     };
   });
   const visited = new Set(),
@@ -66,6 +169,30 @@ export function validatePlan(value, agents, maxNodes = 12) {
         : "Agent Workflow",
     nodes,
   };
+}
+export function normalizeRun(run) {
+  run.schemaVersion ??= 1;
+  const normalizeStoredPlan = (plan) => {
+    if (!plan?.nodes) return plan;
+    return {
+      ...plan,
+      nodes: plan.nodes.map((node) => ({
+        ...node,
+        requires: normalizeRequirements(node.requires),
+        outputs: normalizeOutputs(node.outputs),
+      })),
+    };
+  };
+  if (run.plan) run.plan = normalizeStoredPlan(run.plan);
+  for (const revision of run.revisions ?? [])
+    revision.plan = normalizeStoredPlan(revision.plan);
+  run.nodeRevisions ??= Object.fromEntries((run.plan?.nodes ?? []).map((node) => [node.id, 1]));
+  run.retryDirectives ??= {};
+  run.plannerHandledAttempts ??= {};
+  run.checkpoints ??= [];
+  for (const attempt of run.attempts ?? [])
+    attempt.nodeRevision ??= run.nodeRevisions[attempt.nodeId] ?? 1;
+  return run;
 }
 export function invalidatedNodes(oldPlan, nextPlan) {
   const changed = new Set(
@@ -118,7 +245,7 @@ export function createWorkflowStore(directory) {
   function get(id) {
     const row = db.prepare("SELECT body FROM runs WHERE id=?").get(id);
     if (!row) throw fail("运行不存在。", 404);
-    const run = JSON.parse(row.body);
+    const run = normalizeRun(JSON.parse(row.body));
     const attempts = db
       .prepare("SELECT body FROM attempts WHERE run_id=? ORDER BY rowid")
       .all(id);
@@ -128,7 +255,7 @@ export function createWorkflowStore(directory) {
     if (attempts.length) run.attempts = attempts.map((a) => JSON.parse(a.body));
     if (operations.length)
       run.operations = operations.map((o) => JSON.parse(o.body));
-    return run;
+    return normalizeRun(run);
   }
   function createConversation(
     workspaceId,
@@ -411,6 +538,7 @@ export function newRun(input) {
   return {
     ...input,
     id: randomUUID(),
+    schemaVersion: 2,
     title: input.input.slice(0, 80),
     status: "queued",
     createdAt: Date.now(),
@@ -426,5 +554,9 @@ export function newRun(input) {
     instructions: [],
     traces: [],
     autoRevisions: 0,
+    nodeRevisions: {},
+    retryDirectives: {},
+    plannerHandledAttempts: {},
+    checkpoints: [],
   };
 }

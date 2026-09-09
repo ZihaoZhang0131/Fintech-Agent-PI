@@ -667,6 +667,14 @@ export function WorkflowTools({
             onSubmit={(e) => {
               e.preventDefault();
               void perform(async () => {
+                const invalidateNodeIds = run.accepted[edit.id]
+                  ? window.confirm(
+                      "该节点已完成。保存会使此节点及其下游失效并重新执行，是否继续？",
+                    )
+                    ? [edit.id]
+                    : null
+                  : [];
+                if (invalidateNodeIds === null) return;
                 await action("edit", {
                   plan: {
                     ...run.plan,
@@ -674,6 +682,7 @@ export function WorkflowTools({
                       n.id === edit.id ? edit : n,
                     ),
                   },
+                  invalidateNodeIds,
                 });
                 setEdit(null);
               });

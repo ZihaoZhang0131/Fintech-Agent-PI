@@ -461,15 +461,32 @@ export class TraceRecorder {
     }
     if (event.type === "tool_execution_end") {
       const spanId = scope.toolSpanIds.get(event.toolCallId);
-      const details = event.result?.details as { status?: unknown; timedOut?: unknown } | undefined;
+      const details = event.result?.details as {
+        status?: unknown;
+        timedOut?: unknown;
+        exitCode?: unknown;
+        commandStatus?: unknown;
+      } | undefined;
       const cancelled = details?.status === "rejected";
       const status: TraceSpanStatus = cancelled ? "cancelled" : event.isError ? "error" : "success";
-      if (status !== "success") this.stats.warnings += 1;
+      const exitCode =
+        typeof details?.exitCode === "number" ? details.exitCode : undefined;
+      const commandFailed = exitCode !== undefined && exitCode !== 0;
+      if (status !== "success" || commandFailed) this.stats.warnings += 1;
       if (spanId) {
         this.updateSpan(spanId, {
           status,
           endedAt: timestamp,
           output: toolTraceOutput(event.result, this.workspacePath),
+          attributes: {
+            operation: "execute_tool",
+            toolName: event.toolName,
+            ...(exitCode === undefined ? {} : { exitCode }),
+            timedOut: details?.timedOut === true,
+            commandStatus:
+              details?.commandStatus ??
+              (commandFailed ? "command_failed" : details?.status),
+          },
           ...(event.isError ? { error: { message: "工具执行失败", timedOut: details?.timedOut === true } } : {}),
         });
       }
@@ -478,6 +495,11 @@ export class TraceRecorder {
         toolName: event.toolName,
         isError: event.isError,
         status,
+        exitCode,
+        timedOut: details?.timedOut === true,
+        commandStatus:
+          details?.commandStatus ??
+          (commandFailed ? "command_failed" : details?.status),
       });
       return;
     }

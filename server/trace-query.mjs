@@ -150,7 +150,11 @@ export function createTraceQuery(
         ),
         warnings: ss.filter(
           (s) =>
-            (s.kind === "tool" || s.kind === "generation") && bad.has(s.status),
+            (s.kind === "tool" || s.kind === "generation") &&
+            (bad.has(s.status) ||
+              s.attributes?.commandStatus === "command_failed" ||
+              (typeof s.attributes?.exitCode === "number" &&
+                s.attributes.exitCode !== 0)),
         ).length,
       };
     };
@@ -325,6 +329,9 @@ export function createTraceQuery(
           label: c?.agentLabel ?? s.agentLabel ?? "Subagent",
           question: s.task ?? c?.nodeTitle ?? "历史记录未保存任务输入",
           status: nodeAttempt?.status ?? s.status,
+          workflowOutcome: ["completed", "blocked"].includes(nodeAttempt?.status)
+            ? nodeAttempt.status
+            : undefined,
           startedAt: s.startedAt,
           updatedAt: s.endedAt ?? trace.lastEventAt,
           endedAt: s.endedAt,
@@ -369,6 +376,9 @@ export function createTraceQuery(
           label: data.text(label),
           question: data.text(node?.task ?? a.nodeId),
           status: a.status,
+          workflowOutcome: ["completed", "blocked"].includes(a.status)
+            ? a.status
+            : undefined,
           startedAt: a.startedAt,
           updatedAt: a.endedAt ?? task.updatedAt,
           endedAt: a.endedAt,
@@ -544,6 +554,10 @@ export function createTraceQuery(
               .findIndex((p) => p.id === a.id) + 1,
           accepted: run.accepted?.[a.nodeId] === a.id,
           status: a.status,
+          executionStatus: data.byTrace.get(a.traceId)?.status,
+          workflowOutcome: ["completed", "blocked"].includes(a.status)
+            ? a.status
+            : undefined,
           startedAt: a.startedAt,
           endedAt: a.endedAt,
           traceId: a.traceId,
@@ -557,7 +571,10 @@ export function createTraceQuery(
       task,
       observedAt: Date.now(),
       traces: task.traceIds.map((id) => {
-        const d = traceStore.getTrace(id);
+        const d = traceStore.getTrace(id),
+          workflowAttempt = run?.attempts.find(
+            (attempt) => attempt.traceId === id,
+          );
         return {
           ...d,
           run: {
@@ -565,6 +582,11 @@ export function createTraceQuery(
             question: data.text(d.run.question),
             output:
               d.run.output === undefined ? undefined : data.text(d.run.output),
+            workflowOutcome: ["completed", "blocked"].includes(
+              workflowAttempt?.status,
+            )
+              ? workflowAttempt.status
+              : undefined,
           },
           spans: d.spans.map((s) => ({
             ...s,

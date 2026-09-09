@@ -540,6 +540,7 @@ export function createTraceStore(dataDirectory, options = {}) {
     requireId(workspaceId, "项目 ID");
     return database.prepare(`SELECT s.id, s.trace_id, s.parent_span_id, s.kind, s.name, s.agent_id,
       s.agent_label, s.status, s.started_at, s.ended_at, s.duration_ms,
+      s.attributes_json,
       coalesce(json_extract(s.attributes_json,'$.usage.totalTokens'),json_extract(s.output_json,'$.usage.totalTokens')) total_tokens,
       substr(json_extract(s.input_json,'$.task'),1,1000) task
       FROM trace_spans s JOIN trace_runs r ON s.trace_id=r.id WHERE r.workspace_id=?`).all(workspaceId)

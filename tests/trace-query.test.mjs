@@ -176,7 +176,7 @@ test("workflow migration links planner and attempts, shows retries, preserves wa
       nodeId: "a",
       version: 1,
       traceId: run.traces[1],
-      status: "failed",
+      status: "blocked",
       startedAt: now,
       endedAt: now + 1000,
     },
@@ -207,7 +207,11 @@ test("workflow migration links planner and attempts, shows retries, preserves wa
   assert.deepEqual(invocation.items.map((i) => i.attemptNumber).sort(), [1, 2]);
   assert.equal(
     invocation.items.find((i) => i.attemptNumber === 1).status,
-    "failed",
+    "blocked",
+  );
+  assert.equal(
+    invocation.items.find((i) => i.attemptNumber === 1).workflowOutcome,
+    "blocked",
   );
   assert.equal(
     f.store.getTrace(run.traces[1]).run.context.attemptId,
@@ -222,11 +226,14 @@ test("workflow migration links planner and attempts, shows retries, preserves wa
   assert.equal(detail.task.endedAt, f.workflows.get(run.id).updatedAt);
   assert.equal(detail.attempts[1].accepted, true);
   assert.equal(detail.attempts[0].accepted, false);
+  assert.equal(detail.attempts[0].executionStatus, "success");
+  assert.equal(detail.attempts[0].workflowOutcome, "blocked");
   assert.ok(!JSON.stringify(detail.attempts).includes("abcdefghij"));
   assert.ok(!JSON.stringify(detail.attempts).includes("/private/project"));
   const tree = traceTree(detail),
     node = tree.find((n) => n.kind === "node");
   assert.equal(node.children.length, 2);
+  assert.match(node.children[0].note, /执行成功 \/ 节点受阻/);
   assert.equal(node.startedAt, now);
   assert.equal(node.endedAt, now + 1500);
   f.store.deleteTrace(run.traces[0]);

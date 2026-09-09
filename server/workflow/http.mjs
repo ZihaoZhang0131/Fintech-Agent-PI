@@ -227,7 +227,7 @@ export function createWorkflowHttp({
           if (!(key in parameters)) throw fail(`缺少参数：${key}`);
           return parameters[key];
         });
-      const plan = {
+      const plan = validatePlan({
         ...version.plan,
         nodes: version.plan.nodes.map((n) => ({
           ...n,
@@ -235,7 +235,7 @@ export function createWorkflowHttp({
           task: substitute(n.task),
           acceptance: substitute(n.acceptance),
         })),
-      };
+      }, agents, limits.maxNodes);
       engine.applyPlan(run, plan, "从模板创建", false);
       run.templateId = template.id;
       run.templateVersion = version.version;
@@ -458,15 +458,18 @@ export function createWorkflowHttp({
             ? store.template(p.id)
             : {
                 id: randomUUID(),
+                schemaVersion: 2,
                 sourceWorkspaceId: run.workspaceId,
                 versions: [],
                 archived: false,
               };
           const plan = validatePlan(
             p.plan ?? revision.plan,
-            run.config.customSubAgents.map((a) => a.id),
+            run.config.customSubAgents,
             run.limits.maxNodes,
+            { strictContracts: true },
           );
+          t.schemaVersion = 2;
           const roles = run.config.customSubAgents
             .filter((a) => plan.nodes.some((n) => n.agentId === a.id))
             .map(
@@ -502,6 +505,7 @@ export function createWorkflowHttp({
           }
           const version = safeAsset({
             version: t.versions.length + 1,
+            schemaVersion: 2,
             plan,
             task:
               typeof p.task === "string" ? p.task.slice(0, 20000) : run.input,

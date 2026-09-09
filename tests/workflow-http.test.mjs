@@ -56,6 +56,14 @@ async function fixture(t) {
                     task: "读取测试公司文件",
                     dependencies: [],
                     acceptance: "真实读取",
+                    requires: {
+                      tools: ["read_project_file"],
+                      skills: [],
+                      mcps: [],
+                    },
+                    outputs: [
+                      { id: "result", kind: "text", required: true },
+                    ],
                   },
                 ],
               },
@@ -70,6 +78,7 @@ async function fixture(t) {
           sources: [],
           artifacts: [],
           issues: [],
+          nextAction: "continue",
         };
       },
     },
@@ -279,4 +288,62 @@ test("active conversation feedback is durable and idempotent without creating an
       .length,
     1,
   );
+});
+
+test("interrupt is idempotent and resumable while stop remains terminal", async (t) => {
+  const { request, service } = await fixture(t);
+  const created = await request("/workflows/runs", payload());
+  while (!service.store.get(created.value.id).plan)
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  const planned = service.store.get(created.value.id);
+  const interrupt = {
+    requestId: randomUUID(),
+    expectedVersion: planned.version,
+    type: "interrupt",
+  };
+  const [first, repeated] = await Promise.all([
+    request(`/workflows/runs/${created.value.id}/actions`, interrupt),
+    request(`/workflows/runs/${created.value.id}/actions`, interrupt),
+  ]);
+  assert.equal(first.status, 200);
+  assert.equal(repeated.status, 200);
+  assert.equal(first.value.run.status, "interrupted");
+  assert.equal(repeated.value.run.status, "interrupted");
+  while (service.engine.active.size)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  const current = service.store.get(created.value.id);
+  const resumed = await request(
+    `/workflows/runs/${created.value.id}/actions`,
+    {
+      requestId: randomUUID(),
+      expectedVersion: current.version,
+      type: "resume",
+    },
+  );
+  assert.equal(resumed.status, 200);
+  assert.equal((await done(service, created.value.id)).status, "completed");
+
+  const stopped = await request("/workflows/runs", {
+    ...payload(),
+    requestId: randomUUID(),
+  });
+  const stoppedRun = service.store.get(stopped.value.id);
+  const stop = await request(
+    `/workflows/runs/${stopped.value.id}/actions`,
+    {
+      requestId: randomUUID(),
+      expectedVersion: stoppedRun.version,
+      type: "stop",
+    },
+  );
+  assert.equal(stop.value.run.status, "cancelled");
+  const cannotResume = await request(
+    `/workflows/runs/${stopped.value.id}/actions`,
+    {
+      requestId: randomUUID(),
+      expectedVersion: service.store.get(stopped.value.id).version,
+      type: "resume",
+    },
+  );
+  assert.equal(cannotResume.status, 409);
 });

@@ -80,6 +80,20 @@ export function WorkflowNodeDetails({
       </header>
       <p>{node.task}</p>
       <small>完成标准：{node.acceptance}</small>
+      <small>
+        所需能力：
+        {[
+          ...(node.requires?.tools ?? []),
+          ...(node.requires?.skills ?? []),
+          ...(node.requires?.mcps ?? []),
+        ].join("、") || "无"}
+      </small>
+      <small>
+        预期产物：
+        {(node.outputs ?? [])
+          .map((output) => output.path ?? output.id)
+          .join("、") || "文本结果"}
+      </small>
       {!inactive.has(run.status) &&
         run.mode !== "fixed" &&
         (!revision || revision === run.version) && (
@@ -116,6 +130,9 @@ export function WorkflowNodeDetails({
           {attemptData.attempt.error && (
             <p className="wf-error">{attemptData.attempt.error}</p>
           )}
+          {attemptData.attempt.retryDirective && (
+            <small>恢复指令：{attemptData.attempt.retryDirective}</small>
+          )}
           {attemptData.attempt.result && (
             <>
               <MarkdownMessage content={attemptData.attempt.result.text} projectNavigation={projectNavigation} knownProjectFiles={knownProjectFiles} />
@@ -139,8 +156,15 @@ export function WorkflowNodeDetails({
             <details key={op.id} open={op.status === "pending_approval"}>
               <summary>
                 {op.tool} ·{" "}
-                {op.status === "pending_approval" ? "等待审批" : op.status}
+                {op.status === "pending_approval"
+                  ? "等待审批"
+                  : op.outcome === "command_failed"
+                    ? `命令退出 ${op.exitCode ?? "非零"}`
+                    : op.reusedFrom
+                      ? "已复用"
+                      : op.status}
               </summary>
+              {op.reusedFrom && <small>复用操作：{op.reusedFrom}</small>}
               <pre>{JSON.stringify(op.arguments, null, 2)}</pre>
               {op.error && <p>{op.error}</p>}
               {op.status === "unknown" && (

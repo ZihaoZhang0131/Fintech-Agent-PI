@@ -52,6 +52,7 @@ export type TraceRunSummary = {
   usage?: TraceUsage;
   error?: unknown;
   stats: TraceStats;
+  workflowOutcome?: "completed" | "blocked";
 };
 
 export type TraceSpan = {
@@ -167,6 +168,7 @@ export type TraceInvocation = {
   tools: number;
   attemptNumber?: number;
   planVersion?: number;
+  workflowOutcome?: "completed" | "blocked";
 };
 export type TraceTaskDetail = {
   observedAt?: number;
@@ -181,6 +183,8 @@ export type TraceTaskDetail = {
     number: number;
     accepted: boolean;
     status: string;
+    executionStatus?: string;
+    workflowOutcome?: "completed" | "blocked";
     startedAt: number;
     endedAt?: number;
     traceId?: string;

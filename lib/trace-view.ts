@@ -60,7 +60,13 @@ export function traceTree(detail: TraceTaskDetail): TraceViewNode[] {
   for (const trace of detail.traces) {
     for (const span of trace.spans) {
       const attributes = span.attributes as
-        | { turnIndex?: number; model?: string; toolName?: string }
+        | {
+            turnIndex?: number;
+            model?: string;
+            toolName?: string;
+            exitCode?: number;
+            commandStatus?: string;
+          }
         | undefined;
       mapped.set(span.id, {
         ...span,
@@ -73,6 +79,12 @@ export function traceTree(detail: TraceTaskDetail): TraceViewNode[] {
                 attributes?.model ??
                 span.name.replace(/^(chat|execute_tool) /, "")),
         children: [],
+        note:
+          span.kind === "tool" &&
+          typeof attributes?.exitCode === "number" &&
+          attributes.exitCode !== 0
+            ? `命令退出 ${attributes.exitCode}`
+            : undefined,
         folded:
           span.kind === "agent" &&
           (!!span.parentSpanId || trace.run.context?.mode === "workflow"),
@@ -125,19 +137,21 @@ export function traceTree(detail: TraceTaskDetail): TraceViewNode[] {
       id: a.id,
       name: `尝试 ${a.number}`,
       kind: "attempt",
-      status: a.status,
+      status: a.executionStatus ?? a.status,
       startedAt: a.startedAt,
       endedAt: a.endedAt,
       traceId: a.traceId,
       input: a.input,
       output: a.output,
       error: a.error,
-      note: `v${a.version} · ${a.accepted ? "已采用" : "未采用"}`,
+      note: `v${a.version} · ${a.accepted ? "已采用" : "未采用"}${a.workflowOutcome ? ` · 执行${a.executionStatus === "success" ? "成功" : traceStatusLabels[a.executionStatus ?? ""] ?? a.executionStatus ?? "未知"} / 节点${a.workflowOutcome === "blocked" ? "受阻" : "完成"}` : ""}`,
       attributes: { dependencies: a.dependencies, planVersion: a.version },
       children,
     });
     children.forEach((c) => {
       c.folded = false;
+      if (c.kind === "agent" && a.workflowOutcome)
+        c.note = `执行${c.status === "success" ? "成功" : traceStatusLabels[c.status] ?? c.status} / 节点${a.workflowOutcome === "blocked" ? "受阻" : "完成"}`;
     });
   }
   const sort = (nodes: TraceViewNode[], seen = new Set<string>()) => {
