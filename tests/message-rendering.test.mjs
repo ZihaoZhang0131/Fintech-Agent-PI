@@ -6,6 +6,7 @@ const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "
 const markdownSource = await readFile(new URL("../components/chat-markdown.tsx", import.meta.url), "utf8");
 const toolRunSource = await readFile(new URL("../components/tool-run-stack.tsx", import.meta.url), "utf8");
 const styleSource = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+const storeSource = await readFile(new URL("../server/chat/store.mjs", import.meta.url), "utf8");
 
 test("chat messages render GitHub-flavored Markdown", () => {
   assert.match(markdownSource, /import remarkGfm from "remark-gfm"/);
@@ -30,8 +31,8 @@ test("collapsed tool activity shows only total run time beside its disclosure", 
   assert.match(toolRunSource, /className="tool-run-summary"/);
   assert.match(toolRunSource, /aria-expanded=\{expanded\}/);
   assert.match(toolRunSource, /`本次运行 \$\{formatRunDuration\(displayedDurationMs\)\}`/);
-  assert.match(pageSource, /message\.id === assistantId[\s\S]*durationMs: event\.durationMs/);
-  assert.match(pageSource, /event\.usage\?\.totalTokens !== undefined[\s\S]*tokenUsage: event\.usage\.totalTokens/);
+  assert.match(storeSource, /last\.durationMs = payload\.durationMs/);
+  assert.match(storeSource, /last\.tokenUsage = payload\.totalTokens/);
   assert.match(toolRunSource, /\{expanded && \(/);
   assert.match(pageSource, /isBusy && activeMessageId === messageId/);
   assert.doesNotMatch(toolRunSource, /Agent 执行|className="tool-run-stack"/);
@@ -40,7 +41,7 @@ test("collapsed tool activity shows only total run time beside its disclosure", 
 });
 
 test("unfinished assistant replies keep the thinking indicator on their final line", () => {
-  assert.match(pageSource, /const activeAssistantMessageId = isBusy \? activeConversation\?\.messages\.at\(-1\)\?\.id : undefined;/);
+  assert.match(pageSource, /const activeAssistantMessageId = isBusy \? activeConversation\?\.messages\.findLast/);
   assert.match(pageSource, /message\.role === "assistant" && message\.id === activeAssistantMessageId/);
   assert.match(pageSource, /startedAt=\{message\.createdAt\}/);
   assert.match(pageSource, /isRunning=\{isUnfinishedAssistantMessage\}/);

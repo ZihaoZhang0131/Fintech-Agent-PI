@@ -187,10 +187,10 @@ function withMcpTimeout(signal?: AbortSignal) {
   };
 }
 
-export async function discoverMcpServers(enabledServerIds: string[]) {
+export async function discoverMcpServers(enabledServerIds: string[], signal?: AbortSignal) {
   if (enabledServerIds.length === 0 || !runtimeConfig()) return [];
   try {
-    const payload = await runtimeRequest<{ servers: RuntimeMcpServer[] }>("/mcp/servers?connect=1");
+    const payload = await runtimeRequest<{ servers: RuntimeMcpServer[] }>("/mcp/servers?connect=1", { signal });
     const enabled = new Set(enabledServerIds);
     return payload.servers.filter((server) => enabled.has(server.id) && server.status === "connected");
   } catch {

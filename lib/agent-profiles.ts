@@ -50,12 +50,17 @@ const VALUE_INVESTING_DEFAULT_MAIN_SKILL_NAMES = [
   "a-share-value-investing",
 ] as const;
 
-export const DEFAULT_MAIN_SKILL_NAMES = [
+const PRE_KAMI_DEFAULT_MAIN_SKILL_NAMES = [
   ...VALUE_INVESTING_DEFAULT_MAIN_SKILL_NAMES,
   "akshare-china-macro",
   "akshare-us-macro",
   "akshare-euro-macro",
   "akshare-institutions-macro",
+] as const;
+
+export const DEFAULT_MAIN_SKILL_NAMES = [
+  ...PRE_KAMI_DEFAULT_MAIN_SKILL_NAMES,
+  "kami",
 ] as const;
 
 const LEGACY_DEFAULT_MAIN_TOOL_NAMES = [
@@ -80,9 +85,14 @@ const DATABASE_DEFAULT_MAIN_TOOL_NAMES = [
   "bash",
 ] as const;
 
-export const DEFAULT_MAIN_TOOL_NAMES = [
+const PRE_KAMI_DEFAULT_MAIN_TOOL_NAMES = [
   ...DATABASE_DEFAULT_MAIN_TOOL_NAMES,
   "generate_document",
+] as const;
+
+export const DEFAULT_MAIN_TOOL_NAMES = [
+  ...PRE_KAMI_DEFAULT_MAIN_TOOL_NAMES,
+  "render_kami_artifact",
 ] as const;
 
 /** Add bundled tools only for projects that retained the prior complete default. */
@@ -90,6 +100,7 @@ export function upgradeLegacyDefaultToolSelection(names: readonly string[]) {
   const previousDefaults: readonly (readonly string[])[] = [
     LEGACY_DEFAULT_MAIN_TOOL_NAMES,
     DATABASE_DEFAULT_MAIN_TOOL_NAMES,
+    PRE_KAMI_DEFAULT_MAIN_TOOL_NAMES,
   ];
   const isPreviousCompleteDefault = previousDefaults.some(
     (defaults) => names.length === defaults.length && defaults.every((name) => names.includes(name)),
@@ -107,6 +118,7 @@ export function upgradeLegacyDefaultSkillSelection(names: readonly string[]) {
     LEGACY_DEFAULT_MAIN_SKILL_NAMES,
     AKSHARE_DEFAULT_MAIN_SKILL_NAMES,
     VALUE_INVESTING_DEFAULT_MAIN_SKILL_NAMES,
+    PRE_KAMI_DEFAULT_MAIN_SKILL_NAMES,
   ];
   const isPreviousCompleteDefault = previousDefaults.some(
     (defaults) => names.length === defaults.length && defaults.every((name) => names.includes(name)),
@@ -145,7 +157,7 @@ export function createEmptyProjectAgentConfig(): ProjectAgentConfig {
 }
 
 export const MAX_CUSTOM_SUB_AGENTS = 12;
-const STARTER_VERSION = 1;
+const STARTER_VERSION = 2;
 const readFiles = ["list_project_files", "read_project_file"];
 const readDatabase = ["list_local_database_tables", "describe_local_database_table", "query_local_database"];
 const starterRoles = [
@@ -164,8 +176,8 @@ const starterRoles = [
   {
     label: "写作Agent",
     description: "负责根据已有研究和数据组织、润色与交付报告。读取项目资料及数据库，保留来源、指标口径、事实与判断的区别及不确定性；按用户要求写入文件或生成 Word/PDF，缺少依据时指出缺口，不补造事实。",
-    enabledSkills: [],
-    enabledTools: [...readFiles, "write_project_file", ...readDatabase, "generate_document"],
+    enabledSkills: ["kami"],
+    enabledTools: [...readFiles, "write_project_file", ...readDatabase, "generate_document", "load_skill", "render_kami_artifact"],
   },
 ];
 
@@ -177,7 +189,23 @@ export function supplementDefaultAgents(config: ProjectAgentConfig, manual = fal
   const names = new Set(next.customSubAgents.map(agent => normalize(agent.label)));
   const skipped: string[] = [];
   for (const role of starterRoles) {
-    if (names.has(normalize(role.label))) continue;
+    const existingIndex = next.customSubAgents.findIndex(agent => normalize(agent.label) === normalize(role.label));
+    if (existingIndex >= 0) {
+      const existing = next.customSubAgents[existingIndex];
+      if (
+        role.label === "写作Agent" &&
+        existing.enabledSkills.length === 0 &&
+        existing.enabledTools.length === readFiles.length + readDatabase.length + 2 &&
+        [...readFiles, "write_project_file", ...readDatabase, "generate_document"].every(name => existing.enabledTools.includes(name))
+      ) {
+        next.customSubAgents[existingIndex] = {
+          ...existing,
+          enabledSkills: ["kami"],
+          enabledTools: [...existing.enabledTools, "load_skill", "render_kami_artifact"],
+        };
+      }
+      continue;
+    }
     if (next.customSubAgents.length >= MAX_CUSTOM_SUB_AGENTS) {
       skipped.push(role.label);
       continue;

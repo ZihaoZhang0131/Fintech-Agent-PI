@@ -153,7 +153,7 @@ test("document implementation keeps Pandoc provisioning and non-executable Markd
   const renderer = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../server/document-renderer.py", import.meta.url), "utf8"));
   const setup = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../scripts/setup-pandoc.mjs", import.meta.url), "utf8"));
   const startup = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../scripts/run-local.mjs", import.meta.url), "utf8"));
-  const chatRoute = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/api/chat/stream/route.ts", import.meta.url), "utf8"));
+  const chatRoute = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../server/chat/agent.ts", import.meta.url), "utf8"));
   assert.match(setup, /createHash\("sha256"\)/);
   assert.match(setup, /const version = "3\.9\.0\.2"/);
   assert.match(setup, /pandoc-\$\{version\}-arm64\/bin\/pandoc/);

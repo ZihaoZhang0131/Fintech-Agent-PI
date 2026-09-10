@@ -7,6 +7,7 @@ import akshareChinaMacroSource from "../../../.agents/skills/akshare-china-macro
 import akshareUsMacroSource from "../../../.agents/skills/akshare-us-macro/SKILL.md?raw";
 import akshareEuroMacroSource from "../../../.agents/skills/akshare-euro-macro/SKILL.md?raw";
 import akshareInstitutionsMacroSource from "../../../.agents/skills/akshare-institutions-macro/SKILL.md?raw";
+import kamiSource from "../../../.agents/skills/kami/SKILL.md?raw";
 import { parseSkill } from "./parser";
 import { loadLocalSkillState } from "./local";
 
@@ -20,6 +21,7 @@ const BUNDLED_SKILL_SOURCES = [
   akshareUsMacroSource,
   akshareEuroMacroSource,
   akshareInstitutionsMacroSource,
+  kamiSource,
 ] as const;
 
 export type { SkillRegistry, LocalSkillState } from "./registry.ts";

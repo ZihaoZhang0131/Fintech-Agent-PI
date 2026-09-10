@@ -67,9 +67,10 @@ export async function removeModelProvider(providerId: string) {
   return runtimeFetch(`models/${encodeURIComponent(providerId)}`, { method: "DELETE" });
 }
 
-export async function resolveRuntimeModel(reference: ModelReference, { forTest = false } = {}) {
+export async function resolveRuntimeModel(reference: ModelReference, { forTest = false, signal }: { forTest?: boolean; signal?: AbortSignal } = {}) {
   return (await runtimeFetch(
     `models/${encodeURIComponent(reference.providerId)}/resolve?modelId=${encodeURIComponent(reference.modelId)}${forTest ? "&forTest=1" : ""}`,
+    { signal },
   )) as ResolvedModel;
 }
 

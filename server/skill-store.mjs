@@ -22,6 +22,7 @@ const BUNDLED_SKILL_NAMES = new Set([
   "akshare-us-macro",
   "akshare-euro-macro",
   "akshare-institutions-macro",
+  "kami",
 ]);
 const TEXT_EXTENSIONS = new Set([
   ".c", ".cc", ".conf", ".cpp", ".css", ".csv", ".env", ".go", ".graphql", ".h", ".html",

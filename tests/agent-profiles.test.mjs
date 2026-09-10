@@ -25,6 +25,7 @@ test("new project has three editable enabled specialists", () => {
     "akshare-us-macro",
     "akshare-euro-macro",
     "akshare-institutions-macro",
+    "kami",
   ]);
   assert.deepEqual(config.profiles.main.enabledMcps, []);
   assert.equal(config.profiles.main.enabled, true);
@@ -76,11 +77,11 @@ test("legacy main capabilities migrate without sharing mutable profile arrays", 
 test("former complete default Skill selections gain every newly bundled default", () => {
   assert.deepEqual(
     upgradeLegacyDefaultSkillSelection(["equity-research", "earnings-review", "policy-tracking"]),
-    ["equity-research", "earnings-review", "policy-tracking", "akshare-http-data", "a-share-value-investing", "akshare-china-macro", "akshare-us-macro", "akshare-euro-macro", "akshare-institutions-macro"],
+    ["equity-research", "earnings-review", "policy-tracking", "akshare-http-data", "a-share-value-investing", "akshare-china-macro", "akshare-us-macro", "akshare-euro-macro", "akshare-institutions-macro", "kami"],
   );
   assert.deepEqual(
     upgradeLegacyDefaultSkillSelection(["equity-research", "earnings-review", "policy-tracking", "akshare-http-data"]),
-    ["equity-research", "earnings-review", "policy-tracking", "akshare-http-data", "a-share-value-investing", "akshare-china-macro", "akshare-us-macro", "akshare-euro-macro", "akshare-institutions-macro"],
+    ["equity-research", "earnings-review", "policy-tracking", "akshare-http-data", "a-share-value-investing", "akshare-china-macro", "akshare-us-macro", "akshare-euro-macro", "akshare-institutions-macro", "kami"],
   );
   assert.deepEqual(upgradeLegacyDefaultSkillSelection(["equity-research"]), ["equity-research"]);
 });
@@ -136,10 +137,11 @@ test("starter permissions are separate, independently cloned, and parsing never 
   const [research, data, writing] = config.customSubAgents;
   assert.equal(research.enabledSkills.length, 4);
   assert.equal(data.enabledSkills.length, 5);
-  assert.deepEqual(writing.enabledSkills, []);
+  assert.deepEqual(writing.enabledSkills, ["kami"]);
   assert.ok(data.enabledTools.includes("bash"));
   assert.ok(data.enabledTools.includes("mutate_local_database"));
   assert.ok(writing.enabledTools.includes("generate_document"));
+  assert.ok(writing.enabledTools.includes("render_kami_artifact"));
   for (const role of [research, writing]) {
     assert.ok(!role.enabledTools.includes("bash"));
     assert.ok(!role.enabledTools.includes("mutate_local_database"));

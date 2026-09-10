@@ -26,6 +26,11 @@ test("file preview UI exposes code, download, and recoverable unsupported states
   assert.match(pageSource, /该文件可下载后使用对应应用打开/);
   assert.match(stylesheet, /\.ide-code-preview\s*\{[^}]*min-width: max-content;/s);
   assert.match(stylesheet, /\.workspace-preview-actions\s*\{[^}]*gap: 5px;/s);
+  assert.match(pageSource, /filePreview\.kind === "kami-html"/);
+  assert.match(pageSource, /sandbox="allow-scripts"/);
+  assert.match(pageSource, /srcDoc=\{filePreview\.content\}/);
+  assert.match(pageSource, /查看 Kami 源码/);
+  assert.doesNotMatch(pageSource, /sandbox="[^"]*allow-same-origin/);
 });
 
 test("Markdown workspace files reuse the GFM renderer", () => {

@@ -130,11 +130,14 @@ export function validatePlan(
         const tools = new Set(requires.tools),
           enabled = new Set(profile.enabledTools ?? []);
         for (const output of fileOutputs) {
-          const document = /\.(?:docx|pdf)$/i.test(output.path);
-          if (document && (!tools.has("generate_document") || !enabled.has("generate_document")))
-            throw fail(`节点“${n.title}”生成 ${output.path} 需要 generate_document。`);
-          if (!document && !["write_project_file", "generate_document"].some((name) => tools.has(name) && enabled.has(name)))
-            throw fail(`节点“${n.title}”生成文件需要 write_project_file 或 generate_document。`);
+          const docx = /\.docx$/i.test(output.path);
+          const pdf = /\.pdf$/i.test(output.path);
+          const canDocument = tools.has("generate_document") && enabled.has("generate_document");
+          const canKami = tools.has("render_kami_artifact") && enabled.has("render_kami_artifact");
+          if (docx && !canDocument) throw fail(`节点“${n.title}”生成 ${output.path} 需要 generate_document。`);
+          if (pdf && !canDocument && !canKami) throw fail(`节点“${n.title}”生成 ${output.path} 需要 generate_document 或 render_kami_artifact。`);
+          if (!docx && !pdf && !["write_project_file", "generate_document", "render_kami_artifact"].some((name) => tools.has(name) && enabled.has(name)))
+            throw fail(`节点“${n.title}”生成文件需要 write_project_file、generate_document 或 render_kami_artifact。`);
         }
       }
     }

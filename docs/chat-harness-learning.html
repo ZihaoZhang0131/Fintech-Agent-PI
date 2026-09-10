@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="结合投研 Agent 项目的实际代码，学习聊天 Harness 的常驻运行、SQLite 持久化、上下文压缩、运行中补充与故障恢复。">
+  <title>从聊天接口到可靠 Agent：三个 P0 改造的代码学习手册</title>
+  <style>
+    :root { color-scheme: light; --ink:#182235; --muted:#536176; --blue:#1857b6; --line:#d7e0ed; --paper:#fff; --wash:#f3f6fb; --code:#152336; --accent:#c66714; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; scroll-padding-top:24px; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:17px/1.85 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+    a { color:var(--blue); text-decoration-thickness:1px; text-underline-offset:4px; overflow-wrap:anywhere; }
+    a:hover { text-decoration:none; }
+    button,input,select { font:inherit; }
+    button { cursor:pointer; padding:8px 15px; border:1px solid #a9bad1; border-radius:6px; background:white; color:var(--ink); }
+    button:hover:not(:disabled) { background:#eaf1fb; }
+    button:disabled { cursor:default; opacity:.45; }
+    :focus-visible { outline:3px solid #d8912a; outline-offset:4px; }
+    .skip { position:absolute; top:-100px; left:16px; background:white; padding:12px; z-index:10; }.skip:focus { top:8px; }
+    .layout { max-width:1320px; margin:auto; display:grid; grid-template-columns:240px minmax(0,1fr); gap:50px; padding:40px 40px 90px; }
+    aside { align-self:start; position:sticky; top:24px; max-height:calc(100vh - 48px); overflow:auto; font-size:14px; line-height:1.65; }
+    .brand { color:var(--blue); font-size:13px; font-weight:700; letter-spacing:.1em; margin-bottom:10px; }
+    aside strong { display:block; font-size:19px; margin-bottom:20px; }
+    nav a { display:block; color:var(--muted); padding:6px 0; text-decoration:none; }
+    nav a:hover { color:var(--blue); }
+    .nav-group { margin:19px 0 4px; font-size:12px; font-weight:700; letter-spacing:.08em; color:var(--blue); }
+    main { min-width:0; max-width:950px; }
+    header { border-bottom:3px solid var(--ink); padding:5px 0 30px; }
+    .eyebrow { color:var(--blue); font:600 13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.06em; }
+    h1 { font-size:clamp(30px,4vw,49px); line-height:1.25; letter-spacing:-.04em; margin:16px 0 22px; }
+    .lead { font-size:20px; line-height:1.8; max-width:780px; }
+    .meta { font-size:14px; color:var(--muted); margin:20px 0 0; }
+    section { padding-top:42px; margin-top:18px; border-top:1px solid var(--line); }
+    header+section { border-top:0; }
+    h2 { margin:0 0 20px; font-size:29px; line-height:1.4; letter-spacing:-.025em; }
+    h2 .num { display:block; color:var(--blue); font:600 13px/1.5 ui-monospace,SFMono-Regular,monospace; letter-spacing:.1em; margin-bottom:7px; }
+    h3 { margin:29px 0 10px; font-size:21px; line-height:1.5; }
+    h4 { margin:20px 0 8px; font-size:17px; }
+    p { margin:12px 0; } ul,ol { padding-left:24px; } li { margin:7px 0; }
+    .muted,.caption,.source { color:var(--muted); font-size:14px; }
+    .source { margin-top:9px; overflow-wrap:anywhere; }
+    .note { border-left:4px solid var(--blue); padding:12px 20px; background:var(--wash); margin:22px 0; }
+    .note p { margin:4px 0; }.warning { border-color:var(--accent); background:#fff6e9; }
+    .two { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
+    .two>div { min-width:0; }
+    .compare { border-top:2px solid var(--blue); padding-top:12px; }
+    .compare h3 { margin-top:0; }
+    .table-wrap { overflow-x:auto; margin:20px 0; }
+    table { width:100%; border-collapse:collapse; text-align:left; font-size:15px; line-height:1.7; }
+    th { background:var(--wash); color:#263c5b; font-weight:600; }
+    th,td { padding:12px; vertical-align:top; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+    code { font: .88em/1.7 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; background:#edf2f8; padding:2px 5px; border-radius:3px; overflow-wrap:anywhere; }
+    pre { background:var(--code); color:#e5edf9; padding:20px; overflow-x:auto; border-radius:6px; font-size:14px; line-height:1.8; tab-size:2; }
+    pre code { background:none; padding:0; color:inherit; border-radius:0; overflow-wrap:normal; font-size:inherit; white-space:pre; }
+    .code-title { color:var(--muted); font:600 13px/1.6 ui-monospace,SFMono-Regular,monospace; margin-top:18px; }
+    .path-map { list-style:none; padding:0; }.path-map li { padding:12px 0; border-bottom:1px solid var(--line); }
+    .path-map a { font-family:ui-monospace,SFMono-Regular,monospace; font-size:15px; }
+    .path-map span { display:block; color:var(--muted); font-size:15px; }
+    .architecture { margin:24px 0; display:grid; gap:8px; }
+    .layer { display:grid; grid-template-columns:130px minmax(0,1fr); border-bottom:1px solid var(--line); padding:15px 0; gap:16px; }
+    .layer b { color:var(--blue); }.layer small { display:block; color:var(--muted); font-size:14px; }
+    .arrow { color:var(--blue); font-size:14px; padding-left:146px; }
+    .steps { counter-reset:step; list-style:none; padding:0; }.steps>li { position:relative; padding:0 0 22px 45px; margin:0; border-left:1px solid var(--line); margin-left:14px; }
+    .steps>li:before { counter-increment:step; content:counter(step); position:absolute; left:-15px; top:0; width:29px; height:29px; background:var(--blue); color:white; border-radius:50%; text-align:center; font-size:14px; line-height:29px; }
+    .steps>li:last-child { border:0; }.steps p { margin:5px 0; }
+    details { margin:13px 0; border-bottom:1px solid var(--line); padding:0 0 13px; }
+    summary { cursor:pointer; font-weight:600; padding:8px 0; } details>div { padding:2px 0 8px 20px; }
+    .lab { margin:22px 0; padding:22px; background:var(--wash); border-top:3px solid var(--blue); }
+    .lab h3 { margin-top:0; }.controls { display:flex; flex-wrap:wrap; gap:14px; align-items:end; margin:16px 0; }
+    label { display:grid; gap:5px; font-size:14px; flex:1 1 160px; }
+    input,select { width:100%; min-width:0; padding:8px; border:1px solid #a9bad1; border-radius:4px; background:white; color:var(--ink); }
+    output { display:block; padding:15px 0 0; }
+    .metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:15px 0; }
+    .metric { border-top:1px solid #b6c7e0; padding-top:10px; }.metric span { font-size:13px; color:var(--muted); display:block; }.metric strong { font:600 23px/1.5 ui-monospace,SFMono-Regular,monospace; }
+    .timeline-status { font-size:21px; color:var(--blue); }.timeline-log { margin:10px 0; padding-left:24px; }
+    .checklist { list-style:none; padding:0; }.checklist li { padding:10px 0; border-bottom:1px solid var(--line); }.checklist li:before { content:"□"; margin-right:10px; color:var(--blue); }
+    footer { margin-top:50px; padding-top:20px; border-top:3px solid var(--ink); font-size:14px; color:var(--muted); }
+    @media(max-width:1050px) { .layout { grid-template-columns:190px minmax(0,1fr); gap:28px; padding:28px; } }
+    @media(max-width:760px) { .layout { display:block; padding:22px 20px 50px; } aside { position:static; max-height:none; margin-bottom:30px; } aside nav { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 16px; }.nav-group { grid-column:1/-1; }aside strong { margin-bottom:8px; }h2 { font-size:25px; }.two { grid-template-columns:1fr; gap:10px; }.layer { grid-template-columns:1fr; gap:3px; }.arrow { padding-left:0; }.metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .lab { padding:16px; }pre { padding:15px; } }
+    @media(prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+    @media print { aside,.controls,.no-print { display:none !important; }.layout { display:block; padding:0; max-width:none; }body { font-size:11pt; color:black; }.lead { font-size:13pt; }h1 { font-size:26pt; }h2 { font-size:19pt; }h3 { font-size:14pt; }pre { white-space:pre-wrap; background:#f3f3f3; color:black; border:1px solid #ccc; font-size:9pt; }pre code { white-space:pre-wrap; overflow-wrap:anywhere; }section { break-before:auto; }h2,h3,h4 { break-after:avoid; }table,pre,.note { break-inside:avoid; }a { color:black; }.table-wrap { overflow:visible; } }
+  </style>
+</head>
+<body>
+<a class="skip" href="#main">跳转到正文</a>
+<div class="layout">
+<aside aria-label="手册目录">
+  <div class="brand">ENGINEERING NOTE / 01</div>
+  <strong>聊天 Harness<br>代码学习手册</strong>
+  <nav>
+    <div class="nav-group">先建立正确模型</div>
+    <a href="#learn">00 · 怎样学习这份手册</a>
+    <a href="#why">01 · 三个 P0 到底改了什么</a>
+    <a href="#terms">02 · 六个核心概念</a>
+    <a href="#map">03 · 架构与文件地图</a>
+    <div class="nav-group">沿着实际链路阅读</div>
+    <a href="#start">04 · 一次发送如何执行</a>
+    <a href="#storage">05 · 数据为何能恢复</a>
+    <a href="#events">06 · SSE 与快照如何配合</a>
+    <a href="#budget">07 · 上下文预算怎么算</a>
+    <a href="#compact">08 · 压缩不是删除历史</a>
+    <a href="#steer">09 · 运行中补充与竞态</a>
+    <a href="#recover">10 · 停止、重启与继续</a>
+    <div class="nav-group">把理解变成能力</div>
+    <a href="#boundaries">11 · 权限与兼容性边界</a>
+    <a href="#tests">12 · 测试证明了什么</a>
+    <a href="#practice">13 · 六个动手练习</a>
+    <a href="#limits">14 · 还没有解决的问题</a>
+    <a href="#review">15 · 自测与复述</a>
+  </nav>
+  <p class="muted">单文件 · 离线可读<br>无外部字体、脚本或统计请求</p>
+  <button type="button" id="print" class="no-print">打印 / 保存 PDF</button>
+</aside>
+<main id="main">
+<header>
+  <div class="eyebrow">PI RESEARCH AGENT / CHAT HARNESS / 2026-09-10</div>
+  <h1>从聊天接口<br>到可靠的 Agent 运行时</h1>
+  <p class="lead">这次改造最重要的不是“换了一个 Agent 类”，而是把<strong>执行权、状态所有权和恢复责任</strong>从浏览器的一次请求中拆了出来。</p>
+  <p>本文以你的投研 Agent 当前工作树为依据，解释为什么这样改、每层代码负责什么、哪些时序最容易出错，以及怎样亲手验证。只讨论聊天模式，Workflow 是另一套系统。</p>
+  <p class="meta">建议学习时间：第一遍 30–45 分钟建立模型；第二遍 60–90 分钟对照源码；第三遍完成练习。文中的教学简化代码都明确标注，不应直接替换生产代码。</p>
+</header>
+
+<section id="learn">
+  <h2><span class="num">00 / LEARNING OBJECTIVES</span>看完以后，要能解释什么？</h2>
+  <p>“听懂术语”不等于“能够做出一个可靠 Agent”。用下面三层目标检验自己：</p>
+  <div class="table-wrap"><table><thead><tr><th>层级</th><th>你应当能做到</th><th>可观察的证据</th></tr></thead><tbody>
+    <tr><td>L1 · 讲得清</td><td>区分 Thread、应用 Turn、Pi 内部轮次；解释刷新为什么不应等于停止。</td><td>不看文档，用一张图说明浏览器、Runtime、Pi 和 SQLite 的关系。</td></tr>
+    <tr><td>L2 · 查得到</td><td>从一个问题定位到正确文件与状态，而不是只看聊天气泡。</td><td>找到一轮任务的状态、原始消息、事件序号，以及补充消息的消费状态。</td></tr>
+    <tr><td>L3 · 验得了</td><td>设计断线、重复提交、晚到输入、压缩失败和进程退出测试。</td><td>写出“操作 → 预期 → 断言”，并在隔离测试中证明行为。</td></tr>
+  </tbody></table></div>
+  <div class="note"><p><strong>阅读路线：</strong>先读 01–03，再按 04 → 05 → 06 追踪一条普通消息；最后再看压缩、补充和恢复。不要一开始就在 600 多行的工具事件映射里迷路。</p></div>
+  <p>如果你已经会写 HTTP 接口但第一次接触 Agent 工程，优先注意本文反复出现的四个问题：<strong>谁拥有任务？哪里是事实来源？什么时候算成功？失败后凭什么恢复？</strong></p>
+</section>
+
+<section id="why">
+  <h2><span class="num">01 / THE CHANGE</span>三个 P0，本质上是三个“所有权”问题</h2>
+  <div class="table-wrap"><table><thead><tr><th>P0</th><th>原来的脆弱点</th><th>这次的落点</th></tr></thead><tbody>
+    <tr><td>执行生命周期</td><td>Web 路由创建 Agent；请求取消与 Agent 中止绑在一起。</td><td>Local Runtime 持有运行中的任务，浏览器只提交操作和订阅状态。</td></tr>
+    <tr><td>上下文生命周期</td><td>模型历史主要从浏览器消息重建，显示记录不等于完整工具协议；缺少持续预算管理。</td><td>保存 Pi 原始 Session；每次模型请求前检查预算；压缩与原文存储分离。</td></tr>
+    <tr><td>用户输入生命周期</td><td>运行中输入受限；即便加一个发送按钮，也不能解决消息何时被接纳、是否丢失的问题。</td><td>持久化 pending 输入；通过 steer 接入；在落入 Session 时原子标记 consumed。</td></tr>
+  </tbody></table></div>
+  <h3>不要把这次改造理解成“ReAct 换成 Plan-Execute”</h3>
+  <p>用工程视角看，聊天仍然采用<strong>模型决定下一步 → 调用工具 → 把工具结果交回模型 → 继续或结束</strong>的循环。可以把它理解为 ReAct 风格的工具调用循环，但不意味着我们读取或持久化了模型的内部思维链。</p>
+  <p>这次没有把聊天强行变成“先生成完整 DAG，再逐节点执行”的固定流程。改的是循环外面的执行与状态管理：<code>AgentHarness</code>承接 Pi 的会话和事件能力，应用再补上持久化、HTTP、权限快照和前端同步。</p>
+  <div class="two">
+    <div class="compare"><h3>模型回答的问题</h3><p>“下一步查什么？要调用哪个工具？现有证据够不够？”</p><p class="muted">属于任务推理与工具选择。</p></div>
+    <div class="compare"><h3>Harness 回答的问题</h3><p>“任务存在哪里？断开后谁继续跑？结果什么时候落盘？用户如何停止？”</p><p class="muted">属于确定性运行机制。</p></div>
+  </div>
+  <p class="source">对照旧版：<code>git show HEAD:app/api/chat/stream/route.ts</code> 中的 <code>new Agent</code>、<code>history.map</code>、<code>request.signal</code>；对照新版：<a href="../server/chat/manager.mjs">manager.mjs</a> 与 <a href="../server/chat/agent.ts">agent.ts</a>。HEAD 若以后提交更新，旧版对照需换成改造前的提交。</p>
+</section>
+
+<section id="terms">
+  <h2><span class="num">02 / VOCABULARY</span>先分清六个对象</h2>
+  <div class="table-wrap"><table><thead><tr><th>对象</th><th>本项目中的含义</th><th>常见误解</th></tr></thead><tbody>
+    <tr><td>Thread</td><td>一个聊天会话，绑定项目；可包含多轮任务。</td><td>不是系统线程，也不是一个永久占用 CPU 的线程。</td></tr>
+    <tr><td>应用 Turn</td><td>一次 Start，或一次 Continue 创建的执行单元；有 id、状态、输入与配置。</td><td>不等于一次模型 HTTP 请求。</td></tr>
+    <tr><td>Pi 内部轮次</td><td>Harness 内部模型与工具之间的推进过程；一次应用 Turn 可以包含多次推理。</td><td>看到多次 <code>turn_end</code>，不代表应用应该立即结束。</td></tr>
+    <tr><td>Session</td><td>Pi 的结构化历史与树形记录抽象；包含消息、工具调用/结果、压缩记录等。</td><td>不只是“用户和助手说过的话”两列文本。</td></tr>
+    <tr><td>Item / 显示投影</td><td>面向 UI 的消息与工具卡片状态；目前快照仍使用完整会话显示投影。</td><td>工具卡上写“完成”不等于拿到了完整原始结果。</td></tr>
+    <tr><td>Event</td><td>一次可回放的状态变化，带 Thread 内单调递增的 seq。</td><td>事件 ID 不是任务 ID；回放事件不是重跑任务。</td></tr>
+  </tbody></table></div>
+  <pre><code>Thread A：研究某家公司
+  ├─ 应用 Turn 1：分析现金流
+  │    ├─ 模型请求 1 → 调用数据工具
+  │    ├─ 模型请求 2 → 阅读结果
+  │    └─ 接纳补充 → 模型请求 3 → 最终回答
+  ├─ 应用 Turn 2：输出报告（被中断）
+  └─ 应用 Turn 3：继续上次任务
+       previousTurnId → Turn 2</code></pre>
+  <div class="note"><p><strong>常驻的是谁？</strong>Node 的 ChatSessionManager 拥有执行生命周期。Session 有空闲缓存，但每个应用 Turn 会重新组装 Harness 与工具。不是让一个 Agent 实例永远不销毁，也不是把“持久化”误认为“只放在 Map 里”。</p></div>
+</section>
+
+<section id="map">
+  <h2><span class="num">03 / ARCHITECTURE</span>按职责而不是按文件大小阅读</h2>
+  <div class="architecture" role="img" aria-label="浏览器通过代理向本机 Runtime 提交命令，Manager 驱动 Pi，SQLite 保存状态，快照和 SSE 返回浏览器。">
+    <div class="layer"><b>浏览器</b><div><code>app/page.tsx</code> + <code>chat-submission.ts</code><small>收集输入、冻结重试请求、显示服务端状态。</small></div></div>
+    <div class="arrow">↓ POST 操作　↑ GET 快照 / SSE</div>
+    <div class="layer"><b>Web 代理</b><div><code>app/api/local/[...segments]/route.ts</code><small>把请求转到已有 Local Runtime；模型密钥解析等内部端点不直接开放给浏览器。</small></div></div>
+    <div class="arrow">↓ 鉴权后的本机 HTTP</div>
+    <div class="layer"><b>运行控制</b><div><code>http.mjs → manager.mjs → agent.ts</code><small>HTTP 解析、执行状态机、Pi Harness 和原有工具组装。</small></div></div>
+    <div class="arrow">↕ Session entry / 应用事件 / 工具结果</div>
+    <div class="layer"><b>持久化与预算</b><div><code>store.mjs</code> + <code>context.mjs</code><small>SQLite 是恢复依据；context hook 决定这次请求带什么上下文。</small></div></div>
+  </div>
+  <ul class="path-map">
+    <li><a href="../server/chat/manager.mjs">server/chat/manager.mjs</a><span>先读 start → execute → steer → interrupt → resume。它是本次学习的主线。</span></li>
+    <li><a href="../server/chat/store.mjs">server/chat/store.mjs</a><span>再读 reserve、session、emit、recover：分别回答去重、历史、投影、恢复的问题。</span></li>
+    <li><a href="../server/chat/http.mjs">server/chat/http.mjs</a><span>观察提交接口为何返回 202，而事件流单独存在。</span></li>
+    <li><a href="../server/chat/context.mjs">server/chat/context.mjs</a><span>看 budgets、transform、boundToolResult、resultReader。</span></li>
+    <li><a href="../server/chat/agent.ts">server/chat/agent.ts</a><span>这是原路由里大量能力组装与工具事件映射的迁移，不是所有代码都新写了。主 Agent 换为 AgentHarness；子 Agent 仍沿用原有构造逻辑。</span></li>
+    <li><a href="../server/chat/skills.ts">server/chat/skills.ts</a> / <a href="../server/chat/config.mjs">config.mjs</a><span>前者让 Node 直接读 Skill 文件和本机覆盖；后者只保留允许落盘的配置字段。</span></li>
+    <li><a href="../lib/chat-runtime-client.ts">lib/chat-runtime-client.ts</a> / <a href="../lib/chat-submission.ts">chat-submission.ts</a><span>前者管理订阅与快照；后者冻结模糊失败后的请求语义。</span></li>
+    <li><a href="../tests/chat-harness.test.mjs">tests/chat-harness.test.mjs</a><span>最后用测试反推每个设计要保护的不变量。</span></li>
+  </ul>
+  <p class="caption">源码链接按本文位于仓库 docs 目录设计。单独移动 HTML 后，正文和演示仍可离线阅读，但相对源码链接需要回到仓库中使用。</p>
+</section>
+
+<section id="start">
+  <h2><span class="num">04 / REQUEST PATH</span>点击“发送”后发生了什么？</h2>
+  <p>假设用户输入：“分析这家公司的现金流”。我们沿一条真实代码路径往下走。</p>
+  <ol class="steps">
+    <li><strong>前端准备一次明确的操作</strong><p><code>sendMessage()</code> 根据状态选择 Start、Steer 或 Continue。<code>prepareChatSubmission()</code>保存这次操作的 path、body 与请求 ID，重试时复用。</p></li>
+    <li><strong>服务端预留 Turn</strong><p><code>manager.start()</code>校验输入和配置，再调用 <code>store.reserve()</code>。同一 Thread 的同一个 requestId 命中旧记录时返回旧 Turn；内容不同则 409。</p></li>
+    <li><strong>先保存，再开始后台执行</strong><p>事务中写入 queued Turn、用户显示消息与 queued 事件。Manager 把执行状态放进 runs Map，再启动 <code>execute(state)</code>。</p></li>
+    <li><strong>HTTP 返回“已接收”</strong><p><code>http.mjs</code> 返回 202。它不等待模型最终回答，也不把任务的生命周期绑在响应流上。</p></li>
+    <li><strong>恢复上下文、解析能力</strong><p>Manager 取得项目、Session 和模型引用；<code>prepareChatAgent()</code>加载 Skills、工具和提示词，组装 Harness。API Key 在本机模型层解析，不跟配置一起持久化。</p></li>
+    <li><strong>在模型调用前挂好约束</strong><p>注册 context hook 检查预算，注册 tool_result hook 管理大结果，然后把 Turn 置为 running 并执行 <code>bundle.run()</code>。</p></li>
+    <li><strong>边执行边记录</strong><p>Pi 原始消息写入 SessionStorage；显示事件经 <code>store.emit()</code>同步更新 UI 投影和事件表，再通知订阅者。</p></li>
+    <li><strong>完成并释放活动执行状态</strong><p>确认没有晚到输入后结束 Trace，再标记 completed。finally 中清理定时器与当前 runs 项。Session 可以继续留在空闲缓存中。</p></li>
+  </ol>
+  <div class="code-title">教学简化 · manager.start 的骨架</div>
+  <pre><code>const reserved = store.reserve(threadId, requestId, input, config);
+if (reserved.duplicate) return reserved.turn;
+
+const state = { turn: reserved.turn, controller: new AbortController() };
+runs.set(threadId, state);
+state.done = execute(state); // 保存 Promise，不 await 最终答案
+return reserved.turn;       // HTTP 层据此返回 202</code></pre>
+  <p><strong>关键：</strong>这里“没有 await”并不等于随便放飞异步任务。Manager 仍保存 <code>state.done</code>，停止、删除和关闭进程时都能等待它收尾。普通 Serverless 请求中简单写一句 <code>void run()</code>，并不能自动得到同样的生命周期保证。</p>
+  <h3>为什么请求 ID 之外，还要保存内容 hash？</h3>
+  <p>去重是在识别“同一次操作重试”，不是在识别“两句话一样”。两次真正独立的用户请求可以文本相同，但应有不同 ID；同一个 ID 却改了参数，应拒绝而不是悄悄执行不同任务。</p>
+  <pre><code>第一次：requestId = req-01，input = 分析现金流 → 创建 Turn T1
+重试：  requestId = req-01，input = 分析现金流 → 返回 T1
+冲突：  requestId = req-01，input = 删除文件   → 409
+新请求：requestId = req-02，input = 分析现金流 → 空闲时创建 T2</code></pre>
+  <p class="source">定位：<a href="../server/chat/store.mjs">store.reserve()</a>；唯一约束 <code>UNIQUE(thread_id,request_id)</code>；hash 的输入包括 input、config、previousTurnId 和 operation。</p>
+</section>
+
+<section id="storage">
+  <h2><span class="num">05 / SOURCE OF TRUTH</span>有数据库，不代表保存了足够的东西</h2>
+  <h3>同一轮任务，有三种不同的记录</h3>
+  <div class="table-wrap"><table><thead><tr><th>记录</th><th>用途</th><th>不能替代什么</th></tr></thead><tbody>
+    <tr><td>Pi Session</td><td>给下一次推理恢复完整结构：角色、工具参数、toolCallId、结果、检查点。</td><td>不能直接等同于紧凑好读的聊天 UI。</td></tr>
+    <tr><td>显示投影</td><td>聊天文本、工具卡片、审批状态、耗时、Trace 链接。</td><td>“调用成功”这样的摘要不能代替模型需要的原始结果。</td></tr>
+    <tr><td>Trace</td><td>观察调用过程、耗时、用量与错误，沿用项目原有脱敏与展示逻辑。</td><td>Trace 有展示与裁剪目的，不应冒充完整的会话恢复存储。</td></tr>
+  </tbody></table></div>
+  <p>比如 UI 只显示“读取财务数据成功”。下一轮用户问“刚才现金流的单位是什么”，模型需要真实结果中的单位，不是“成功”二字。</p>
+  <div class="code-title">教学示例 · 结构化消息与配对关系</div>
+  <pre><code>// assistant：模型要求执行一个工具
+{ role: "assistant", content: [
+  { type: "toolCall", id: "call-7", name: "query_local_database",
+    arguments: { sql: "SELECT year, cashflow FROM finance" } }
+] }
+
+// toolResult：必须能对应到那次调用
+{ role: "toolResult", toolCallId: "call-7",
+  toolName: "query_local_database", isError: false,
+  content: [{ type: "text", text: "2025 年经营现金流 100，单位：亿元" }] }</code></pre>
+  <h3>七张新表，加一张原有兼容表</h3>
+  <div class="table-wrap"><table><thead><tr><th>表</th><th>主要职责</th><th>排查时问它什么</th></tr></thead><tbody>
+    <tr><td><code>chat_threads</code></td><td>项目、当前 Turn、配置与 seq。</td><td>这段聊天属于哪个项目？最近推进到哪里？</td></tr>
+    <tr><td><code>chat_turns</code></td><td>输入、状态、幂等键、配置、恢复关系。</td><td>任务结束没有？是不是某次重试？</td></tr>
+    <tr><td><code>chat_session_entries</code></td><td>追加 Pi Session 记录。</td><td>模型究竟看过什么？工具实际返回什么？</td></tr>
+    <tr><td><code>chat_items</code></td><td>显示消息与工具卡片投影。</td><td>该应用 Turn 有哪些显示记录？</td></tr>
+    <tr><td><code>chat_events</code></td><td>Thread 内有序的变化事件。</td><td>断开以后错过了哪些变化？</td></tr>
+    <tr><td><code>chat_inputs</code></td><td>补充输入及其消费状态。</td><td>用户补充是待处理、已入上下文，还是被取消？</td></tr>
+    <tr><td><code>chat_results</code></td><td>超大工具结果原文与所属 Thread。</td><td>预览省略的部分如何找回？</td></tr>
+    <tr><td><code>chat_conversations</code></td><td>原有完整显示投影，继续用于兼容现有 UI。</td><td>刷新后页面应该显示哪些气泡和工具卡片？</td></tr>
+  </tbody></table></div>
+  <p>现在很多业务字段存在 JSON <code>body</code> 中，关键查找字段单独建列。这样迁移成本低，但不意味着所有查询都已做成高度规范化或高吞吐设计。</p>
+  <h3>为什么使用一个小事务？</h3>
+  <p>假设补充输入已经写进 Session，但 <code>consumed</code> 状态还没更新时进程退出。重启后它会仍显示 pending，可能再次投递。反过来先写 consumed 再存消息，则可能“状态显示已处理，实际上下文没有”。</p>
+  <pre><code>// 教学简化：这几件事必须一起成功或一起失败
+BEGIN IMMEDIATE;
+  INSERT INTO chat_session_entries (...);
+  UPDATE chat_inputs SET body = '... consumed ...' WHERE id = ?;
+  UPDATE chat_conversations SET body = '... 新投影 ...' WHERE id = ?;
+  INSERT INTO chat_events (... input_status ...);
+COMMIT;
+// 事务提交以后，才向内存 Session 及订阅者发布。</code></pre>
+  <p><code>BEGIN IMMEDIATE</code> 提前取得写事务所需的锁；异常时执行 ROLLBACK。注意：事务里都是本机数据库操作，<strong>不把模型或网络请求放进这个事务</strong>，否则会长时间占锁。</p>
+  <h3>WAL、缓存和备份各自负责什么？</h3>
+  <ul>
+    <li><strong>WAL：</strong>SQLite 的写前日志模式，有利于本机读写并存和崩溃恢复；它不是云备份，也不能抵抗磁盘丢失。</li>
+    <li><strong>Session 缓存：</strong>减少重复加载；空闲超过 30 分钟、且不在活动 Turn 中时才允许清理。缓存丢失后以 SQLite 重建。</li>
+    <li><strong>pre-harness 备份：</strong>首次建立新表前用 VACUUM INTO 生成一致性备份；不是每轮自动生成的新快照。</li>
+    <li><strong>文件权限 0600：</strong>限制其他本机账户直接读取数据库；不等于加密。</li>
+  </ul>
+  <div class="note warning"><p><strong>“先持久化再可见”有范围。</strong>这里说的是关键应用事件和 Session 追加路径。模型的完整 assistant 消息在消息结束时进入 Session；流式文本以显示事件分批落盘。进程被杀时，最后一小段尚在 100ms 缓冲里的文本可能尚未持久化。不要把它理解为逐 token、零损失保证。</p></div>
+</section>
+
+<section id="events">
+  <h2><span class="num">06 / RECONNECT</span>SSE 是通知通道，不是任务本体</h2>
+  <p>当前实现不是“浏览器接收所有增量并独立重建整个 UI”的方案，而是：<strong>先读权威快照，用 SSE 得知变化，再合并刷新显示投影。</strong></p>
+  <ol>
+    <li><code>useChatThread()</code>先 GET 快照，同时取得 seq，例如 40。</li>
+    <li>连接 <code>/events?afterSeq=40</code>，只需要关注后面的事件。</li>
+    <li>收到新事件后，约 100ms 合并一次快照刷新，避免为每个细碎 token 拉一次完整状态。</li>
+    <li>新快照若已经包含到 seq 46，之后看到 ≤46 的通知可以忽略。</li>
+    <li>SSE 出错时关闭旧订阅，约 1 秒后重新走“快照 → 订阅”。取消的是这个订阅，不是后台 Turn。</li>
+  </ol>
+  <pre><code>id: 41
+data: {"threadId":"T","turnId":"R","seq":41,"type":"delta","text":"现金流"}
+
+id: 42
+data: {"threadId":"T","turnId":"R","seq":42,"type":"turn_status","status":"completed"}
+
+// 每条 SSE 消息由空行分隔；这些只是通知示例。</code></pre>
+  <h3>为什么断线期间不会错过最终状态？</h3>
+  <p>最终状态不仅存在于网络里，也写进数据库。重连先拿快照，就算完成事件已经发生很久，仍能看到 completed。这解决的是“重新看到结果”，不是重新做一遍计算。</p>
+  <h3>为什么慢浏览器可以被主动断开？</h3>
+  <p>如果 <code>res.write()</code> 告诉服务端背压过大，当前实现销毁该 SSE 响应，让客户端以后用快照/游标补齐。执行任务不用等待某个浏览器缓慢接收所有字节。</p>
+  <div class="note"><p><strong>目前的取舍：</strong>复用现有工具卡片投影，减少两端 reducer 不一致的风险；代价是长对话仍可能频繁搬运完整投影。后端消息分页已经存在，但前端还没有虚拟列表和纯增量渲染。可靠性改进不应被夸大成所有性能问题都已解决。</p></div>
+  <div class="lab" id="timeline">
+    <h3>时序推演：选择一个容易混淆的场景</h3>
+    <p class="caption">纯本地教学演示，不连接你的 Agent，不创建任务。逐步观察“执行状态”和“观看状态”何时一起变、何时不变。</p>
+    <div class="controls">
+      <label for="scenario">场景<select id="scenario"><option value="refresh">刷新页面，任务继续</option><option value="stop">显式停止，再继续</option><option value="late">结束瞬间收到补充</option></select></label>
+      <button type="button" id="prev">上一步</button><button type="button" id="next">下一步</button>
+    </div>
+    <div id="timeline-output" aria-live="polite"><p class="timeline-status">1 / 4 · 任务正在运行</p><p>Runtime：running；浏览器：已订阅。执行权在 Runtime。</p></div>
+    <noscript><p>演示需要 JavaScript。静态结论：刷新只断订阅；停止改变 Turn；Continue 创建新 Turn。</p></noscript>
+  </div>
+</section>
+
+<section id="budget">
+  <h2><span class="num">07 / CONTEXT BUDGET</span>为什么不能一直把全部历史发给模型？</h2>
+  <p>持久化解决“历史还在不在”，并不解决“下一次能不能全部塞进模型”。模型窗口有限，工具结果、系统提示和工具 schema 也都占空间。</p>
+  <p>用字母表示当前代码中的预算：</p>
+  <pre><code>C = model.contextWindow
+M = model.maxTokens（缺失或 0 时使用 16384）
+R = min(M, 16384, floor(0.2 × C))         // 输出预留
+S = min(floor(0.8 × C), C - R)           // 自动压缩阈值
+H = C - R                               // 硬预算
+K = min(20000, floor(0.2 × C))           // 近期保留目标
+
+例：C=32000，M=4096
+R=4096，S=25600，H=27904，K=6400</code></pre>
+  <p>字符估算中，非 Latin-1 字符按约 1 token，其他字符约 0.35 token；它是保守启发式，<strong>不是模型 tokenizer</strong>。估算还会和 Pi 的估算、最近有效的 provider usage 比较取较保守的结果。</p>
+  <div class="lab">
+    <h3>预算计算器</h3>
+    <p class="caption">复现 budgets 的数值规则及普通自动路径，不调用模型。假定不存在“相同上下文上次压缩失败”的跳过记录；手动强制压缩也不适用此判断。</p>
+    <div class="controls">
+      <label for="window">上下文窗口 C<input id="window" type="number" min="4096" max="10000000" step="1" value="32000"></label>
+      <label for="max-output">模型 maxTokens<input id="max-output" type="number" min="1" max="10000000" step="1" value="4096"></label>
+      <label for="used">估算已用 tokens<input id="used" type="number" min="0" max="20000000" step="1" value="26000"></label>
+    </div>
+    <div class="metrics"><div class="metric"><span>输出预留 R</span><strong id="reserve">4,096</strong></div><div class="metric"><span>压缩阈值 S</span><strong id="threshold">25,600</strong></div><div class="metric"><span>硬预算 H</span><strong id="hard">27,904</strong></div><div class="metric"><span>近期目标 K</span><strong id="keep">6,400</strong></div></div>
+    <output id="budget-output" aria-live="polite">超过压缩阈值，但尚未达到硬预算：尝试压缩；失败时可保留原上下文。</output>
+    <p id="budget-error" role="alert"></p>
+  </div>
+  <h3>为什么要给输出预留空间？</h3>
+  <p>如果窗口装满输入，就算模型“知道怎么回答”，也没有足够空间输出。提前整理上下文，还能为新的工具结果和用户补充留出缓冲，而不是等服务商报 context length 错误才临时救火。</p>
+  <p class="source">定位：<a href="../server/chat/context.mjs">budgets()、count()、transform()</a>。近期目标还会根据中文/JSON 与 Pi 估算的比值校正，不等于固定保留最后 6400 个字符。</p>
+</section>
+
+<section id="compact">
+  <h2><span class="num">08 / COMPACTION</span>压缩改变工作上下文，不删除档案</h2>
+  <h3>三个层次不能混在一起</h3>
+  <pre><code>持久历史：所有已保存的原始 Session entries 仍在 SQLite
+                ↓ 构建
+工作上下文：最近摘要 + 保留尾部 + 必需 Skill 调用/结果
+                ↓ 转换
+模型请求：系统提示 + 工具 schema + 本次实际发送的消息</code></pre>
+  <p>你可以把它理解为：原始研究材料留在档案柜里，桌面上放一份工作摘要和当前必需材料。桌面收拾过，不等于档案销毁了。</p>
+  <h3>为什么不直接调用 agent.compact()？</h3>
+  <p>当前 Pi 0.83 的 Harness <code>compact()</code>要求空闲状态，而我们要在一轮任务内部、下一次模型请求前自动整理。于是接在 <code>context</code> hook 上，调用公开的准备、摘要生成和 Session 检查点接口。</p>
+  <div class="code-title">实际接入点 · manager.mjs</div>
+  <pre><code>bundle.agent.on("context", e =&gt; context.transform(e.messages));
+bundle.agent.on("tool_result", e =&gt; boundToolResult(store, t.threadId, e));</code></pre>
+  <ol>
+    <li>计算本次上下文占用；未越阈值时直接返回。</li>
+    <li>把上次压缩留下的 retainedTail 展开为仅供准备阶段使用的记录。</li>
+    <li>调用 <code>prepareCompaction()</code>选择旧消息与保留尾部。</li>
+    <li>调用公开 <code>compact()</code>生成摘要，传入当前模型集合、取消信号及专门摘要要求。</li>
+    <li>补回需要保留的 Skill 调用/结果配对，检查压缩后的预算。</li>
+    <li>成功后追加 compaction entry，再从 Session 构建新上下文。</li>
+  </ol>
+  <h3>摘要不能只是“用户在研究某公司”</h3>
+  <p>投研任务中，遗漏一个单位或日期就可能改变结论。因此摘要指令明确要求保留：目标、用户约束、来源 URL、数据日期、单位和口径、纠正、已否定假设、已执行动作、未知结果、待解决问题和下一步。</p>
+  <pre><code>不合格摘要：用户正在研究 A 公司，已经查了很多财务数据。
+
+更有用的摘要：
+目标：分析经营现金流的持续性，不给买卖建议。
+事实：2025 年经营现金流为 100 亿元；来源为已读取年报 URL。
+纠正：用户要求用合并报表口径，不能混用母公司口径。
+已完成：数据文件已保存至 outputs/cashflow.json。
+未知：报告写入曾中断，需核验文件存在与内容，不可直接声称完成。
+下一步：解释现金流与利润差异，保留缺失数据清单。</code></pre>
+  <p class="caption">这是教学示例，不是项目中的真实公司数据。摘要质量仍依赖模型；“指令要求保留”不等于数学上保证永不遗漏。</p>
+  <h3>二次压缩为什么容易丢上下文？</h3>
+  <p>Pi 的检查点把“上一轮未摘要的尾部”放在 <code>retainedTail</code> 中，<code>getBranch()</code>可以在这个检查点停止向前追溯。如果下一次只处理检查点后的消息，上一段尾部既没有进入旧摘要，又可能被新处理跳过。</p>
+  <pre><code>第一次：A B C D E F → [摘要(A B C)] + [尾部 D E F]
+新增：  G H
+第二次真正应该处理：[旧摘要] + D E F + G H
+错误做法：          [旧摘要] + G H      ← D E F 被漏掉</code></pre>
+  <p>当前适配把 retainedTail 临时展开。带 <code>:tail:</code> 的虚拟 ID 只用于准备，不应当被冒充为持久树上的真实节点 ID。检查点保存真实的 retainedTail 内容。升级 Pi 版本时，要重新验证这一兼容层，而不是机械复制。</p>
+  <h3>为什么压缩完仍可能“看起来很大”？</h3>
+  <p>旧 assistant 的 usage 记录描述的是压缩前某次请求。若拿它继续判断新上下文，会立刻再次触发压缩。<code>usageCutoff</code>在估算时排除旧用量基准，但没有删除原始计费用量记录。</p>
+  <h3>压缩失败的处理</h3>
+  <ul>
+    <li>生成失败或取消：不追加半成品检查点。</li>
+    <li>未到硬预算：允许继续使用原上下文；同样估算大小的失败上下文在本 ContextManager 中不会反复压缩。</li>
+    <li>已到硬预算，或手动强制压缩失败：明确结束为失败/中断，保留历史供用户处理。</li>
+    <li>必需 Skill 内容本身太大：可能仍无法压缩到预算内；保留约束并失败，比悄悄丢掉约束更诚实。</li>
+  </ul>
+  <h3>大工具结果：存原文，给预览，按需分页</h3>
+  <p>普通结果的 <code>content</code>超过约 8000 估算 tokens 时，用随机 UUID 保存完整结果，模型先得到最多 6000 个 JavaScript 字符长度单位的预览和 resultId，随后按需调用 <code>read_chat_tool_result</code>。offset/length 实现使用字符串 slice，不是 UTF-8 字节偏移；遇到补充平面字符时也不等于用户感知字符数。</p>
+  <p>结果表的查询同时要求 resultId 和 threadId，所以知道别人的 resultId 也不能通过这个工具读取别的聊天。分页默认 4000，最大 6000；返回 nextOffset 帮助继续读取。工具 details 为兼容原 UI 仍保留，不应宣称所有结果字段都已经完全外置。</p>
+</section>
+
+<section id="steer">
+  <h2><span class="num">09 / STEERING &amp; RACES</span>“能继续打字”只是最表面的一步</h2>
+  <p>真正的问题是：用户刚发出的补充，能否确认它被接收？何时进入上下文？如果碰巧在任务结束那一瞬间到达怎么办？</p>
+  <div class="table-wrap"><table><thead><tr><th>状态</th><th>准确含义</th><th>不代表</th></tr></thead><tbody>
+    <tr><td>pending</td><td>应用已接收并持久化，等待接纳。</td><td>模型已经读到或理解了。</td></tr>
+    <tr><td>consumed</td><td>对应用户消息已进入 Pi Session，消费状态一起提交。</td><td>模型一定服从、答案一定包含要求。</td></tr>
+    <tr><td>cancelled</td><td>显式停止时未消费的当前轮输入被取消。</td><td>已经送到模型的要求能被撤回。</td></tr>
+  </tbody></table></div>
+  <h3>正常路径</h3>
+  <pre><code>用户发送补充
+  → 检查 expectedTurnId 与活动 Turn 是否一致
+  → SQLite 写 pending
+  → 准备阶段先入 state.pending，运行阶段投递 agent.steer(text)
+  → Pi 在可处理边界取走输入
+  → SessionStorage 追加用户消息 + 原子更新 consumed
+  → UI 收到状态变化</code></pre>
+  <p><code>steer()</code>不是“立刻打断当前工具并插入文字”。应用把输入排入 Pi 的队列，具体接纳发生在运行循环的边界；工具已经开始后的取消语义是另一件事。</p>
+  <h3>竞态一：补充内容的类型匹配错了</h3>
+  <p>Pi 的 user content 可以是结构化数组，不一定是字符串。若直接做 <code>pending.text === entry.message.content</code>，已入 Session 的补充可能永远匹配不上，最后又被当成“晚到未消费”重复处理。</p>
+  <div class="code-title">实际逻辑节选 · 先规范化文本，再找到待消费项</div>
+  <pre><code>const content = typeof entry.message.content === "string"
+  ? entry.message.content
+  : entry.message.content
+      .filter(c =&gt; c.type === "text")
+      .map(c =&gt; c.text).join("");
+
+return state.delivered.find(i =&gt;
+  i.status === "pending" &amp;&amp; i.text === content
+);</code></pre>
+  <p>找到后，存储层给 entry 记录 <code>chatInputId</code>并执行前面讲过的事务。注意当前仍以文本和队列顺序做匹配，不是 Pi 原生携带应用 inputId；同文多条、重复恢复等复杂情况仍值得继续加测试。</p>
+  <h3>竞态二：刚返回“已接收”，Pi 却已经 idle</h3>
+  <pre><code>Pi：最后一次检查队列 → agent_end / settled → 已空闲
+用户：                         发来补充 → 应用接受
+结果：agent.steer() 可能因为 idle 而拒绝
+
+Manager 的补偿：
+prompt 返回后再看 delivered 中仍 pending 的输入
+  → 先把第一条作为 user 消息追加
+  → 在同一个应用 Turn 里再次 prompt
+  → 继续处理剩余补充</code></pre>
+  <p>这就是为什么“模型返回最终消息”不一定等于“应用 Turn 马上 completed”。应用还要检查自己已经接受的输入有没有遗留。测试中专门在 <code>settled</code>事件触发补充，而不是靠随意 sleep 去碰运气。</p>
+  <h3>竞态三：Start 重试变成了 Steer</h3>
+  <p>第一次 POST 已被服务端接受，但浏览器没拿到确认；此时 SSE 先告诉浏览器“正在运行”。如果重试时重新按 busy 状态选择端点，就会把原问题再次作为补充发送。</p>
+  <p><code>prepareChatSubmission()</code>冻结了<strong>端点 + body + 请求 ID</strong>。所以重试 Start 还是 Start。收到确认后先清空已提交草稿，再更新显示；后续快照失败不再伪装成提交失败。真正的 400/404/409 拒绝则保留草稿，并清理不再适用的重试记录。</p>
+  <div class="note"><p><strong>工程方法：</strong>发现一个 race，不要只加一个 if。先画出两条交错的时间线，再定义“不允许发生的结果”，最后写能够确定性制造这个交错的测试。</p></div>
+</section>
+
+<section id="recover">
+  <h2><span class="num">10 / INTERRUPTION &amp; RECOVERY</span>刷新、停止、重启、继续，是四件事</h2>
+  <div class="table-wrap"><table><thead><tr><th>动作</th><th>谁改变</th><th>任务结果</th></tr></thead><tbody>
+    <tr><td>刷新 / 订阅断开</td><td>浏览器连接</td><td>Runtime 继续执行；重新读取状态。</td></tr>
+    <tr><td>Interrupt</td><td>当前 Turn 的 AbortController</td><td>向模型/工具传递取消；等待收尾后 interrupted。</td></tr>
+    <tr><td>Runtime 重启</td><td>执行进程和内存状态</td><td>初始化 recover 把遗留 queued/running 标成 interrupted；不自动跑。</td></tr>
+    <tr><td>Continue</td><td>新建应用 Turn</td><td>previousTurnId 指向旧轮；以保存的 Session 恢复工作。</td></tr>
+  </tbody></table></div>
+  <h3>停止不是单纯把按钮改成灰色</h3>
+  <pre><code>页面“停止”
+  → POST /turns/:turnId/interrupt
+  → state.controller.abort()
+  → bundle.run 内的 abort 监听
+  → agent.abort()
+  → 下游模型与工具感知 signal
+  → await state.done
+  → 返回最终 Turn 状态</code></pre>
+  <p>既有 Bash、文档、MCP、子 Agent 的取消链继续复用。对模型解析和主 Agent MCP 发现增加了可传入的 signal。需要等待的清理是否及时，仍取决于每个下游实现，不能承诺所有外部动作“瞬间回滚”。</p>
+  <h3>为什么恢复时不自动重放“没完成的调用”？</h3>
+  <p>假设工具已经成功写文件，但进程在保存结果前退出。数据库里没有 toolResult，实际文件却可能已经存在。没有结果只能证明“我们没记录到结果”，不能证明“动作没有发生”。</p>
+  <pre><code>工具调用已记录 → 文件确实写入 → 进程退出 → toolResult 没落盘
+                                      ↑
+                      这是结果未知窗口，不是确定失败</code></pre>
+  <p><code>repair(session)</code>对缺结果调用补上明确的错误消息：“结果未知，先核验实际状态，禁止直接重放”。新的推理从这份诚实上下文开始。它并没有一个通用的外部事务系统，也没有给文件写入自动加上 exactly-once 语义。</p>
+  <h3>一个实践细节：为什么会多出一个“关闭旧连接”的修复？</h3>
+  <p>开发热重载要求旧进程退出后新进程再启动。即使业务已经关闭，遗留 SSE/HTTP 连接也可能让退出一直等待。关闭流程在应用和 MCP 收尾后调用 <code>server.closeAllConnections()</code>，避免旧代理连接卡住开发服务。</p>
+  <p>顺序很重要：先结束应用任务，再关闭残留连接。解绑项目时也要先中断该项目的聊天任务，再移除注册信息，否则下游取消请求可能因项目已经找不到而失败。</p>
+</section>
+
+<section id="boundaries">
+  <h2><span class="num">11 / BOUNDARIES</span>能力没有被换掉，执行边界被明确了</h2>
+  <ul>
+    <li><strong>原有工具：</strong>文件、数据库、文档、Web 搜索、Bash、MCP 和委派工具的主要业务逻辑继续复用。</li>
+    <li><strong>原有权限：</strong>Bash 的自动/逐条确认、项目沙箱/完整权限仍是原来的产品选择；运行中的配置不会随另一个页面瞬时改变。</li>
+    <li><strong>Node Skill 加载：</strong>新的 <code>skills.ts</code>用文件系统读取 bundled Skill 和本地覆盖，不依赖 Web 打包器的 <code>?raw</code> 导入。</li>
+    <li><strong>凭据边界：</strong><code>config.mjs</code>重建允许的嵌套结构，阻止请求里的 apiKey、headers 等任意字段直接进入配置快照。用户自己写进问题或提示词的秘密不因此自动消失。</li>
+    <li><strong>旧历史：</strong>没有完整工具结果就如实标为 legacy，委派卡片只导入成历史事实，不伪装成已核验执行轨迹。</li>
+    <li><strong>旧写入：</strong>迁移后拒绝浏览器整包覆盖消息；仍支持按约定更新会话控制元数据。</li>
+    <li><strong>旧执行入口：</strong>返回 410 提示刷新，防止两个入口各自执行一次。</li>
+  </ul>
+  <div class="note warning"><p><strong>Prompt 不等于权限系统。</strong>“不要访问其他文件”是模型指令；真正阻止越界访问还要靠现有工具路径校验、执行沙箱、服务端能力筛选等机制。新增 Harness 不是一个新的通用安全沙箱。</p></div>
+  <h3>接口速查</h3>
+  <p>以下路径相对于 <code>/api/local/chat/threads/:id</code>，这里只展示契约，不提供一键执行按钮。</p>
+  <div class="table-wrap"><table><thead><tr><th>方法 / 路径</th><th>关键参数</th><th>语义</th></tr></thead><tbody>
+    <tr><td>GET /</td><td>可选 limit、beforeMessageId</td><td>快照、当前 Turn、seq、前页游标。</td></tr>
+    <tr><td>GET /events</td><td>afterSeq</td><td>SSE 回放与订阅；不是执行入口。</td></tr>
+    <tr><td>POST /turns</td><td>clientRequestId、input、config</td><td>开始新的应用 Turn。</td></tr>
+    <tr><td>POST /turns/:turnId/steer</td><td>clientInputId、expectedTurnId、text</td><td>向指定运行轮次补充输入。</td></tr>
+    <tr><td>POST /turns/:turnId/interrupt</td><td>空对象即可</td><td>请求取消并等待该轮收尾。</td></tr>
+    <tr><td>POST /turns/:turnId/continue</td><td>clientRequestId</td><td>从指定 failed/interrupted 轮次创建关联新轮。</td></tr>
+    <tr><td>POST /compact</td><td>clientRequestId</td><td>空闲会话的手动压缩维护入口；没有新增可见操作按钮。</td></tr>
+  </tbody></table></div>
+  <p>Runtime token 只属于本机服务边界，不要把它贴进 URL、HTML 或日志。当前应用是本机单 Runtime 模型，不是面向不可信多租户的完整鉴权系统。</p>
+</section>
+
+<section id="tests">
+  <h2><span class="num">12 / EVIDENCE</span>如何知道不是“看起来能用”？</h2>
+  <p>主要新增测试位于 <code>tests/chat-harness.test.mjs</code>。它把真实 Pi Harness 接到确定性假 provider 上：真实跑循环与存储，替换不稳定、收费和依赖外网的模型响应。</p>
+  <div class="table-wrap"><table><thead><tr><th>测试手段</th><th>能证明的范围</th><th>不能扩大到</th></tr></thead><tbody>
+    <tr><td>纯函数测试</td><td>请求重试路径和 payload 冻结规则。</td><td>所有浏览器网络环境都正常。</td></tr>
+    <tr><td>真实 Harness + 假 provider</td><td>正常 steer、settled 竞态、消息结构、工具结果复用和收尾。</td><td>真实模型一定遵循每条补充要求。</td></tr>
+    <tr><td>真实 SQLite + 冷加载</td><td>原始消息与检查点在关闭后可读回。</td><td>坏盘、磁盘满和所有硬件故障都已覆盖。</td></tr>
+    <tr><td>本机 HTTP / SSE</td><td>断开订阅后仍执行、回放、鉴权、旧整包写入被拒绝。</td><td>多副本部署的一致性。</td></tr>
+    <tr><td>隔离子进程 SIGKILL</td><td>WAL 中的记录和 pending 输入可恢复；需显式 Continue。</td><td>真实第三方副作用正好在每个阶段崩溃的全覆盖。</td></tr>
+    <tr><td>公开 Pi compact + 假摘要模型</td><td>实际摘要调用路径、连续检查点、失败/取消不提交半成品。</td><td>每个真实长摘要的语义正确性。</td></tr>
+    <tr><td>上一轮真实页面验收</td><td>DeepSeek V4 Pro 下刷新、补充、停止、继续确实完成。</td><td>长上下文真实压力测试和所有工具集成场景。</td></tr>
+  </tbody></table></div>
+  <h3>最值得学习的测试写法：不要拿 sleep 当正确性</h3>
+  <pre><code>// 教学简化：用门闩精确控制先后顺序
+const started = deferred();
+const release = deferred();
+
+fakeProvider = async () =&gt; {
+  started.resolve();
+  await release.promise; // 让测试决定模型何时返回
+  return assistantMessage;
+};
+
+startTurn();
+await started.promise;
+sendSteer();             // 确保发生在模型运行期间
+release.resolve();
+await manager.wait(threadId);
+assert.equal(savedInput.status, "consumed");</code></pre>
+  <p>另一个测试直接在 Pi 的 <code>settled</code>事件里发送补充，稳定制造“结束边界”竞态。这比“等 200 毫秒再点一下”更可重复。</p>
+  <h3>本次手册的证据口径</h3>
+  <ul>
+    <li><strong>本轮重新确认：</strong>读取当前工作树对应实现，并重新运行 12 项聊天 Harness 测试，全部通过。</li>
+    <li><strong>上一轮实施记录：</strong>全量 265 项中 264 通过、1 项 AKTools 端口冲突用例因现有 8080 服务而跳过；typecheck、lint、build 和 diff 检查通过。</li>
+    <li><strong>上一轮真实页面：</strong>验收聊天中补充状态变为 consumed，输出“补充已收到”；停止轮为 interrupted，关联恢复轮最终 completed。</li>
+    <li><strong>没有声称已完成：</strong>真实模型长上下文压力测试、所有副作用故障窗口的端到端 exactly-once 验证。</li>
+  </ul>
+  <p class="source">实施记录：<a href="chat-harness-p0.md">chat-harness-p0.md</a>。这是特定工作树与环境的证据，不是未来每个版本的永久保证。</p>
+</section>
+
+<section id="practice">
+  <h2><span class="num">13 / HANDS-ON</span>六个练习：从会读到会验证</h2>
+  <div class="note warning"><p><strong>操作边界：</strong>优先使用现成测试的临时目录和假 provider。不要向真实投研会话写测试数据，不要直接修改 chat.sqlite，不要杀掉你正在使用的开发服务。下面的数据库脚本只读，测试命令不需要真实模型 Key。</p></div>
+  <h3>练习一 · 画一条请求链路（10 分钟）</h3>
+  <p>从 <code>sendMessage()</code>出发，找出“操作冻结”“数据库预留”“实际运行”“结果展示”各自在哪个函数。按顺序写出文件和函数名。</p>
+  <details><summary>验收标准 / 参考答案</summary><div><p><code>app/page.tsx:sendMessage → chat-submission.ts:prepareChatSubmission → /api/local 代理 → chat/http.mjs → manager.start → store.reserve → manager.execute → prepareChatAgent → bundle.run</code>；显示走 <code>send → store.emit → notify → SSE → useChatThread → snapshot</code>。能说明 202 在模型完成前返回，才算理解。</p></div></details>
+  <h3>练习二 · 跑一个确定性补充测试（15 分钟）</h3>
+  <pre><code>node --test --test-name-pattern='settled boundary' tests/chat-harness.test.mjs
+node --test --test-name-pattern='ambiguous browser' tests/chat-harness.test.mjs</code></pre>
+  <p>先看测试如何注入事件，再解释：如果删除晚到输入的兜底循环，哪个断言会失败？无需真的修改生产文件，先写出预测。</p>
+  <details><summary>验收标准 / 参考答案</summary><div><p>应能指出补充最终 consumed、同文用户消息只出现一次、模型调用次数为两次等断言的作用。只看到“测试绿了”而不知道它保护什么，还不算掌握。</p></div></details>
+  <h3>练习三 · 只读检查状态，不打印聊天原文（15 分钟）</h3>
+  <p>在项目根目录执行。只汇总状态，不读取 API Key，不输出用户消息正文；数据库不存在时脚本会报错而不是创建新库。</p>
+  <pre><code>node --input-type=module &lt;&lt;'JS'
+import { DatabaseSync } from 'node:sqlite';
+const db = new DatabaseSync('.local-data/chat.sqlite', { readOnly: true });
+try {
+  console.table(db.prepare(`
+    SELECT json_extract(body, '$.status') AS status, count(*) AS count
+    FROM chat_turns GROUP BY status
+  `).all());
+  console.table(db.prepare(`
+    SELECT json_extract(body, '$.status') AS status, count(*) AS count
+    FROM chat_inputs GROUP BY status
+  `).all());
+} finally { db.close(); }
+JS</code></pre>
+  <details><summary>验收标准 / 参考答案</summary><div><p>应能解释为什么 Turn 的 interrupted 与 input 的 pending 可以同时存在：进程异常中断时，未消费补充保留，等待用户继续。也要知道 consumed 不是“模型一定遵守了”。</p></div></details>
+  <h3>练习四 · 手算压缩预算（10 分钟）</h3>
+  <p>令 C=32000、maxTokens=4096，分别判断已用 25000、26000、28000 时的普通自动路径，再用上面的计算器核对。</p>
+  <details><summary>验收标准 / 参考答案</summary><div><p>R=4096、S=25600、H=27904、K=6400。25000 不触发；26000 尝试，失败尚可保留原上下文；28000 尝试，失败必须停止。不要说“超过 S 就一定失败”，成功压缩可以降低占用。</p></div></details>
+  <h3>练习五 · 用隔离子进程验证恢复（15 分钟）</h3>
+  <pre><code>node --test --test-name-pattern='SIGKILL' tests/chat-harness.test.mjs</code></pre>
+  <p>读清楚这个测试创建的是它自己的临时数据库和子进程，再看它如何等待写入完成、杀掉子进程、重新构造 Manager。</p>
+  <details><summary>验收标准 / 参考答案</summary><div><p>恢复后模型请求计数先是 0，说明没自动执行；旧轮为 interrupted，补充仍 pending；显式 resume 后输入只进入一次上下文。这个测试不能证明任意远端工具都 exactly-once。</p></div></details>
+  <h3>练习六 · 自己写一个失败用例规格（20 分钟）</h3>
+  <p>选择“压缩摘要生成到一半取消”或“工具成功、结果落盘前退出”。先不写代码，写五行：前置状态、故障注入点、用户应看到什么、数据库应保留什么、绝不能出现什么。</p>
+  <details><summary>验收标准 / 参考答案</summary><div><p>压缩取消：旧 leaf 不变，无半成品检查点，原文仍在。工具结果未知：不能生成虚假的成功结果，不能由恢复引擎直接重放旧工具调用，应保留明确的不确定性。下一步要验证真实目标，而不是仅靠重试。</p></div></details>
+  <h3>完整检查命令</h3>
+  <pre><code>node --test tests/chat-harness.test.mjs
+npm run typecheck
+npm run lint
+npm test
+npm run build
+git diff --check</code></pre>
+  <p class="caption">理解每个检查的职责：类型检查找类型问题；lint 找规则问题；测试验证具体行为；build 验证打包；diff 检查不等于逻辑测试。它们互相补充，不互相替代。</p>
+</section>
+
+<section id="limits">
+  <h2><span class="num">14 / LIMITS</span>这是一轮 P0 改造，不是完美终点</h2>
+  <p>学习最重要的一步，是能同时说清“这次解决了什么”和“证据还没有覆盖什么”。以下是从当前实现可以看到的边界：</p>
+  <ol>
+    <li><strong>单 Runtime 假设。</strong>同 Thread 串行依赖本机 Manager 与同步预留流程；没有跨进程租约、分布式队列或多副本 owner 选举。不要直接拿来水平扩容。</li>
+    <li><strong>整份显示投影仍会读写。</strong>事件通知可靠性提高了，但高频快照和大 JSON 的成本尚在。后续可测量后再考虑客户端增量 reducer、虚拟列表和归档。</li>
+    <li><strong>模型可控，不代表模型可靠。</strong>steer 被 consumed 只能证明已入 Session；摘要要求保留来源，也不能替代摘要质量评测。</li>
+    <li><strong>未知结果仍需核验。</strong>恢复机制不直接重放旧动作，但模型仍可能决定调用工具。外部系统要严格幂等，需要工具层幂等键、操作账本或业务级核验。</li>
+    <li><strong>流式最后小段可能未落盘。</strong>100ms / 8192 字符批量缓冲是性能与粒度取舍；突然断电并不是完整逐 token 日志测试。</li>
+    <li><strong>结果表没有自动清理策略。</strong>大结果原文会增长；保留时长、大小配额、压缩率与清理机制还需后续设计。</li>
+    <li><strong>文本匹配与继承输入值得加测。</strong>目前 pending 恢复投递仍保留旧 turnId；显式停止的清理查询按当前 Turn 取 pending。若恢复后再次在消费前停止，旧 Turn 上继承的 pending 是需要补充验证/完善的边界，不能无条件宣称所有队列都已取消。</li>
+    <li><strong>恢复配置的产品取舍。</strong><code>resume()</code>复用旧 Turn 的 config。即使用户此时选了另一个模型，“继续”也不是自动用新选择；若要改变模型恢复，需要明确设计接口，而不能只改前端下拉框。</li>
+    <li><strong>超大 Skill 可能阻断。</strong>目前倾向完整保留已加载 Skill 配对。复杂会话中保留量可能过大，需要未来决定哪些资源仍有效，而不是无限积累。</li>
+  </ol>
+  <div class="note"><p>这些是学习时应识别的后续工程题，不是本 HTML 悄悄实现的新功能。本次文档工作不修改聊天运行代码，也不改 Workflow。</p></div>
+</section>
+
+<section id="review">
+  <h2><span class="num">15 / SELF-CHECK</span>不用看代码，回答这八个问题</h2>
+  <details><summary>1. SSE 连接断了，为什么任务还能运行？</summary><div><p>执行被 Runtime 的 Manager 拥有；SSE 只是一个可销毁的订阅，关闭它不调用任务的 AbortController。</p></div></details>
+  <details><summary>2. Map 里有一个 Promise，为什么还需要 SQLite？</summary><div><p>Map 与 Promise 只在进程存活时有意义。重启后需要输入、状态、原始 Session、结果和 pending 记录来知道发生过什么；数据库不能恢复一个旧 Promise，但能为显式新执行提供依据。</p></div></details>
+  <details><summary>3. “toolCall 已记录但 toolResult 缺失”意味着工具失败吗？</summary><div><p>不意味着。它可能没执行，也可能执行成功却来不及记录。必须表达结果未知并核验，不能伪造失败或成功来简单重试。</p></div></details>
+  <details><summary>4. 为什么不能只保存最终回答？</summary><div><p>后续推理可能需要原始参数、结果、单位、来源和 toolCallId 配对。最终回答是提炼后的展示内容，不能无损重建这些信息。</p></div></details>
+  <details><summary>5. consumed 为什么要和 Session entry 放进同一个事务？</summary><div><p>避免一边成功另一边失败，造成“已经投递却仍 pending”或“标了 consumed 却没有消息”。</p></div></details>
+  <details><summary>6. 为什么压缩后不能继续用旧 usage 直接判断大小？</summary><div><p>旧 usage 测的是压缩前那次请求。上下文已经改变，继续套用可能立即再次触发压缩。它应留作历史计量，但不应成为新上下文的旧高水位。</p></div></details>
+  <details><summary>7. 为什么 Continue 不是把旧状态从 interrupted 改回 running？</summary><div><p>新执行拥有独立 ID、开始时间、Trace 和生命周期，通过 previousTurnId 关联旧轮。这样能保留中断事实，而不是抹掉历史。</p></div></details>
+  <details><summary>8. 这次为什么没有重写一套 Agent Loop？</summary><div><p>Pi 已提供工具循环、会话与事件接口。本项目需要补的是产品级状态、持久化、交互和恢复边界。复用成熟循环，才能把工程精力放在真实缺口上。</p></div></details>
+  <h3>最后，用一段话复述这次改动</h3>
+  <div class="note"><p>“原来的聊天执行依赖 Web 请求，并从显示历史重建模型上下文。这次把执行移到本机 Manager，使用 Pi AgentHarness 驱动原有工具；SQLite 保存应用 Turn、原始 Session、补充输入和事件。浏览器通过快照与 SSE 查看进度，刷新不再等于取消。运行中补充通过持久队列进入安全处理边界；上下文接近预算时用检查点压缩。中断后不盲目重跑，用户 Continue 才从保存的事实开始新轮次。”</p></div>
+  <ul class="checklist">
+    <li>我能指出一轮任务的真正拥有者。</li>
+    <li>我能区分显示投影、Session、Trace。</li>
+    <li>我能画出 Start 重试误变 Steer 的竞态。</li>
+    <li>我能解释一个 SQLite 事务保护的两个事实。</li>
+    <li>我能用证据说明恢复成功，而不只看最终文字。</li>
+    <li>我能说出当前方案至少三个边界。</li>
+  </ul>
+  <p>能独立完成练习并解释断言，才是掌握的证据；这份手册本身不替你完成这一部分。</p>
+</section>
+<footer>
+  <p><strong>资料与范围：</strong>依据当前工作树的 <code>server/chat/</code>、客户端接入、既有运行代码和 <code>tests/chat-harness.test.mjs</code>编写。运行机制解释针对安装的 Pi 0.83.0；不是对其他商业 Agent 内部实现的断言。</p>
+  <p>本页是独立学习文件，所有正文离线可读。两处演示仅使用本地数值/预设时序，不调用模型、不发送网络请求、不访问本机数据。打印时建议先展开想保留的自测答案；原 HTML 永远保留完整内容。</p>
+  <p><a href="#main">回到开头</a> · <a href="chat-harness-p0.md">实施与验收记录</a></p>
+</footer>
+</main>
+</div>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const scenarios = {
+    refresh: [
+      ['任务正在运行', 'Runtime：running；浏览器：已订阅。执行权在 Runtime。'],
+      ['用户刷新，旧订阅关闭', 'Runtime：仍然 running；旧浏览器连接：关闭。没有调用 Interrupt，也没有改变任务状态。'],
+      ['后台完成并保存结果', 'Runtime：completed；最终状态与显示事件已写入 SQLite。此刻即便无人观看，结果仍可查询。'],
+      ['新页面读取快照并订阅', '新页面先取得最新快照和 seq，再订阅后续变化。看到的是已完成任务，不是重新执行了一次。']
+    ],
+    stop: [
+      ['原 Turn 正在执行', 'Turn A：running。模型或工具可能仍在运行。'],
+      ['用户点击停止', 'Interrupt 触发 AbortController，向下游传递取消，并等待收尾。取消不代表已发生的副作用自动回滚。'],
+      ['停止完成', 'Turn A：interrupted；已保存的消息保留。当前轮未消费的补充按停止规则处理，页面显示“继续”。'],
+      ['点击继续', '创建 Turn B，previousTurnId=A；复用保存的 Session 和旧配置。结果未知的动作先核验，不直接重放旧工具调用。'],
+      ['新轮次完成', 'Turn B：completed；Turn A 仍保留 interrupted 的历史事实。继续不是抹掉旧轮的中断状态。']
+    ],
+    late: [
+      ['Pi 即将结束', 'Pi 已做最后一轮队列检查；应用 Turn 还没有最终标记 completed。'],
+      ['应用接受晚到补充', '输入先写为 pending，但 steer 可能发现 Pi 已 idle。HTTP 接受不能等于悄悄丢掉。'],
+      ['Manager 执行兜底检查', 'prompt 返回后发现仍有已接受但未消费的输入，追加用户消息，并在同一应用 Turn 中继续推理。'],
+      ['写入消息并消费', 'Session entry 与 consumed 状态一起提交。新的推理继续处理这条补充。'],
+      ['没有遗留输入后完成', '应用 Turn 才标记 completed。一次应用 Turn 可以包含多次 Pi prompt。']
+    ]
+  };
+  let step = 0;
+  function renderTimeline() {
+    const frames = scenarios[$('scenario').value];
+    const [title, body] = frames[step];
+    const heading = document.createElement('p'); heading.className = 'timeline-status';
+    heading.textContent = `${step + 1} / ${frames.length} · ${title}`;
+    const text = document.createElement('p'); text.textContent = body;
+    $('timeline-output').replaceChildren(heading, text);
+    $('prev').disabled = step === 0; $('next').disabled = step === frames.length - 1;
+  }
+  function calculateBudget(c, max, used) {
+    if (!Number.isSafeInteger(c) || c < 4096 || c > 10000000 || !Number.isSafeInteger(max) || max < 1 || max > 10000000 || !Number.isSafeInteger(used) || used < 0 || used > 20000000) return null;
+    const reserve = Math.min(max, 16384, Math.floor(c * .2));
+    const threshold = Math.min(Math.floor(c * .8), c - reserve);
+    const hard = c - reserve, keep = Math.min(20000, Math.floor(c * .2));
+    const message = used <= threshold ? '未超过自动压缩阈值：当前普通自动路径直接使用上下文。' : used < hard ? '超过压缩阈值，但尚未达到硬预算：尝试压缩；失败时可保留原上下文。' : '已达到或超过硬预算：尝试压缩；若失败，必须停止，不能继续发送超预算上下文。';
+    return { reserve, threshold, hard, keep, message };
+  }
+  function renderBudget() {
+    const values = ['window', 'max-output', 'used'].map(id => $(id).value.trim());
+    const b = values.every(Boolean) ? calculateBudget(...values.map(Number)) : null;
+    $('budget-error').textContent = b ? '' : '请输入有效整数：窗口至少 4096，maxTokens 至少 1，已用量不能为负；请勿留空。';
+    for (const key of ['reserve', 'threshold', 'hard', 'keep']) $(key).textContent = b ? b[key].toLocaleString('zh-CN') : '—';
+    $('budget-output').textContent = b ? b.message : '请修正输入后再比较预算。';
+  }
+  $('scenario').addEventListener('change', () => { step = 0; renderTimeline(); });
+  $('prev').addEventListener('click', () => { if (step > 0) { step--; renderTimeline(); } });
+  $('next').addEventListener('click', () => { if (step < scenarios[$('scenario').value].length - 1) { step++; renderTimeline(); } });
+  for (const id of ['window', 'max-output', 'used']) $(id).addEventListener('input', renderBudget);
+  $('print').addEventListener('click', () => window.print());
+  renderTimeline(); renderBudget();
+})();
+</script>
+</body>
+</html>

@@ -5,6 +5,7 @@ import test from "node:test";
 const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const toolRunSource = await readFile(new URL("../components/tool-run-stack.tsx", import.meta.url), "utf8");
 const styleSource = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+const storeSource = await readFile(new URL("../server/chat/store.mjs", import.meta.url), "utf8");
 
 test("new and legacy conversations default to automatic project-sandbox Bash", () => {
   assert.match(pageSource, /bashApprovalMode: "auto"/);
@@ -18,8 +19,8 @@ test("composer exposes per-conversation Bash controls and full-permission confir
   assert.match(pageSource, /每条确认/);
   assert.match(pageSource, /项目沙箱/);
   assert.match(pageSource, /开启完整本机权限/);
-  assert.match(pageSource, /bashApprovalMode: activeConversation\.bashApprovalMode/);
-  assert.match(pageSource, /bashPermissionMode: activeConversation\.bashPermissionMode/);
+  assert.match(pageSource, /bashApprovalMode: conversation\.bashApprovalMode/);
+  assert.match(pageSource, /bashPermissionMode: conversation\.bashPermissionMode/);
 });
 
 test("model, Bash execution, and Agent permission controls share one composer row", () => {
@@ -43,7 +44,7 @@ test("selected model reference is persisted and sent with the chat request", () 
 });
 
 test("tool approval events are rendered with allow and reject actions", () => {
-  assert.match(pageSource, /tool_approval_required/);
+  assert.match(storeSource, /tool_approval_required/);
   assert.match(toolRunSource, /onDecision\(messageId, run, "approve"\)/);
   assert.match(toolRunSource, /onDecision\(messageId, run, "reject"\)/);
   assert.match(pageSource, /void decideBashCommand\(messageId, run, decision\)/);

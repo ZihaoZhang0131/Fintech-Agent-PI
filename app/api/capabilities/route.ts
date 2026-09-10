@@ -4,6 +4,7 @@ import workspaceFilesSource from "../../../server/agent/tools/workspace-files.ts
 import localDatabaseSource from "../../../server/agent/tools/local-database.ts?raw";
 import bashSource from "../../../server/agent/tools/bash.ts?raw";
 import documentSource from "../../../server/agent/tools/generate-document.ts?raw";
+import kamiArtifactSource from "../../../server/agent/tools/render-kami-artifact.ts?raw";
 import { AGENT_TOOL_NAMES } from "@/server/agent/capability-policy";
 import { publicAgentRoles } from "@/server/agent/agent-registry";
 import { loadEffectiveSkillRegistry } from "@/server/agent/skills/loader";
@@ -69,6 +70,12 @@ const toolMetadata = {
     description: "将用户或 Skill 指导的 Markdown 安全生成 DOCX 或 PDF，并保存到当前项目 outputs 目录。",
     sourcePath: "server/agent/tools/generate-document.ts",
     code: documentSource,
+  },
+  render_kami_artifact: {
+    label: "生成 Kami 视觉产物",
+    description: "将已定稿的结构化内容和 Kami HTML 安全生成为 HTML/PDF，并执行内容与版式检查。",
+    sourcePath: "server/agent/tools/render-kami-artifact.ts",
+    code: kamiArtifactSource,
   },
   list_local_database_tables: {
     label: "查看本地数据库表",

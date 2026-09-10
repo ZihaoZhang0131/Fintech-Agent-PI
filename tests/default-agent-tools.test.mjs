@@ -16,6 +16,7 @@ test('default roles assemble actual tools with script execution limited to data 
     assert.equal(actual.includes('bash'), profile.label === '数据Agent');
     assert.equal(actual.includes('mutate_local_database'), profile.label === '数据Agent');
     assert.equal(actual.includes('generate_document'), profile.label === '写作Agent');
+    assert.equal(actual.includes('render_kami_artifact'), profile.label === '写作Agent');
     assert.equal(actual.includes('web_search'), profile.label === '研报Agent');
   }
   assert.deepEqual(resolveProjectAgentConfig({}).customSubAgents, []);

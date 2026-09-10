@@ -3,6 +3,7 @@ import { validateDocumentCharts } from "./document-charts.mjs";
 import { createTraceQuery } from "./trace-query.mjs";
 import { createWorkflowHttp } from "./workflow/http.mjs";
 import { createChatStore, MAX_CONVERSATION_BYTES } from "./chat-store.mjs";
+import { createChatHttp } from "./chat/http.mjs";
 import { createServer } from "node:http";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -17,6 +18,7 @@ import { createLocalDatabase } from "./local-database.mjs";
 import { createTraceStore } from "./trace-store.mjs";
 import { createSkillStore } from "./skill-store.mjs";
 import { resolvePythonInterpreter } from "./skill-store.mjs";
+import { renderKamiArtifact, verifyKamiHtmlManifest } from "./kami-artifact.mjs";
 import {
   deleteModelProvider,
   listPublicModelProviders,
@@ -29,6 +31,7 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_PORT = 4318;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_SKILL_BODY_BYTES = 12 * 1024 * 1024;
+const MAX_KAMI_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_TEXT_PREVIEW_BYTES = 1 * 1024 * 1024;
 const MAX_ASSET_PREVIEW_BYTES = 20 * 1024 * 1024;
 const MAX_FILE_ENTRIES = 800;
@@ -340,10 +343,13 @@ export async function readWorkspaceFile(root, relativePath) {
   }
   const buffer = await readFile(file.canonicalTarget);
   const preview = previewKind(file.extension, buffer);
+  const kami = preview.kind === "text" && file.extension === ".html"
+    ? await verifyKamiHtmlManifest(root, relativePath, buffer)
+    : null;
   return {
     ...file,
     canonicalTarget: undefined,
-    ...preview,
+    ...(kami ? { kind: "kami-html", mimeType: "text/html; charset=utf-8", kami } : preview),
     content: preview.kind === "text" ? buffer.toString("utf8") : undefined,
   };
 }
@@ -985,6 +991,7 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
   const localDatabase = createLocalDatabase(dataDirectory);
   const traceStore = createTraceStore(dataDirectory);
   const chatStore = createChatStore(dataDirectory);
+  const chat = createChatHttp({ dataDirectory, traceStore, findWorkspace: id => findWorkspace(dataDirectory, id), readJsonBody, sendJson });
   const skillStore = createSkillStore(dataDirectory);
   const workflow = createWorkflowHttp({dataDirectory, skillStore, traceStore, localDatabase, commandManager, findWorkspace: id => findWorkspace(dataDirectory, id), readJsonBody, sendJson});
   const traceQuery = createTraceQuery(traceStore, workflow.store, (id) => findWorkspace(dataDirectory, id)?.path);
@@ -995,6 +1002,8 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
       }
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+
+      if (await chat.handle(request, response, url, segments)) return;
 
       if (await workflow.handle(request, response, url, segments)) return;
 
@@ -1026,6 +1035,13 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
       if (segments[0] === "chat" && segments[1] === "conversations" && segments[2] && segments.length === 3) {
         if (request.method === "PUT") {
           const payload = await readJsonBody(request, MAX_CONVERSATION_BYTES);
+          if (chat.manager.store.thread(segments[2])) {
+            if (payload.metadataOnly !== true) return sendJson(response, 409, { message: "会话已升级，请刷新页面。" });
+            const current = chat.manager.store.conversation(segments[2]);
+            for (const key of ["bashApprovalMode", "bashPermissionMode"]) if (payload[key] !== undefined) current[key] = payload[key];
+            current.updatedAt = Date.now();
+            return sendJson(response, 200, { conversation: chatStore.put(current, segments[2]) });
+          }
           await findWorkspace(dataDirectory, payload.projectId);
           return sendJson(
             response,
@@ -1034,6 +1050,7 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
           );
         }
         if (request.method === "DELETE") {
+          await chat.manager.remove(segments[2]);
           return sendJson(response, 200, chatStore.remove(segments[2]));
         }
       }
@@ -1229,6 +1246,7 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
         const workspace = await findWorkspace(dataDirectory, segments[1]);
         if (request.method === "DELETE" && segments.length === 2) {
           const workspaces = await readWorkspaceRegistry(dataDirectory);
+          for (const conversation of chatStore.list().filter(c => c.projectId === workspace.id)) await chat.manager.remove(conversation.id);
           await saveWorkspaceRegistry(
             dataDirectory,
             workspaces.filter((item) => item.id !== workspace.id),
@@ -1293,6 +1311,30 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
             request.off("aborted", cancelDocument);
           }
         }
+        if (
+          request.method === "POST" &&
+          segments[2] === "artifacts" &&
+          segments[3] === "kami" &&
+          segments[4] === "render" &&
+          segments.length === 5
+        ) {
+          const cancellation = new AbortController();
+          const cancelKami = () => cancellation.abort();
+          request.once("aborted", cancelKami);
+          try {
+            const payload = await readJsonBody(request, MAX_KAMI_BODY_BYTES);
+            return sendJson(response, 201, await renderKamiArtifact({
+              workspace,
+              dataDirectory,
+              payload,
+              signal: cancellation.signal,
+              pythonPath: path.join(dataDirectory, "documents-venv", "bin", "python"),
+              runtimeRoot: RUNTIME_ROOT,
+            }));
+          } finally {
+            request.off("aborted", cancelKami);
+          }
+        }
         if (request.method === "POST" && segments[2] === "commands" && segments.length === 3) {
           const payload = await readJsonBody(request);
           const command = commandManager.create(workspace, payload);
@@ -1304,10 +1346,12 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
           }
           if (request.method === "POST" && segments[4] === "decision" && segments.length === 5) {
             const payload = await readJsonBody(request);
+            const decision = commandManager.decide(workspace.id, segments[3], payload.decision);
+            chat.manager.commandDecision(workspace.id, segments[3], payload.decision);
             return sendJson(
               response,
               200,
-              commandManager.decide(workspace.id, segments[3], payload.decision),
+              decision,
             );
           }
           if (request.method === "DELETE" && segments.length === 4) {
@@ -1330,7 +1374,7 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
       return sendJson(response, status, { message });
     }
   };
-  handle.close = async () => { await workflow.close(); chatStore.close(); traceStore.close(); localDatabase.close(); };
+  handle.close = async () => { await chat.close(); await workflow.close(); chatStore.close(); traceStore.close(); localDatabase.close(); };
   return handle;
 }
 
@@ -1351,6 +1395,9 @@ async function start() {
     stopping = true;
     await handler.close();
     await mcpManager.close();
+    // After application shutdown, stale proxy/SSE sockets must not block the
+    // development watcher's process restart indefinitely.
+    server.closeAllConnections();
     server.close(() => {
       process.exitCode = 0;
     });

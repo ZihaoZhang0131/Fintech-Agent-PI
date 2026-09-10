@@ -105,17 +105,12 @@ import {
   type ProjectFileTabsState,
 } from "@/lib/file-tabs";
 import {
-  applyToolApproval,
   applyToolDecision,
-  finishToolRuns,
-  applyToolEnd,
-  applyToolStart,
-  type ToolApprovalEvent,
-  type ToolEndEvent,
   type ToolRun,
-  type ToolStartEvent,
 } from "@/lib/tool-runs";
-import { delegationHistoryFromToolRuns } from "@/lib/delegation-history";
+import { chatRequest, useChatThread, type ChatTurn } from "@/lib/chat-runtime-client";
+import { prepareChatSubmission, type ChatSubmission } from "@/lib/chat-submission";
+import { finishToolRuns } from "@/lib/tool-runs";
 import {
   legacyUsageContributions,
   usageActivityFromDays,
@@ -126,6 +121,8 @@ import {
 type MessageRole = "user" | "assistant";
 
 type ChatMessage = {
+  turnId?: string;
+  inputStatus?: "pending" | "consumed" | "cancelled";
   id: string;
   role: MessageRole;
   content: string;
@@ -138,6 +135,8 @@ type ChatMessage = {
 };
 
 type Conversation = {
+  schemaVersion?: number;
+  activeTurn?: ChatTurn;
   id: string;
   projectId: string;
   title: string;
@@ -163,10 +162,11 @@ type FilePreview = {
   size: number;
   modifiedAt: number;
   extension: string;
-  kind: "text" | "image" | "pdf" | "unsupported" | "too-large";
+  kind: "text" | "image" | "pdf" | "kami-html" | "unsupported" | "too-large";
   mimeType: string;
   content?: string;
   previewLimitBytes?: number;
+  kami?: { manifestPath: string; sha256: string; visualReviewPending: boolean };
 };
 
 type AvailableModel = {
@@ -178,24 +178,6 @@ type AvailableModel = {
 
 type AgentStatus = "idle" | "connecting" | "streaming" | "done" | "stopped" | "error";
 
-type StreamEvent =
-  | {
-      type: "start";
-      requestId: string;
-      traceId?: string;
-      traceStatus?: "recording" | "unavailable";
-    }
-  | ToolStartEvent
-  | ToolEndEvent
-  | ToolApprovalEvent
-  | { type: "delta"; text: string }
-  | {
-      type: "done";
-      durationMs: number;
-      usage?: { input: number; output: number; totalTokens: number };
-    }
-  | { type: "trace_status"; traceId: string; traceStatus: "recorded" | "unavailable" }
-  | { type: "error"; message: string };
 
 const STORAGE_KEY = "pi-research-agent:conversations:v2";
 const LEGACY_STORAGE_KEY = "pi-research-agent:conversations:v1";
@@ -272,11 +254,6 @@ function formatBytes(size: number) {
   if (size < 1_024) return `${size} B`;
   if (size < 1_048_576) return `${(size / 1_024).toFixed(1)} KB`;
   return `${(size / 1_048_576).toFixed(1)} MB`;
-}
-
-function makeTitle(input: string) {
-  const compact = input.replace(/\s+/g, " ").trim();
-  return compact.length > 18 ? `${compact.slice(0, 18)}…` : compact;
 }
 
 function parseStoredConversations(value: string | null): Array<Conversation & { projectId?: string }> {
@@ -425,20 +402,6 @@ function storedBoolean(value: string | null, fallback: boolean) {
   return value === null ? fallback : value === "true";
 }
 
-function extractSseEvents(buffer: string) {
-  const blocks = buffer.split("\n\n");
-  const remainder = blocks.pop() ?? "";
-  const events = blocks.flatMap((block) => {
-    const dataLine = block.split("\n").find((line) => line.startsWith("data:"));
-    if (!dataLine) return [];
-    try {
-      return [JSON.parse(dataLine.slice(5).trim()) as StreamEvent];
-    } catch {
-      return [];
-    }
-  });
-  return { events, remainder };
-}
 
 async function responseJson<T>(response: Response): Promise<T> {
   const payload = (await response.json().catch(() => null)) as (T & { message?: string }) | null;
@@ -558,8 +521,12 @@ export default function Home() {
   const [filePanelWidth, setFilePanelWidth] = useState(380);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [filePanelVisible, setFilePanelVisible] = useState(true);
-  const abortRef = useRef<AbortController | null>(null);
-  const activeTraceIdRef = useRef<string | null>(null);
+  const [kamiPreviewMode, setKamiPreviewMode] = useState<"preview" | "source">("preview");
+  const [chatSubmitting, setChatSubmitting] = useState(false);
+  const [chatStopping, setChatStopping] = useState(false);
+  const [chatActionError, setChatActionError] = useState("");
+  const sendLockRef = useRef(false);
+  const chatRequestIds = useRef(new Map<string, ChatSubmission>());
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerIsComposingRef = useRef(false);
@@ -575,7 +542,7 @@ export default function Home() {
           await fetch(`/api/local/chat/conversations/${encodeURIComponent(conversation.id)}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(conversation),
+            body: JSON.stringify(conversation.schemaVersion === 2 ? { metadataOnly: true, bashApprovalMode: conversation.bashApprovalMode, bashPermissionMode: conversation.bashPermissionMode } : conversation),
             cache: "no-store",
           }),
         );
@@ -612,8 +579,16 @@ export default function Home() {
     () => agentConfigsByProject[activeProjectId] ?? createEmptyProjectAgentConfig(),
     [activeProjectId, agentConfigsByProject],
   );
-  const isBusy = status === "connecting" || status === "streaming";
-  const activeAssistantMessageId = isBusy ? activeConversation?.messages.at(-1)?.id : undefined;
+  const isBusy = activeConversation?.activeTurn?.status === "running" || activeConversation?.activeTurn?.status === "queued";
+  const acceptChatSnapshot = useCallback((conversation: Conversation) => {
+    setConversations(current => current.map(c => c.id === conversation.id ? conversation : c));
+    const t = conversation.activeTurn;
+    setStatus(t?.status === "running" || t?.status === "queued" ? "streaming" : t?.status === "interrupted" ? "stopped" : t?.status === "failed" ? "error" : "done");
+    setDurationMs(t?.durationMs ?? null); setTokenUsage(t?.totalTokens ?? null);
+    if (t?.status !== "running" && t?.status !== "queued") setChatStopping(false);
+  }, []);
+  const chatConnection = useChatThread<Conversation>(activeId || undefined, hydrated && activeConversation?.schemaVersion === 2, acceptChatSnapshot);
+  const activeAssistantMessageId = isBusy ? activeConversation?.messages.findLast(m => m.role === "assistant" && m.turnId === activeConversation.activeTurn?.id)?.id : undefined;
   const activeFileTabs = getProjectFileTabs(fileTabsByProject, activeProjectId);
   const activeFileTree = getProjectFileTree(fileTreesByProject, activeProjectId);
   const files = useMemo(() => getVisibleFileTreeEntries(activeFileTree), [activeFileTree]);
@@ -749,6 +724,18 @@ export default function Home() {
     }
   }, []);
 
+  const chatRefreshKey = activeConversation?.schemaVersion === 2 ? JSON.stringify([
+    activeConversation.id, activeConversation.activeTurn?.id, activeConversation.activeTurn?.status,
+    activeConversation.messages.flatMap(m => m.toolRuns ?? []).filter(r => r.toolName === "write_project_file" || r.toolName === "generate_document").map(r => [r.toolCallId, r.status]),
+  ]) : "";
+  useEffect(() => {
+    if (!chatRefreshKey || !activeProjectId) return;
+    // Refresh also after reconnect/switch, where completed events may already
+    // be represented by the first durable snapshot.
+    const timer = setTimeout(() => { refreshProjectFiles(activeProjectId); void loadUsageActivity(); }, 150);
+    return () => clearTimeout(timer);
+  }, [chatRefreshKey, activeProjectId, refreshProjectFiles, loadUsageActivity]);
+
   const loadModelCatalog = useCallback(async () => {
     setModelsLoading(true);
     setModelsError("");
@@ -823,7 +810,7 @@ export default function Home() {
             if (!projectId) return [];
             return [{
               ...conversation,
-              messages: finishInterruptedRuns
+              messages: finishInterruptedRuns && conversation.schemaVersion !== 2
                 ? conversation.messages.map((message) => ({
                     ...message,
                     toolRuns: message.toolRuns && finishToolRuns(message.toolRuns, "执行已中断"),
@@ -1039,6 +1026,10 @@ export default function Home() {
   }, [activeFilePath, activePreviewEntry, activeProjectId, hydrated, loadFilePreview]);
 
   useEffect(() => {
+    setKamiPreviewMode("preview");
+  }, [activeProjectId, activeFilePath]);
+
+  useEffect(() => {
     if (!activeProjectId) return;
     requestAnimationFrame(() => {
       document
@@ -1067,16 +1058,11 @@ export default function Home() {
   }
 
   function stopActiveRun() {
-    const traceId = activeTraceIdRef.current;
-    if (traceId) {
-      void fetch("/api/chat/abort", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ traceId }),
-        keepalive: true,
-      }).catch(() => undefined);
-    }
-    abortRef.current?.abort();
+    const turn = activeConversation?.activeTurn;
+    if (!turn || chatStopping) return;
+    setChatStopping(true);
+    void chatRequest(`${turn.threadId}/turns/${turn.id}/interrupt`, {})
+      .catch(e => { setChatActionError(e.message); setChatStopping(false); });
   }
 
   useEffect(()=>{if(hydrated&&activeId)localStorage.setItem("chat:last-conversation",activeId);},[activeId,hydrated]);
@@ -1103,7 +1089,6 @@ export default function Home() {
   function newConversation(projectId = activeProjectId) {
     if(appMode==="workflow"){chooseWorkflow("",projectId);return;}
     if (!projectId) return;
-    if (isBusy) stopActiveRun();
     const next = makeConversation(projectId);
     setConversations((current) => [next, ...current]);
     if (chatPersistenceReadyRef.current) void chatPersistenceRef.current?.save(next, true);
@@ -1269,7 +1254,6 @@ export default function Home() {
 
   function selectConversation(id: string, projectId: string, mode = appMode) {
     if(mode==="workflow"){chooseWorkflow(id,projectId);return;}
-    if (isBusy && id !== activeId) return;
     setExpandedProjectIds((current) =>
       current.includes(projectId) ? current : [...current, projectId],
     );
@@ -1305,12 +1289,12 @@ export default function Home() {
   }
 
   function toolRunsAreExpanded(messageId: string) {
-    const activeMessageId = activeConversation?.messages.at(-1)?.id;
+    const activeMessageId = activeAssistantMessageId;
     return (isBusy && activeMessageId === messageId) || expandedToolMessageIds.includes(messageId);
   }
 
   function toggleToolRuns(messageId: string) {
-    const activeMessageId = activeConversation?.messages.at(-1)?.id;
+    const activeMessageId = activeAssistantMessageId;
     if (isBusy && activeMessageId === messageId) return;
     setExpandedToolMessageIds((current) =>
       current.includes(messageId)
@@ -1779,237 +1763,30 @@ export default function Home() {
     requestAnimationFrame(() => document.getElementById(fileTabId(activeProject.id, nextPath))?.focus());
   }
 
-  async function sendMessage(rawInput = input) {
+  async function sendMessage(rawInput = input, continueTurnId?: string) {
     const content = rawInput.trim();
-    if (!content || !activeConversation || !activeProject || !capabilitiesReady || isBusy || !selectedModel) return;
-
-    const conversationId = activeConversation.id;
-    const history = activeConversation.messages;
-    const userMessage: ChatMessage = {
-      id: makeId(),
-      role: "user",
-      content,
-      createdAt: timestampNow(),
-    };
-    const assistantId = makeId();
-    const traceId = makeId();
-    const assistantMessage: ChatMessage = {
-      id: assistantId,
-      role: "assistant",
-      content: "",
-      createdAt: timestampNow(),
-      toolRuns: [],
-      traceId,
-      traceStatus: "recording",
-    };
-
-    const pendingConversation: Conversation = {
-      ...activeConversation,
-      title: activeConversation.messages.length === 0 ? makeTitle(content) : activeConversation.title,
-      messages: [...activeConversation.messages, userMessage, assistantMessage],
-      updatedAt: timestampNow(),
-    };
-    setConversations((current) => current
-      .map((conversation) => conversation.id === conversationId ? pendingConversation : conversation)
-      .sort((a, b) => b.updatedAt - a.updatedAt));
-    setInput("");
-    setStatus("connecting");
-    setDurationMs(null);
-    setTokenUsage(null);
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-    activeTraceIdRef.current = traceId;
-
+    if ((!content && !continueTurnId) || !activeConversation || !activeProject || !capabilitiesReady || !selectedModel || sendLockRef.current) return;
+    const conversation = activeConversation, id = conversation.id, active = conversation.activeTurn;
+    const config = { model: { providerId: selectedModel.providerId, modelId: selectedModel.modelId }, enabledSkills, enabledTools, enabledMcps,
+      agentConfig: { ...activeAgentConfig, mainModel: { providerId: selectedModel.providerId, modelId: selectedModel.modelId } },
+      agentPrompts, bashApprovalMode: conversation.bashApprovalMode, bashPermissionMode: conversation.bashPermissionMode };
+    const submission = prepareChatSubmission(chatRequestIds.current, { id, content, continueTurnId, activeTurnId: isBusy ? active?.id : undefined, config, requestId: makeId() });
+    sendLockRef.current = true; setChatSubmitting(true); setChatActionError("");
     try {
-      await chatPersistenceRef.current?.saveNow(pendingConversation);
-      const response = await fetch("/api/chat/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          traceId,
-          conversationId,
-          workspaceId: activeProject.id,
-          workspaceName: activeProject.name,
-          workspacePath: activeProject.path,
-          model: {
-            providerId: selectedModel.providerId,
-            modelId: selectedModel.modelId,
-          },
-          enabledSkills,
-          enabledTools,
-          enabledMcps,
-          agentConfig: {
-            ...activeAgentConfig,
-            mainModel: {
-              providerId: selectedModel.providerId,
-              modelId: selectedModel.modelId,
-            },
-          },
-          agentPrompts,
-          bashApprovalMode: activeConversation.bashApprovalMode,
-          bashPermissionMode: activeConversation.bashPermissionMode,
-          messages: history.map(({ role, content: messageContent, toolRuns }) => ({
-            role,
-            content: messageContent,
-            ...(role === "assistant"
-              ? {
-                  delegations: delegationHistoryFromToolRuns(toolRuns),
-                }
-              : {}),
-          })),
-          input: content,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok || !response.body) {
-        const payload = (await response.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(payload?.message ?? "本地 Agent 服务暂时不可用");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-        const parsed = extractSseEvents(buffer);
-        buffer = parsed.remainder;
-
-        for (const event of parsed.events) {
-          if (event.type === "start") {
-            setStatus("streaming");
-            updateConversation(conversationId, (conversation) => ({
-              ...conversation,
-              messages: conversation.messages.map((message) =>
-                message.id === assistantId
-                  ? event.traceStatus === "recording" && event.traceId
-                    ? {
-                      ...message,
-                      traceStatus: event.traceStatus,
-                      traceId: event.traceId,
-                    }
-                    : { ...message, traceId: undefined, traceStatus: "unavailable" }
-                  : message,
-              ),
-              updatedAt: timestampNow(),
-            }));
-          }
-          if (event.type === "tool_start") {
-            setStatus("streaming");
-            updateConversation(conversationId, (conversation) => ({
-              ...conversation,
-              messages: conversation.messages.map((message) =>
-                message.id === assistantId
-                  ? { ...message, toolRuns: applyToolStart(message.toolRuns, event) }
-                  : message,
-              ),
-              updatedAt: timestampNow(),
-            }));
-          }
-          if (event.type === "tool_end") {
-            updateConversation(conversationId, (conversation) => ({
-              ...conversation,
-              messages: conversation.messages.map((message) =>
-                message.id === assistantId
-                  ? { ...message, toolRuns: applyToolEnd(message.toolRuns, event) }
-                  : message,
-              ),
-              updatedAt: timestampNow(),
-            }));
-            if (event.toolName === "write_project_file") refreshProjectFiles(activeProject.id);
-          }
-          if (event.type === "tool_approval_required") {
-            updateConversation(conversationId, (conversation) => ({
-              ...conversation,
-              messages: conversation.messages.map((message) =>
-                message.id === assistantId
-                  ? { ...message, toolRuns: applyToolApproval(message.toolRuns, event) }
-                  : message,
-              ),
-              updatedAt: timestampNow(),
-            }));
-          }
-          if (event.type === "delta") {
-            setStatus("streaming");
-            updateConversation(conversationId, (conversation) => ({
-              ...conversation,
-              messages: conversation.messages.map((message) =>
-                message.id === assistantId
-                  ? { ...message, content: message.content + event.text }
-                  : message,
-              ),
-              updatedAt: timestampNow(),
-            }));
-          }
-          if (event.type === "trace_status") {
-            updateConversation(conversationId, (conversation) => ({
-              ...conversation,
-              messages: conversation.messages.map((message) =>
-                message.id === assistantId
-                  ? event.traceStatus === "recorded"
-                    ? { ...message, traceId: event.traceId, traceStatus: "recorded" }
-                    : { ...message, traceId: undefined, traceStatus: "unavailable" }
-                  : message,
-              ),
-              updatedAt: timestampNow(),
-            }));
-            if (event.traceStatus === "recorded") void loadUsageActivity();
-          }
-          if (event.type === "done") {
-            setStatus("done");
-            setDurationMs(event.durationMs);
-            setTokenUsage(event.usage?.totalTokens ?? null);
-            updateConversation(conversationId, (conversation) => ({
-              ...conversation,
-              messages: conversation.messages.map((message) =>
-                message.id === assistantId
-                  ? {
-                      ...message,
-                      durationMs: event.durationMs,
-                      ...(event.usage?.totalTokens !== undefined
-                        ? { tokenUsage: event.usage.totalTokens }
-                        : {}),
-                    }
-                  : message,
-              ),
-              updatedAt: timestampNow(),
-            }), true);
-            refreshProjectFiles(activeProject.id);
-          }
-          if (event.type === "error") throw new Error(event.message);
-        }
-        if (done) break;
-      }
-    } catch (error) {
-      if (controller.signal.aborted) {
-        setStatus("stopped");
-      } else {
-        const message = error instanceof Error ? error.message : "模型调用失败";
-        setStatus("error");
-        updateConversation(conversationId, (conversation) => ({
-          ...conversation,
-          messages: conversation.messages.map((item) =>
-            item.id === assistantId && !item.content
-              ? { ...item, content: `抱歉，本轮调用失败：${message}` }
-              : item,
-          ),
-          updatedAt: timestampNow(),
-        }), true);
-      }
-    } finally {
-      updateConversation(conversationId, (conversation) => ({
-        ...conversation,
-        messages: conversation.messages.map((message) => message.id === assistantId
-          ? { ...message, toolRuns: finishToolRuns(message.toolRuns, controller.signal.aborted ? "已停止" : "执行已结束或连接中断") }
-          : message),
-        updatedAt: timestampNow(),
-      }), true);
-      abortRef.current = null;
-      if (activeTraceIdRef.current === traceId) activeTraceIdRef.current = null;
+      if (conversation.schemaVersion !== 2) await chatPersistenceRef.current?.saveNow(conversation);
+      const accepted = await chatRequest<{ turn?: ChatTurn }>(submission.path, submission.body);
+      // Acceptance is already durable. A failed display refresh must not make
+      // the acknowledged input look unsent or encourage a second execution.
+      setConversations(current => current.map(c => c.id === id ? { ...c, schemaVersion: 2, ...(accepted.turn ? { activeTurn: accepted.turn } : {}) } : c));
+      if (!continueTurnId) setInput(current => current.trim() === content ? "" : current);
+      chatRequestIds.current.delete(submission.key);
+      const snapshot = await chatRequest<{ conversation: Conversation }>(id).catch(() => undefined);
+      if (snapshot) setConversations(current => current.map(c => c.id === id ? snapshot.conversation : c));
+    } catch (e) {
+      if (e && typeof e === "object" && "status" in e && [400, 404, 409].includes(Number(e.status))) chatRequestIds.current.delete(submission.key);
+      setChatActionError(e instanceof Error ? e.message : "聊天提交失败，输入已保留。");
     }
+    finally { sendLockRef.current = false; setChatSubmitting(false); }
   }
 
   function handleSubmit(event: FormEvent) {
@@ -2417,6 +2194,8 @@ export default function Home() {
                             }
                           />
                         )}
+                        {message.inputStatus === "pending" && <small>待处理</small>}
+                        {message.inputStatus === "cancelled" && <small>未处理，已停止</small>}
                         {message.content ? <MarkdownMessage content={message.content} projectNavigation={{ baseDirectory: "", onOpenFile: (target) => openProjectFile(target, activeProjectId) }} /> : null}
                         {isUnfinishedAssistantMessage && (
                           <span className="thinking-indicator" role="status" aria-label="Agent 正在回复">
@@ -2458,6 +2237,8 @@ export default function Home() {
         </div>
 
         <div className="composer-wrap">
+          {(chatActionError || chatConnection.error || chatConnection.phase || chatStopping || activeConversation?.activeTurn?.reason) && <small role="status">{chatActionError || chatConnection.error || (chatStopping ? "正在停止…" : chatConnection.phase) || activeConversation?.activeTurn?.reason}</small>}
+          {!isBusy && ["interrupted", "failed"].includes(activeConversation?.activeTurn?.status ?? "") && <button type="button" className="composer-control" disabled={chatSubmitting} onClick={() => void sendMessage("", activeConversation?.activeTurn?.id)}>继续</button>}
           <ComposerSurface onSubmit={handleSubmit}>
             <textarea
               ref={textareaRef}
@@ -2471,7 +2252,7 @@ export default function Home() {
               }}
               onKeyDown={handleKeyDown}
               rows={1}
-              disabled={!activeConversation || !activeProject || !capabilitiesReady || isBusy}
+              disabled={!activeConversation || !activeProject || !capabilitiesReady || chatStopping}
               aria-label="投研任务"
             />
             <div className="composer-footer">
@@ -2533,19 +2314,8 @@ export default function Home() {
                   </>
                 )}
               </div>
-              {isBusy ? (
-                <button className="send-button stop" type="button" onClick={stopActiveRun}>
-                  <CircleStop size={18} />
-                </button>
-              ) : (
-                <button
-                  className="send-button"
-                  type="submit"
-                  disabled={!input.trim() || !activeProject || !capabilitiesReady || !selectedModel}
-                >
-                  <Send size={17} />
-                </button>
-              )}
+              {isBusy && <button className="send-button stop" type="button" aria-label="停止" disabled={chatStopping} onClick={stopActiveRun}><CircleStop size={18} /></button>}
+              <button className="send-button" type="submit" aria-label={isBusy ? "发送补充" : "发送"} title={isBusy ? "发送补充，下次推理时处理" : "发送"} disabled={!input.trim() || !activeProject || !capabilitiesReady || !selectedModel || chatSubmitting || chatStopping}><Send size={17} /></button>
             </div>
           </ComposerSurface>
         </div>
@@ -2745,6 +2515,16 @@ export default function Home() {
                       <span title={filePreview.path}>{filePreview.path}</span>
                     </div>
                     <div className="workspace-preview-actions">
+                      {filePreview.kind === "kami-html" && (
+                        <button
+                          type="button"
+                          aria-label={kamiPreviewMode === "preview" ? "查看 Kami 源码" : "预览 Kami 产物"}
+                          title={kamiPreviewMode === "preview" ? "源码" : "预览"}
+                          onClick={() => setKamiPreviewMode(current => current === "preview" ? "source" : "preview")}
+                        >
+                          {kamiPreviewMode === "preview" ? "源码" : "预览"}
+                        </button>
+                      )}
                       {filePreview.content && (
                         <button
                           type="button"
@@ -2787,6 +2567,18 @@ export default function Home() {
                     )}
                     {filePreview.kind === "pdf" && previewAssetUrl && (
                       <iframe src={previewAssetUrl} title={filePreview.name} />
+                    )}
+                    {filePreview.kind === "kami-html" && filePreview.content !== undefined && (
+                      kamiPreviewMode === "preview" ? (
+                        <iframe
+                          srcDoc={filePreview.content}
+                          title={`${filePreview.name} Kami 预览`}
+                          sandbox="allow-scripts"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <CodePreview content={filePreview.content} extension=".html" name={filePreview.name} />
+                      )
                     )}
                     {(filePreview.kind === "unsupported" || filePreview.kind === "too-large") && (
                       <div className="unsupported-preview">

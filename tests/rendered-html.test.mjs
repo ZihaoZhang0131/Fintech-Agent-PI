@@ -52,9 +52,10 @@ test("exposes the searchable Skill, Tool, and MCP capability catalog", async () 
   const response = await render("/api/capabilities");
   assert.equal(response.status, 200);
   const catalog = await response.json();
-  assert.equal(catalog.skills.length, 9);
+  assert.equal(catalog.skills.length, 10);
   assert.ok(catalog.skills.some((item) => item.name === "a-share-value-investing"));
-  assert.equal(catalog.tools.length, 11);
+  assert.ok(catalog.skills.some((item) => item.name === "kami"));
+  assert.equal(catalog.tools.length, 12);
   assert.equal(catalog.mcps.length, 2);
   assert.equal(catalog.mcps[0].name, "akshare-one");
   assert.equal(catalog.mcps[0].requiresApiKey, false);
@@ -71,6 +72,7 @@ test("exposes the searchable Skill, Tool, and MCP capability catalog", async () 
       "read_project_file",
       "write_project_file",
       "generate_document",
+      "render_kami_artifact",
       "list_local_database_tables",
       "describe_local_database_table",
       "query_local_database",

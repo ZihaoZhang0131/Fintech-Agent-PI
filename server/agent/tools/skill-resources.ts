@@ -138,6 +138,7 @@ export function createSkillResourceTools(
     executionMode: "sequential",
     execute: async (_toolCallId, { name, path, args, timeoutSeconds }, signal, onUpdate) => {
       const skill = assertLoaded(registry, tracker, name);
+      if (skill.name === "kami") throw new Error("Kami 脚本不能通过通用 Skill 脚本入口执行；请使用 render_kami_artifact。");
       const resource = skill.resources.find((item) => item.path === path);
       if (!resource || resource.category !== "script") throw new Error("该路径不是可运行的 Skill 脚本。");
       let job = await runtimeRequest<CommandJob>(`/skills/${encodeURIComponent(skill.id)}/scripts/run`, {

@@ -10,6 +10,7 @@ import { createWebSearchTool } from "./tools/web-search.ts";
 import { createWorkspaceTools } from "./tools/workspace-files.ts";
 import { createLocalDatabaseTools } from "./tools/local-database.ts";
 import { createDocumentTool } from "./tools/generate-document.ts";
+import { createKamiArtifactTool } from "./tools/render-kami-artifact.ts";
 import {
   createBashTool,
   type BashApprovalMode,
@@ -51,6 +52,9 @@ export async function createProfileTools(options: {
     ...createLocalDatabaseTools().filter((tool) => names.has(tool.name)),
     ...(names.has("generate_document")
       ? [createDocumentTool(workspaceId)]
+      : []),
+    ...(names.has("render_kami_artifact")
+      ? [createKamiArtifactTool(workspaceId)]
       : []),
     ...(names.has("bash")
       ? [createBashTool(workspaceId, { approvalMode, permissionMode })]

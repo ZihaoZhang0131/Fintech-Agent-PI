@@ -10,6 +10,7 @@ export const BUNDLED_SKILL_NAMES = [
   "akshare-us-macro",
   "akshare-euro-macro",
   "akshare-institutions-macro",
+  "kami",
 ] as const;
 
 export const AGENT_TOOL_NAMES = [
@@ -19,6 +20,7 @@ export const AGENT_TOOL_NAMES = [
   "read_project_file",
   "write_project_file",
   "generate_document",
+  "render_kami_artifact",
   "list_local_database_tables",
   "describe_local_database_table",
   "query_local_database",

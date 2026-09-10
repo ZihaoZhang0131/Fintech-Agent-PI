@@ -4,7 +4,7 @@ import test from "node:test";
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const component = await readFile(new URL("../components/agent-library.tsx", import.meta.url), "utf8");
-const route = await readFile(new URL("../app/api/chat/stream/route.ts", import.meta.url), "utf8");
+const route = await readFile(new URL("../server/chat/agent.ts", import.meta.url), "utf8");
 
 test("project UI separates the main Agent prompt from SubAgent management", () => {
   assert.match(page, /AGENT_PROFILES_KEY/);
@@ -47,9 +47,10 @@ test("delegated Agent events use the selected Agent name in their display label"
   assert.doesNotMatch(route, /委派专业 Agent/);
 });
 
-test("chat history returns persisted delegation facts to the main Agent", () => {
-  assert.match(page, /delegationHistoryFromToolRuns\(toolRuns\)/);
-  assert.match(route, /formatAssistantHistoryContent\(message\.content, message\.delegations\)/);
-  assert.match(route, /application_delegation_history/);
-  assert.match(route, /agentId=\$\{JSON\.stringify\(item\.id\)\}/);
+test("chat history uses durable Session and migrates legacy delegation facts", async () => {
+  const store = await readFile(new URL("../server/chat/store.mjs", import.meta.url), "utf8");
+  assert.match(route, /new AgentHarness\(\{ session: options\.session/);
+  assert.match(store, /legacy_delegations/);
+  assert.match(store, /subAgentId/);
+  assert.doesNotMatch(page, /delegationHistoryFromToolRuns\(toolRuns\)/);
 });

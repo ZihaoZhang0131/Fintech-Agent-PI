@@ -44,9 +44,21 @@ Word 后续手动编辑不会自动更新已导出的 PDF、报告分析文字�
 
 验证命令：`node scripts/document-charts-smoke.mjs` 通过真实 Runtime 生成六种图表并比较缓存与内嵌数据，需要配置 LibreOffice；`node scripts/default-agents-smoke.mjs --live --charts` 使用已配置模型，在隔离项目运行数据保存 → 写作绘图 → 下游读取 JSON 复核（会产生模型调用费用）。
 
+## Kami 正式产物
+
+Kami 仅用于已完成研究内容的 HTML/PDF 视觉排版，普通问答不会启用。Word 仍由现有 `generate_document` 工具生成；同时交付 Word 和视觉版时，两者应共用同一份 Markdown/`contentIr`。
+
+首次使用前显式安装本机排版依赖：
+
+```bash
+npm run kami:setup
+```
+
+该命令在 macOS 上检查并安装 Pango，把锁定的 WeasyPrint/PDF 检查库安装到受管 `documents-venv`，并把 MathJax 安装到 `.local-data/kami-runtime`。不会下载授权独立的 TsangerJinKai02，中文默认使用系统 `Songti SC` 及开源思源宋体回退。产物的 `.kami.json` 记录机械检查结果；`visualReviewPending: true` 表示仍需人工视觉验收。
+
 ## Skills
 
-项目内置九个渐进加载的投研 Skill：
+项目内置十个渐进加载的 Skill：
 
 - `equity-research`：公司、商业模式、财务、竞争与投资风险研究
 - `earnings-review`：财报、业绩预告、电话会与盈利质量解读
@@ -57,6 +69,7 @@ Word 后续手动编辑不会自动更新已导出的 PDF、报告分析文字�
 - `akshare-us-macro`：已验证可用的美国宏观经济数据
 - `akshare-euro-macro`：已验证可用的欧元区宏观经济数据
 - `akshare-institutions-macro`：已验证可用的 LME、CFTC、CME、ETF 与 OPEC 数据
+- `kami`：将已确认的最终内容排版为正式 HTML/PDF 产物，不改写研究事实
 
 Skill 以 `.agents/skills/<skill-name>/SKILL.md` 为入口，完整目录可以包含 `scripts/`、`references/`、`assets/` 与更深层的资源文件。系统提示词只包含名称和描述；模型判断任务匹配后，通过白名单工具 `load_skill` 获取执行说明和资源索引，再按需读取资料或运行受支持的脚本。Skill 负责工作流程，`web_search` 负责获取网络信息。
 

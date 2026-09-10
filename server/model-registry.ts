@@ -1,4 +1,4 @@
-import { createProvider, envApiKeyAuth, type Model } from "@earendil-works/pi-ai";
+import { createProvider, envApiKeyAuth, type Model, type CreateModelsOptions } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 
@@ -22,8 +22,8 @@ const QWEN_MODELS: Model<"openai-completions">[] = [
   compat: { thinkingFormat: "qwen", supportsDeveloperRole: false, supportsStore: false },
 }));
 
-export function createConfiguredModels() {
-  const models = builtinModels();
+export function createConfiguredModels(options?: CreateModelsOptions) {
+  const models = builtinModels(options);
   models.setProvider(
     createProvider({
       id: "qwen",
