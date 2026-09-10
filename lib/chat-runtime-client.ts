@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 
-export type ChatTurn = { id: string; threadId: string; status: "queued" | "running" | "completed" | "failed" | "interrupted"; reason?: string; durationMs?: number; totalTokens?: number };
+export type ChatTurn = { id: string; threadId: string; status: "queued" | "running" | "completed" | "failed" | "interrupted"; reason?: string; startedAt?: number; endedAt?: number; durationMs?: number; totalTokens?: number };
 export type RuntimeConversation = { id: string; projectId: string; updatedAt: number; schemaVersion?: number; activeTurn?: ChatTurn; contextCompaction?: string };
 export async function chatRequest<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api/local/chat/threads/${path}`, { method: body === undefined ? "GET" : "POST", headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), signal, cache: "no-store" });

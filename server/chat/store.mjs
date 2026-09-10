@@ -195,6 +195,8 @@ export function createChatRuntimeStore(directory) {
       if (end < 0 || (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 500))) throw fail("消息分页参数无效。");
       const start = limit === undefined ? 0 : Math.max(0, end - limit);
       c.messages = all.slice(start, end);
+      // Read-only display metadata: retain accurate timing for earlier turns too.
+      c.turns = db.prepare("SELECT body FROM chat_turns WHERE thread_id=?").all(id).map(parse).map(({ id, status, startedAt, endedAt, durationMs }) => ({ id, status, startedAt, endedAt, durationMs }));
       return { thread: thread(id), conversation: c, turn: turn(thread(id).activeTurnId ?? ""), seq: thread(id).seq, nextBeforeMessageId: start > 0 ? c.messages[0]?.id : null };
     });
   }

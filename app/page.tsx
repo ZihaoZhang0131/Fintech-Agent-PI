@@ -109,6 +109,7 @@ import {
   type ToolRun,
 } from "@/lib/tool-runs";
 import { chatRequest, useChatThread, type ChatTurn } from "@/lib/chat-runtime-client";
+import { projectChatDisplay, type DisplayTurn } from "@/lib/chat-display";
 import { prepareChatSubmission, type ChatSubmission } from "@/lib/chat-submission";
 import { finishToolRuns } from "@/lib/tool-runs";
 import {
@@ -135,6 +136,7 @@ type ChatMessage = {
 };
 
 type Conversation = {
+  turns?: DisplayTurn[];
   schemaVersion?: number;
   activeTurn?: ChatTurn;
   id: string;
@@ -2158,15 +2160,16 @@ export default function Home() {
             </div>
           ) : activeConversation?.messages.length ? (
             <div className="message-thread">
-              {activeConversation.messages.map((message) => {
+              {projectChatDisplay(activeConversation.messages, activeConversation.activeTurn, activeConversation.turns).map((row) => {
+                const { message } = row;
                 const isUnfinishedAssistantMessage =
-                  message.role === "assistant" && message.id === activeAssistantMessageId;
+                  message.role === "assistant" && row.indicator;
 
                 return (
                   <article className={`message ${message.role}`} key={message.id}>
                     <div className="message-body">
                       <div className={`message-content ${isUnfinishedAssistantMessage ? "is-streaming" : ""}`}>
-                        {message.role === "assistant" && message.traceStatus && (
+                        {row.header && message.role === "assistant" && message.traceStatus && (
                           message.traceId ? (
                             <button className="message-trace-link" type="button" onClick={() => openTrace(message.traceId!)}>
                               <Activity size={12} />
@@ -2176,27 +2179,27 @@ export default function Home() {
                             <span className="message-trace-unavailable">Trace 未记录</span>
                           )
                         )}
-                        {message.role === "assistant" && Boolean(message.toolRuns?.length) && (
+                        {row.header && message.role === "assistant" && Boolean(row.toolRuns.length) && (
                           <ToolRunStack
-                            runs={message.toolRuns ?? []}
-                            durationMs={getMessageDuration(message)}
-                            startedAt={message.createdAt}
-                            isRunning={isUnfinishedAssistantMessage}
+                            runs={row.toolRuns}
+                            durationMs={row.durationMs ?? getMessageDuration(message)}
+                            startedAt={row.startedAt}
+                            isRunning={row.running}
                             messageId={message.id}
                             projectPath={activeProject?.path}
                             approvalSubmittingIds={approvalSubmittingIds}
-                            expanded={toolRunsAreExpanded(message.id)}
+                            expanded={row.running || toolRunsAreExpanded(message.id)}
                             onToggle={() => toggleToolRuns(message.id)}
                             onSubAgentExpand={() => setExpandedToolMessageIds((current) =>
                               current.includes(message.id) ? current : [...current, message.id])}
                             onDecision={(messageId, run, decision) =>
-                              void decideBashCommand(messageId, run, decision)
+                              void decideBashCommand(row.owners.get(run.toolCallId) ?? messageId, run, decision)
                             }
                           />
                         )}
                         {message.inputStatus === "pending" && <small>待处理</small>}
                         {message.inputStatus === "cancelled" && <small>未处理，已停止</small>}
-                        {message.content ? <MarkdownMessage content={message.content} projectNavigation={{ baseDirectory: "", onOpenFile: (target) => openProjectFile(target, activeProjectId) }} /> : null}
+                        {row.parts.map(part => part.content ? <MarkdownMessage key={part.id} content={part.content} projectNavigation={{ baseDirectory: "", onOpenFile: (target) => openProjectFile(target, activeProjectId) }} /> : null)}
                         {isUnfinishedAssistantMessage && (
                           <span className="thinking-indicator" role="status" aria-label="Agent 正在回复">
                             <i />
