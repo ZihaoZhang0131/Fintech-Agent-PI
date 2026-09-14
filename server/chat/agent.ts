@@ -425,6 +425,7 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
           "按职责选择 Agent，收到回传后由你整合最终回答。",
         ].join("\n")
       : "本轮没有启用专业 Agent，不要声称委派过子 Agent。",
+    "输出约束：不要在调用工具前后用普通正文播报工作计划或常规进度，不要输出‘我先’、‘接下来’、‘现在开始’类过程旁白；需要工具时直接调用。只有任务完成后的最终答复，或确实需要用户补充、确认或授权且本轮无法继续时，才输出面向用户的正文；不要输出内部推理过程。",
     "历史委派优先依据已保存的 delegate_agent 原始调用和工具结果；旧会话导入的历史委派记录只代表当时界面保存的名称、agentId、任务和状态，不等于完整执行证据。",
     "只处理当前项目和用户任务相关的内容，不覆盖不相关文件。",
   ].join("\n");
@@ -646,8 +647,12 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
         };
       };
       const forwardMainTools = createToolEventForwarder();
+      let activeAssistantItemId: string | undefined;
       agent.subscribe((event) => {
-        if (event.type === "message_start" && event.message.role === "assistant") send({ type: "message_start", itemId: crypto.randomUUID() });
+        if (event.type === "message_start" && event.message.role === "assistant") {
+          activeAssistantItemId = crypto.randomUUID();
+          send({ type: "message_start", itemId: activeAssistantItemId });
+        }
         if (["agent_start", "agent_end", "turn_start", "turn_end", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) {
           mainTraceHandle.onEvent(event as AgentEvent);
           forwardMainTools(event as AgentEvent);
@@ -656,11 +661,13 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
           event.type === "message_update" &&
           event.assistantMessageEvent.type === "text_delta"
         ) {
-          send({ type: "delta", text: event.assistantMessageEvent.delta });
+          send({ type: "delta", itemId: activeAssistantItemId, text: event.assistantMessageEvent.delta });
         }
 
         if (event.type === "message_end" && event.message.role === "assistant") {
+          send({ type: "message_end", itemId: activeAssistantItemId, stopReason: event.message.stopReason });
           finalMessage = event.message;
+          activeAssistantItemId = undefined;
         }
       });
 

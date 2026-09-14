@@ -50,9 +50,17 @@ function fakePrepare(handler, tools = [], subscribe) {
       return stream;
     } };
     const agent = new AgentHarness({ session: options.session, models, model, tools, systemPrompt: "谨慎研究" });
+    let activeAssistantItemId;
     agent.subscribe(e => {
-      if (e.type === "message_start" && e.message.role === "assistant") options.send({ type: "message_start", itemId: crypto.randomUUID() });
-      if (e.type === "message_update" && e.assistantMessageEvent.type === "text_delta") options.send({ type: "delta", text: e.assistantMessageEvent.delta });
+      if (e.type === "message_start" && e.message.role === "assistant") {
+        activeAssistantItemId = crypto.randomUUID();
+        options.send({ type: "message_start", itemId: activeAssistantItemId });
+      }
+      if (e.type === "message_update" && e.assistantMessageEvent.type === "text_delta") options.send({ type: "delta", itemId: activeAssistantItemId, text: e.assistantMessageEvent.delta });
+      if (e.type === "message_end" && e.message.role === "assistant") {
+        options.send({ type: "message_end", itemId: activeAssistantItemId, stopReason: e.message.stopReason });
+        activeAssistantItemId = undefined;
+      }
       return subscribe?.(e);
     });
     return { agent, models, model, tools, systemPrompt: "谨慎研究", async run(text, signal) {
@@ -112,6 +120,12 @@ test("real Pi Harness consumes steer once, preserves tools, and keeps running wi
   release.resolve(); await m.wait(threadId);
   assert.equal(m.store.turn(turn.id).status, "completed");
   assert.equal(m.store.inputs(turn.id)[0].status, "consumed");
+  const projected = m.store.snapshot(threadId).conversation.messages.filter(message => message.role === "assistant");
+  assert.deepEqual(projected.map(message => message.stopReason), ["toolUse", "stop"]);
+  const displayEvents = m.store.events(threadId).filter(event => event.type === "delta" || event.type === "message_end");
+  assert.ok(displayEvents.length > 0);
+  assert.ok(displayEvents.every(event => event.itemId));
+  assert.deepEqual(displayEvents.filter(event => event.type === "message_end").map(event => event.stopReason), ["toolUse", "stop"]);
   const messages = (await m.store.session(threadId).buildContext()).messages;
   assert.equal(messages.filter(m => m.role === "user" && textOf(m) === req.text).length, 1);
   assert.ok(contexts.at(-1).messages.some(m => textOf(m) === req.text));
@@ -262,6 +276,8 @@ test("production chat factory loads under Node and records real Harness events w
   });
   await bundle.run("本机工厂测试", new AbortController().signal); await bundle.finish();
   assert.ok(events.some(e => e.type === "message_start")); assert.ok(events.some(e => e.type === "delta"));
+  assert.ok(events.some(e => e.type === "message_end" && e.stopReason === "stop" && e.itemId));
+  assert.ok(events.filter(e => e.type === "delta").every(e => e.itemId));
   assert.equal(events.at(-1).traceStatus, "recorded");
   assert.equal(traces.listTraces({}).traces.length, 1);
   assert.doesNotMatch(JSON.stringify(events), /never-sent/);

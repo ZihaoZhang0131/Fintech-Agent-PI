@@ -109,7 +109,7 @@ import {
   type ToolRun,
 } from "@/lib/tool-runs";
 import { chatRequest, useChatThread, type ChatTurn } from "@/lib/chat-runtime-client";
-import { projectChatDisplay, type DisplayTurn } from "@/lib/chat-display";
+import { projectChatDisplay, type ChatStopReason, type DisplayTurn } from "@/lib/chat-display";
 import { prepareChatSubmission, type ChatSubmission } from "@/lib/chat-submission";
 import { finishToolRuns } from "@/lib/tool-runs";
 import {
@@ -131,6 +131,7 @@ type ChatMessage = {
   toolRuns?: ToolRun[];
   durationMs?: number;
   tokenUsage?: number;
+  stopReason?: ChatStopReason;
   traceId?: string;
   traceStatus?: "recording" | "recorded" | "unavailable";
 };
@@ -2200,6 +2201,8 @@ export default function Home() {
                         {message.inputStatus === "pending" && <small>待处理</small>}
                         {message.inputStatus === "cancelled" && <small>未处理，已停止</small>}
                         {row.parts.map(part => part.content ? <MarkdownMessage key={part.id} content={part.content} projectNavigation={{ baseDirectory: "", onOpenFile: (target) => openProjectFile(target, activeProjectId) }} /> : null)}
+                        {row.truncated && <small role="status">回答已达模型输出长度上限，内容可能不完整。</small>}
+                        {row.emptyFinal && <small role="status">任务已完成，但模型未返回可展示的最终回答。</small>}
                         {isUnfinishedAssistantMessage && (
                           <span className="thinking-indicator" role="status" aria-label="Agent 正在回复">
                             <i />

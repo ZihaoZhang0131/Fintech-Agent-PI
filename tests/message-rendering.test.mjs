@@ -46,6 +46,8 @@ test("unfinished assistant replies keep the thinking indicator on their final li
   assert.match(pageSource, /startedAt=\{row\.startedAt\}/);
   assert.match(pageSource, /isRunning=\{row\.running\}/);
   assert.match(pageSource, /row\.parts\.map\(part => part\.content/);
+  assert.match(pageSource, /row\.truncated && <small role="status">回答已达模型输出长度上限/);
+  assert.match(pageSource, /row\.emptyFinal && <small role="status">任务已完成/);
   assert.match(pageSource, /\{isUnfinishedAssistantMessage && \([\s\S]*className="thinking-indicator"[\s\S]*aria-label="Agent 正在回复"/);
   assert.match(styleSource, /\.thinking-indicator i:nth-child\(2\)\s*\{[^}]*animation-delay:\s*140ms/s);
   assert.match(styleSource, /\.thinking-indicator i:nth-child\(3\)\s*\{[^}]*animation-delay:\s*280ms/s);

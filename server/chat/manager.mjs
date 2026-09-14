@@ -22,10 +22,18 @@ export function createChatSessionManager({ dataDirectory, traceStore, findWorksp
   }
   async function execute(state) {
     const { turn: t, controller } = state;
-    let textBuffer = "", timer;
-    const flush = () => { clearTimeout(timer); timer = undefined; if (textBuffer) { emit(t.threadId, t.id, { type: "delta", text: textBuffer }); textBuffer = ""; } };
+    let textBuffer = "", textItemId, timer;
+    const flush = () => {
+      clearTimeout(timer); timer = undefined;
+      if (textBuffer) emit(t.threadId, t.id, { type: "delta", itemId: textItemId, text: textBuffer });
+      textBuffer = ""; textItemId = undefined;
+    };
     const send = e => {
-      if (e.type === "delta") { textBuffer += e.text; if (textBuffer.length >= 8192) flush(); else timer ??= setTimeout(() => { timer = undefined; flush(); }, 100); }
+      if (e.type === "delta") {
+        if (textBuffer && textItemId !== e.itemId) flush();
+        textItemId = e.itemId; textBuffer += e.text;
+        if (textBuffer.length >= 8192) flush(); else timer ??= setTimeout(() => { timer = undefined; flush(); }, 100);
+      }
       else { flush(); timer = undefined; emit(t.threadId, t.id, e); }
     };
     try {

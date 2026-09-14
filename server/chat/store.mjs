@@ -87,8 +87,10 @@ export function createChatRuntimeStore(directory) {
     const c = conversation(threadId);
     if (!c) return;
     const last = [...c.messages].reverse().find(m => m.turnId === turnId && m.role === "assistant");
-    if (payload.type === "message_start") c.messages.push({ id: payload.itemId, turnId, role: "assistant", content: "", toolRuns: [], createdAt: Date.now(), traceId: turnId, traceStatus: "recording" });
-    if (payload.type === "delta" && last) last.content += payload.text;
+    const target = payload.itemId ? c.messages.find(m => m.id === payload.itemId && m.turnId === turnId && m.role === "assistant") : last;
+    if (payload.type === "message_start") c.messages.push({ id: payload.itemId, turnId, role: "assistant", content: "", toolRuns: [], createdAt: Date.now(), stopReason: "pending", traceId: turnId, traceStatus: "recording" });
+    if (payload.type === "delta" && target) target.content += payload.text;
+    if (payload.type === "message_end" && target) target.stopReason = payload.stopReason;
     if (payload.type === "tool_start" && last) last.toolRuns = applyToolStart(last.toolRuns, payload);
     if (payload.type === "tool_end" && last) last.toolRuns = applyToolEnd(last.toolRuns, payload);
     if (payload.type === "tool_approval_required" && last) last.toolRuns = applyToolApproval(last.toolRuns, payload);
