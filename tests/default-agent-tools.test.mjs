@@ -13,6 +13,7 @@ test('default roles assemble actual tools with script execution limited to data 
     const { tools } = await createProfileTools({ profile, registry, workspaceId: 'test-workspace', approvalMode: 'ask', permissionMode: 'sandbox' });
     const actual = tools.map(tool => tool.name);
     assert.equal(actual.includes('run_skill_script'), profile.label === '数据Agent');
+    assert.equal(actual.includes('python_analysis'), profile.label === '数据Agent');
     assert.equal(actual.includes('bash'), profile.label === '数据Agent');
     assert.equal(actual.includes('mutate_local_database'), profile.label === '数据Agent');
     assert.equal(actual.includes('generate_document'), profile.label === '写作Agent');

@@ -55,7 +55,7 @@ test("exposes the searchable Skill, Tool, and MCP capability catalog", async () 
   assert.equal(catalog.skills.length, 10);
   assert.ok(catalog.skills.some((item) => item.name === "a-share-value-investing"));
   assert.ok(catalog.skills.some((item) => item.name === "kami"));
-  assert.equal(catalog.tools.length, 12);
+  assert.equal(catalog.tools.length, 13);
   assert.equal(catalog.mcps.length, 2);
   assert.equal(catalog.mcps[0].name, "akshare-one");
   assert.equal(catalog.mcps[0].requiresApiKey, false);
@@ -77,9 +77,11 @@ test("exposes the searchable Skill, Tool, and MCP capability catalog", async () 
       "describe_local_database_table",
       "query_local_database",
       "mutate_local_database",
+      "python_analysis",
       "bash",
     ],
   );
+  assert.equal(catalog.tools.find((item) => item.name === "python_analysis").defaultEnabled, false);
 });
 
 test("removes the disposable starter preview", async () => {

@@ -5,6 +5,7 @@ import localDatabaseSource from "../../../server/agent/tools/local-database.ts?r
 import bashSource from "../../../server/agent/tools/bash.ts?raw";
 import documentSource from "../../../server/agent/tools/generate-document.ts?raw";
 import kamiArtifactSource from "../../../server/agent/tools/render-kami-artifact.ts?raw";
+import pythonAnalysisSource from "../../../server/agent/tools/python-analysis.ts?raw";
 import { AGENT_TOOL_NAMES } from "@/server/agent/capability-policy";
 import { publicAgentRoles } from "@/server/agent/agent-registry";
 import { loadEffectiveSkillRegistry } from "@/server/agent/skills/loader";
@@ -101,6 +102,12 @@ const toolMetadata = {
     sourcePath: "server/agent/tools/local-database.ts",
     code: localDatabaseSource,
   },
+  python_analysis: {
+    label: "Python 数据分析",
+    description: "在固定无网项目沙箱中运行临时 Python，使用受管数据分析依赖并将产物保存到 outputs/python。",
+    sourcePath: "server/agent/tools/python-analysis.ts",
+    code: pythonAnalysisSource,
+  },
   bash: {
     label: "执行 Bash",
     description: "在当前项目根目录运行脚本、测试、构建和 Git 命令，并显示结构化执行结果。",
@@ -129,7 +136,7 @@ export async function GET() {
     name,
     ...toolMetadata[name],
     detail: toolMetadata[name].code,
-    defaultEnabled: true,
+    defaultEnabled: name !== "python_analysis",
   }));
   const mcps = MCP_SERVERS.map((server) => {
     const runtime = runtimeMcps.get(server.id);

@@ -551,6 +551,63 @@ test("non-zero bash exit stays model-visible and records command_failed outcome"
   assert.equal(operation.exitCode, 126);
 });
 
+test("Python analysis is fingerprinted as a write and an unknown execution is not repeated", async (t) => {
+  const f = await fixture(t);
+  let pass = 0;
+  let executions = 0;
+  const profileTools = async () => ({
+    skills: { list: () => [] },
+    mcps: [],
+    tools: [
+      {
+        name: "python_analysis",
+        execute: async () => {
+          executions += 1;
+          throw new Error("response lost after possible artifact write");
+        },
+      },
+    ],
+  });
+  const runners = createWorkflowRunners({
+    ...f,
+    localDatabase: f.db,
+    profileTools,
+    invokeAgent: async ({ tools, prompt }) => {
+      pass += 1;
+      assert.match(prompt, /固定禁网且只能写 outputs\/python/);
+      await tools
+        .find((tool) => tool.name === "python_analysis")
+        .execute(`python-${pass}`, { code: "print(6)" });
+    },
+  });
+  for (const id of ["python-attempt-1", "python-attempt-2"]) {
+    const attempt = {
+      id,
+      nodeId: node.id,
+      nodeRevision: 1,
+      version: 1,
+      status: "running",
+    };
+    f.update((run) => run.attempts.push(attempt));
+    await assert.rejects(
+      runners.executeNode({
+        run: f.store.get(f.run.id),
+        node,
+        attempt,
+        store: f.store,
+        update: f.update,
+        signal: new AbortController().signal,
+      }),
+      id.endsWith("1") ? /possible artifact write/ : /写操作结果不确定/,
+    );
+  }
+  assert.equal(executions, 1);
+  const operation = f.store.get(f.run.id).operations[0];
+  assert.equal(operation.tool, "python_analysis");
+  assert.equal(operation.status, "unknown");
+  assert.equal(typeof operation.fingerprint, "string");
+});
+
 test("an unknown write is not mechanically repeated on the next attempt", async (t) => {
   const f = await fixture(t);
   let pass = 0,

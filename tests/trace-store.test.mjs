@@ -354,3 +354,75 @@ test("trace recorder keeps transport success but warns on a non-zero bash exit",
   assert.equal(finished.status, "success_with_warnings");
   assert.equal(finished.stats.warnings, 1);
 });
+
+test("trace recorder retains bounded Python code, execution state, and artifacts", async () => {
+  const batches = [];
+  let finished;
+  const recorder = new TraceRecorder({
+    id: "trace_python_analysis_12345678",
+    sink: {
+      async start() {},
+      async append(_traceId, batch) {
+        batches.push(structuredClone(batch));
+      },
+      async finish(_traceId, payload) {
+        finished = structuredClone(payload);
+      },
+    },
+    workspaceId: "workspace_python_analysis_12345678",
+    startedAt: Date.now(),
+    modelProvider: "test",
+    modelId: "model",
+    question: "python analysis",
+  });
+  await recorder.start();
+  const main = recorder.attachAgent({
+    scopeKey: "main",
+    agentId: "main",
+    agentLabel: "数据Agent",
+    modelProvider: "test",
+    modelId: "model",
+    isRoot: true,
+  });
+  main.onEvent({ type: "agent_start" });
+  main.onEvent({ type: "turn_start" });
+  main.onEvent({
+    type: "tool_execution_start",
+    toolCallId: "python-call",
+    toolName: "python_analysis",
+    args: { code: "print(sum([1, 2, 3]))", timeoutSeconds: 60 },
+  });
+  main.onEvent({
+    type: "tool_execution_end",
+    toolCallId: "python-call",
+    toolName: "python_analysis",
+    result: {
+      content: [{ type: "text", text: "6" }],
+      details: {
+        kind: "python_analysis",
+        code: "print(sum([1, 2, 3]))",
+        status: "completed",
+        durationMs: 12,
+        exitCode: 0,
+        timedOut: false,
+        truncated: true,
+        artifacts: ["outputs/python/result.csv"],
+      },
+    },
+    isError: false,
+  });
+  main.onEvent({ type: "agent_end", messages: [] });
+  await recorder.finish();
+  const latest = new Map();
+  for (const span of batches.flatMap((batch) => batch.spans)) latest.set(span.id, span);
+  const python = [...latest.values()].find(
+    (span) => span.kind === "tool" && span.attributes?.toolName === "python_analysis",
+  );
+  assert.equal(python.input.code, "print(sum([1, 2, 3]))");
+  assert.equal(python.attributes.exitCode, 0);
+  assert.equal(python.attributes.timedOut, false);
+  assert.equal(python.output.details.durationMs, 12);
+  assert.equal(python.output.details.truncated, true);
+  assert.deepEqual(python.output.details.artifacts, ["outputs/python/result.csv"]);
+  assert.equal(finished.status, "success");
+});

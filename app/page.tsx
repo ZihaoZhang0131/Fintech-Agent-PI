@@ -309,6 +309,7 @@ function parseProjectAgentConfigs(value: string | null): Record<string, ProjectA
         const base = createEmptyProjectAgentConfig();
         if (Number.isInteger(config.starterAgentsVersion) && config.starterAgentsVersion! >= 1) base.starterAgentsVersion = config.starterAgentsVersion;
         if (Array.isArray(config.starterAgentsSkipped)) base.starterAgentsSkipped = config.starterAgentsSkipped.filter((name): name is string => typeof name === "string");
+        if (Number.isInteger(config.dataAgentPythonVersion) && config.dataAgentPythonVersion! >= 1) base.dataAgentPythonVersion = config.dataAgentPythonVersion;
         for (const id of ["main"] as AgentRoleId[]) {
           const profile = config.profiles[id];
           if (!profile || typeof profile !== "object") continue;
@@ -2296,9 +2297,9 @@ export default function Home() {
                       type="button"
                       onClick={toggleBashApprovalMode}
                       disabled={isBusy}
-                      title="切换 Bash 命令是否逐条确认"
+                      title="切换 Bash、Python 与 Skill 脚本是否逐条确认"
                     >
-                      <span>Bash</span>
+                      <span>本地执行</span>
                       <strong>
                         {activeConversation.bashApprovalMode === "auto" ? "自动执行" : "每条确认"}
                       </strong>

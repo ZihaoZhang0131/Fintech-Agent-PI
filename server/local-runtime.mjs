@@ -36,6 +36,7 @@ const MAX_TEXT_PREVIEW_BYTES = 1 * 1024 * 1024;
 const MAX_ASSET_PREVIEW_BYTES = 20 * 1024 * 1024;
 const MAX_FILE_ENTRIES = 800;
 const MAX_COMMAND_BYTES = 20_000;
+const MAX_PYTHON_CODE_BYTES = 20_000;
 const MAX_COMMAND_OUTPUT_BYTES = 200 * 1024;
 const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
 const MAX_COMMAND_TIMEOUT_MS = 120_000;
@@ -43,6 +44,10 @@ const COMMAND_JOB_TTL_MS = 10 * 60_000;
 const MAX_DOCUMENT_MARKDOWN_BYTES = 500_000;
 const MAX_DOCUMENT_TEMPLATE_BYTES = 20 * 1024 * 1024;
 const DOCUMENT_COMPONENT_WAIT_MS = 75_000;
+const PYTHON_ANALYSIS_COMPONENT_WAIT_MS = 75_000;
+const MAX_PYTHON_ARTIFACTS = 50;
+const PYTHON_ANALYSIS_RUNNER_PREFIX = "import os,site;site.addsitedir(os.environ['PYTHON_ANALYSIS_SITE_PACKAGES']);exec(compile(";
+const PYTHON_ANALYSIS_RUNNER_SUFFIX = ",'<python_analysis>','exec'),{'__name__':'__main__','__file__':'<python_analysis>'})\n";
 const RUNTIME_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DOCUMENT_RENDERER_PATH = path.join(RUNTIME_ROOT, "server", "document-renderer.py");
 const EXCLUDED_DIRECTORIES = new Set([
@@ -397,7 +402,12 @@ function sandboxString(value) {
   return JSON.stringify(value);
 }
 
-function createSandboxProfile(workspaceRoot, commandHome, commandTemporaryDirectory, extraReadableRoots = []) {
+function createSandboxProfile(
+  workspaceRoot,
+  commandHome,
+  commandTemporaryDirectory,
+  { extraReadableRoots = [], writableRoots = [workspaceRoot], networkMode = "allow" } = {},
+) {
   const readableRoots = [
     "/System",
     "/Library",
@@ -413,9 +423,9 @@ function createSandboxProfile(workspaceRoot, commandHome, commandTemporaryDirect
     commandTemporaryDirectory,
     ...extraReadableRoots,
   ];
-  const writableRoots = [workspaceRoot, commandHome, commandTemporaryDirectory];
+  const allowedWritableRoots = [commandHome, commandTemporaryDirectory, ...writableRoots];
   const readable = readableRoots.map((root) => `(subpath ${sandboxString(root)})`).join(" ");
-  const writable = writableRoots.map((root) => `(subpath ${sandboxString(root)})`).join(" ");
+  const writable = allowedWritableRoots.map((root) => `(subpath ${sandboxString(root)})`).join(" ");
   return [
     "(version 1)",
     "(deny default)",
@@ -423,13 +433,13 @@ function createSandboxProfile(workspaceRoot, commandHome, commandTemporaryDirect
     "(allow signal (target same-sandbox))",
     "(allow sysctl-read)",
     "(allow mach-lookup)",
-    "(allow network*)",
+    networkMode === "allow" ? "(allow network*)" : "",
     `(allow file-read* (literal "/") ${readable})`,
     `(allow file-write* ${writable} (literal \"/dev/null\"))`,
-  ].join(" ");
+  ].filter(Boolean).join(" ");
 }
 
-function commandEnvironment(permissionMode, commandHome, commandTemporaryDirectory) {
+function commandEnvironment(permissionMode, commandHome, commandTemporaryDirectory, overrides = {}) {
   const environment = {
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
     LANG: process.env.LANG ?? "en_US.UTF-8",
@@ -443,7 +453,7 @@ function commandEnvironment(permissionMode, commandHome, commandTemporaryDirecto
   };
   if (process.env.USER) environment.USER = process.env.USER;
   if (process.env.AKTOOLS_BASE_URL) environment.AKTOOLS_BASE_URL = process.env.AKTOOLS_BASE_URL;
-  return environment;
+  return { ...environment, ...overrides };
 }
 
 function appendCommandOutput(current, chunk, remainingBytes) {
@@ -474,9 +484,15 @@ export async function executeWorkspaceCommand({
   root,
   dataDirectory,
   command,
+  directExecutable,
+  directArguments = [],
   permissionMode = "sandbox",
   timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
   extraReadableRoots = [],
+  writableRoots,
+  networkMode = "allow",
+  stdin,
+  environment = {},
   signal,
 }) {
   if (typeof command !== "string" || !command.trim()) throw new Error("Bash 命令不能为空。");
@@ -484,40 +500,58 @@ export async function executeWorkspaceCommand({
   if (permissionMode !== "sandbox" && permissionMode !== "full") {
     throw new Error("Bash 权限模式无效。");
   }
+  if (networkMode !== "allow" && networkMode !== "deny") {
+    throw new Error("本地执行网络模式无效。");
+  }
   if (permissionMode === "sandbox" && process.platform !== "darwin") {
     throw new Error("当前系统不支持项目沙箱，命令未执行。");
   }
 
-  const canonicalRoot = await realpath(root);
-  const canonicalExtraReadableRoots = await Promise.all(extraReadableRoots.map((directory) => realpath(directory)));
-  const boundedTimeout = Math.max(
-    1_000,
-    Math.min(Number(timeoutMs) || DEFAULT_COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS),
-  );
   const commandHome = path.join(dataDirectory, "command-home");
   const commandTemporaryDirectory = path.join(dataDirectory, "command-tmp");
   await mkdir(commandHome, { recursive: true, mode: 0o700 });
   await mkdir(commandTemporaryDirectory, { recursive: true, mode: 0o700 });
+  const canonicalRoot = await realpath(root);
+  const canonicalCommandHome = await realpath(commandHome);
+  const canonicalCommandTemporaryDirectory = await realpath(commandTemporaryDirectory);
+  const canonicalExtraReadableRoots = await Promise.all(extraReadableRoots.map((directory) => realpath(directory)));
+  const canonicalWritableRoots = await Promise.all(
+    (writableRoots ?? [canonicalRoot]).map((directory) => realpath(directory)),
+  );
+  const boundedTimeout = Math.max(
+    1_000,
+    Math.min(Number(timeoutMs) || DEFAULT_COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS),
+  );
 
-  const executable = permissionMode === "sandbox" ? "/usr/bin/sandbox-exec" : "/bin/bash";
-  const args =
-    permissionMode === "sandbox"
-      ? [
-          "-p",
-          createSandboxProfile(canonicalRoot, commandHome, commandTemporaryDirectory, canonicalExtraReadableRoots),
-          "/bin/bash",
-          "-c",
-          command,
-        ]
+  const sandboxProfile = createSandboxProfile(
+    canonicalRoot,
+    canonicalCommandHome,
+    canonicalCommandTemporaryDirectory,
+    {
+      extraReadableRoots: canonicalExtraReadableRoots,
+      writableRoots: canonicalWritableRoots,
+      networkMode,
+    },
+  );
+  const executable = permissionMode === "sandbox" ? "/usr/bin/sandbox-exec" : directExecutable ?? "/bin/bash";
+  const args = permissionMode === "sandbox"
+    ? [
+        "-p",
+        sandboxProfile,
+        directExecutable ?? "/bin/bash",
+        ...(directExecutable ? directArguments : ["-c", command]),
+      ]
+    : directExecutable
+      ? directArguments
       : ["-c", command];
   const startedAt = Date.now();
 
   return await new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
       cwd: canonicalRoot,
-      env: commandEnvironment(permissionMode, commandHome, commandTemporaryDirectory),
+      env: commandEnvironment(permissionMode, canonicalCommandHome, canonicalCommandTemporaryDirectory, environment),
       detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -540,6 +574,10 @@ export async function executeWorkspaceCommand({
     };
     child.stdout.on("data", (chunk) => collect("stdout", chunk));
     child.stderr.on("data", (chunk) => collect("stderr", chunk));
+    if (child.stdin) {
+      child.stdin.on("error", () => undefined);
+      child.stdin.end(stdin);
+    }
 
     const killTimer = () => {
       if (forceKillTimeout) return;
@@ -584,6 +622,33 @@ export async function executeWorkspaceCommand({
   });
 }
 
+async function collectRecentArtifacts(root, workspaceRoot, startedAt) {
+  const artifacts = [];
+  const stack = [root];
+  while (stack.length && artifacts.length <= MAX_PYTHON_ARTIFACTS) {
+    const directory = stack.pop();
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(target);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const info = await stat(target).catch(() => null);
+      if (!info || info.mtimeMs < startedAt - 1_000) continue;
+      artifacts.push(path.relative(workspaceRoot, target).split(path.sep).join("/"));
+      if (artifacts.length > MAX_PYTHON_ARTIFACTS) break;
+    }
+  }
+  artifacts.sort();
+  return {
+    artifacts: artifacts.slice(0, MAX_PYTHON_ARTIFACTS),
+    artifactsTruncated: artifacts.length > MAX_PYTHON_ARTIFACTS,
+  };
+}
+
 export function createCommandManager({ dataDirectory }) {
   const jobs = new Map();
 
@@ -594,6 +659,7 @@ export function createCommandManager({ dataDirectory }) {
       command: job.command,
       approvalMode: job.approvalMode,
       permissionMode: job.permissionMode,
+      networkMode: job.networkMode,
       timeoutMs: job.timeoutMs,
       status: job.status,
       createdAt: job.createdAt,
@@ -625,8 +691,20 @@ export function createCommandManager({ dataDirectory }) {
         permissionMode: job.permissionMode,
         timeoutMs: job.timeoutMs,
         extraReadableRoots: job.extraReadableRoots,
+        directExecutable: job.directExecutable,
+        directArguments: job.directArguments,
+        writableRoots: job.writableRoots,
+        networkMode: job.networkMode,
+        stdin: job.stdin,
+        environment: job.environment,
         signal: job.controller.signal,
       });
+      if (job.artifactRoot && job.result && !job.result.cancelled) {
+        Object.assign(
+          job.result,
+          await collectRecentArtifacts(job.artifactRoot, job.workspaceRoot, job.startedAt),
+        );
+      }
       job.status = job.result.cancelled ? "cancelled" : "completed";
     } catch (error) {
       job.status = "failed";
@@ -637,10 +715,20 @@ export function createCommandManager({ dataDirectory }) {
     }
   }
 
-  function create(workspace, payload, { extraReadableRoots = [] } = {}) {
+  function create(workspace, payload, {
+    artifactRoot,
+    directArguments = [],
+    directExecutable,
+    environment = {},
+    extraReadableRoots = [],
+    label = "Bash 命令",
+    networkMode = "allow",
+    stdin,
+    writableRoots,
+  } = {}) {
     const command = typeof payload.command === "string" ? payload.command.trim() : "";
     if (!command || Buffer.byteLength(command) > MAX_COMMAND_BYTES) {
-      throw Object.assign(new Error("Bash 命令为空或过长。"), { status: 400 });
+      throw Object.assign(new Error(`${label}为空或过长。`), { status: 400 });
     }
     if (
       payload.approvalMode !== undefined &&
@@ -667,10 +755,18 @@ export function createCommandManager({ dataDirectory }) {
       workspaceId: workspace.id,
       workspaceRoot: workspace.path,
       extraReadableRoots,
+      artifactRoot,
       command,
+      directArguments,
+      directExecutable,
+      environment,
+      label,
+      networkMode,
       approvalMode,
       permissionMode,
+      stdin,
       timeoutMs,
+      writableRoots,
       status: approvalMode === "ask" ? "pending_approval" : "created",
       createdAt: Date.now(),
     };
@@ -742,7 +838,7 @@ async function readJsonBody(request, maxBytes = MAX_BODY_BYTES) {
 }
 
 function shellQuote(value) {
-  return `'${String(value).replaceAll("'", "'\\\"'\\\"'")}'`;
+  return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 }
 
 function documentError(message, status = 400) {
@@ -771,6 +867,44 @@ async function waitForManagedDocumentComponents(dataDirectory, signal) {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw documentError("文档组件尚未初始化完成。请稍后重试；不要在当前项目目录运行 npm、Pandoc 或 Python。", 503);
+}
+
+function throwIfPythonAnalysisCancelled(signal) {
+  if (signal?.aborted) throw documentError("Python 分析已取消。", 499);
+}
+
+async function waitForManagedPythonAnalysis(dataDirectory, signal) {
+  const pythonPath = path.resolve(
+    process.env.PYTHON_ANALYSIS_PATH || path.join(dataDirectory, "python-analysis-venv", "bin", "python"),
+  );
+  const environmentRoot = path.dirname(path.dirname(pythonPath));
+  const sitePackagesPath = path.join(environmentRoot, "lib", "python3.12", "site-packages");
+  const readyMarkerPath = path.join(dataDirectory, "python-analysis-ready-v1");
+  const deadline = Date.now() + PYTHON_ANALYSIS_COMPONENT_WAIT_MS;
+  while (Date.now() < deadline) {
+    throwIfPythonAnalysisCancelled(signal);
+    const [python, readyMarker, sitePackages] = await Promise.all([
+      realpath(pythonPath).catch(() => null),
+      realpath(readyMarkerPath).catch(() => null),
+      realpath(sitePackagesPath).catch(() => null),
+    ]);
+    if (python && readyMarker && sitePackages) {
+      const resolved = await resolvePythonInterpreter({
+        environment: { ...process.env, SKILL_PYTHON_PATH: pythonPath },
+      });
+      return {
+        python,
+        environmentRoot,
+        sitePackages,
+        readableRoots: [resolved.readableRoot, path.dirname(path.dirname(python))],
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw documentError(
+    "Python 分析环境尚未初始化完成。请稍后重试或运行 npm run python:setup；不要通过 Bash、pip 或联网安装绕过。",
+    503,
+  );
 }
 
 function normalizeDocumentFilename(filename, format) {
@@ -1333,6 +1467,56 @@ export function createLocalRuntimeHandler({ dataDirectory, token, mcpManager = c
             }));
           } finally {
             request.off("aborted", cancelKami);
+          }
+        }
+        if (
+          request.method === "POST" &&
+          segments[2] === "python" &&
+          segments[3] === "commands" &&
+          segments.length === 4
+        ) {
+          const payload = await readJsonBody(request);
+          if (
+            typeof payload.code !== "string" ||
+            !payload.code.trim() ||
+            Buffer.byteLength(payload.code, "utf8") > MAX_PYTHON_CODE_BYTES
+          ) {
+            throw Object.assign(new Error("Python 分析代码为空或超过 20KB。"), { status: 400 });
+          }
+          const cancellation = new AbortController();
+          const cancelWait = () => cancellation.abort();
+          request.once("aborted", cancelWait);
+          try {
+            const managed = await waitForManagedPythonAnalysis(dataDirectory, cancellation.signal);
+            const outputRoot = resolveWorkspacePath(workspace.path, "outputs/python");
+            await ensureSafeWriteTarget(workspace.path, outputRoot);
+            await mkdir(outputRoot, { recursive: true, mode: 0o700 });
+            const command = [managed.python, "-I", "-u", "-"].map(shellQuote).join(" ");
+            const pythonStdin = `${PYTHON_ANALYSIS_RUNNER_PREFIX}${JSON.stringify(payload.code)}${PYTHON_ANALYSIS_RUNNER_SUFFIX}`;
+            const job = commandManager.create(workspace, {
+              command,
+              approvalMode: payload.approvalMode,
+              permissionMode: "sandbox",
+              timeoutMs: payload.timeoutMs,
+            }, {
+              artifactRoot: outputRoot,
+              directArguments: ["-I", "-u", "-"],
+              directExecutable: managed.python,
+              environment: {
+                MPLBACKEND: "Agg",
+                PYTHONDONTWRITEBYTECODE: "1",
+                PYTHON_ANALYSIS_OUTPUT_DIR: outputRoot,
+                PYTHON_ANALYSIS_SITE_PACKAGES: managed.sitePackages,
+              },
+              extraReadableRoots: [managed.environmentRoot, ...managed.readableRoots],
+              label: "Python 分析",
+              networkMode: "deny",
+              stdin: pythonStdin,
+              writableRoots: [outputRoot],
+            });
+            return sendJson(response, job.status === "pending_approval" ? 202 : 201, job);
+          } finally {
+            request.off("aborted", cancelWait);
           }
         }
         if (request.method === "POST" && segments[2] === "commands" && segments.length === 3) {

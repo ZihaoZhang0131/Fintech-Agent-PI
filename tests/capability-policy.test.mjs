@@ -9,6 +9,7 @@ import {
 import { MCP_SERVER_IDS } from "../server/agent/mcp/registry.ts";
 
 test("capability selection enables the complete bundled set by default", () => {
+  assert.ok(AGENT_TOOL_NAMES.includes("python_analysis"));
   const selection = resolveCapabilitySelection({});
   assert.deepEqual(selection.enabledSkills, [...BUNDLED_SKILL_NAMES]);
   assert.deepEqual(selection.enabledTools, [...AGENT_TOOL_NAMES]);

@@ -25,6 +25,7 @@ export const AGENT_TOOL_NAMES = [
   "describe_local_database_table",
   "query_local_database",
   "mutate_local_database",
+  "python_analysis",
   "bash",
 ] as const;
 

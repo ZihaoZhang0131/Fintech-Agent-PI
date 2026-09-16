@@ -139,10 +139,12 @@ test("starter permissions are separate, independently cloned, and parsing never 
   assert.equal(data.enabledSkills.length, 5);
   assert.deepEqual(writing.enabledSkills, ["kami"]);
   assert.ok(data.enabledTools.includes("bash"));
+  assert.ok(data.enabledTools.includes("python_analysis"));
   assert.ok(data.enabledTools.includes("mutate_local_database"));
   assert.ok(writing.enabledTools.includes("generate_document"));
   assert.ok(writing.enabledTools.includes("render_kami_artifact"));
   for (const role of [research, writing]) {
+    assert.ok(!role.enabledTools.includes("python_analysis"));
     assert.ok(!role.enabledTools.includes("bash"));
     assert.ok(!role.enabledTools.includes("mutate_local_database"));
   }
@@ -151,4 +153,34 @@ test("starter permissions are separate, independently cloned, and parsing never 
   assert.ok(research.enabledTools.length > 0);
   assert.notEqual(createDefaultProjectAgentConfig().customSubAgents[0].id, research.id);
   assert.deepEqual(createEmptyProjectAgentConfig().customSubAgents, []);
+});
+
+test("existing default-named data Agent gains Python once without reviving deleted or renamed roles", () => {
+  const existing = createDefaultProjectAgentConfig();
+  const data = existing.customSubAgents.find((agent) => agent.label === "数据Agent");
+  data.enabled = false;
+  data.model = { providerId: "deepseek", modelId: "deepseek-v4-flash" };
+  data.enabledTools = data.enabledTools.filter((name) => name !== "python_analysis");
+  delete existing.dataAgentPythonVersion;
+
+  const migrated = supplementDefaultAgents(existing);
+  const migratedData = migrated.customSubAgents.find((agent) => agent.label === "数据Agent");
+  assert.equal(migrated.dataAgentPythonVersion, 1);
+  assert.equal(migratedData.enabled, false);
+  assert.equal(migratedData.model.modelId, "deepseek-v4-flash");
+  assert.equal(migratedData.enabledTools.filter((name) => name === "python_analysis").length, 1);
+  assert.equal(supplementDefaultAgents(migrated), migrated);
+
+  const deleted = createDefaultProjectAgentConfig();
+  deleted.customSubAgents = deleted.customSubAgents.filter((agent) => agent.label !== "数据Agent");
+  delete deleted.dataAgentPythonVersion;
+  assert.ok(!supplementDefaultAgents(deleted).customSubAgents.some((agent) => agent.label === "数据Agent"));
+
+  const renamed = createDefaultProjectAgentConfig();
+  const renamedData = renamed.customSubAgents.find((agent) => agent.label === "数据Agent");
+  renamedData.label = "量化分析员";
+  renamedData.enabledTools = [];
+  delete renamed.dataAgentPythonVersion;
+  const preserved = supplementDefaultAgents(renamed);
+  assert.deepEqual(preserved.customSubAgents.find((agent) => agent.label === "量化分析员").enabledTools, []);
 });

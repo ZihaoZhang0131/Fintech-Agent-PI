@@ -19,6 +19,8 @@ const managedAktoolsPython = path.join(localDataDirectory, "aktools-venv", "bin"
 const managedPandoc = path.join(localDataDirectory, "pandoc", "bin", "pandoc");
 const managedDocumentPython = path.join(localDataDirectory, "documents-venv", "bin", "python");
 const documentReadyMarker = path.join(localDataDirectory, "documents-ready-v3");
+const managedAnalysisPython = path.join(localDataDirectory, "python-analysis-venv", "bin", "python");
+const analysisReadyMarker = path.join(localDataDirectory, "python-analysis-ready-v1");
 
 function readOptionalEnvironmentFile(filePath) {
   if (!existsSync(filePath)) return {};
@@ -98,9 +100,30 @@ function startPandocProvisioning() {
   return child;
 }
 
+function startPythonAnalysisProvisioning() {
+  console.log(
+    existsSync(managedAnalysisPython) && existsSync(analysisReadyMarker)
+      ? "正在后台校验 Python 分析环境。"
+      : "正在后台初始化 Python 分析环境；其他功能可继续使用。",
+  );
+  const child = spawn(process.execPath, [path.join(root, "scripts", "setup-python-analysis.mjs")], {
+    cwd: root,
+    env: process.env,
+    stdio: "inherit",
+  });
+  child.on("error", (error) => console.error(`Python 分析环境初始化失败：${error.message}`));
+  child.on("exit", (code, signal) => {
+    if (code !== 0) {
+      console.error(`Python 分析环境初始化未完成（${signal ?? code}）。应用仍可使用，稍后重新启动会自动重试。`);
+    }
+  });
+  return child;
+}
+
 const startup = new AbortController();
 let aktools;
 let pandocProvisioner;
+let pythonAnalysisProvisioner;
 let runtime;
 let vinext;
 let stopping = false;
@@ -114,6 +137,7 @@ function stop(exitCode = 0) {
   runtime?.kill("SIGTERM");
   vinext?.kill("SIGTERM");
   pandocProvisioner?.kill("SIGTERM");
+  pythonAnalysisProvisioner?.kill("SIGTERM");
   stopPromise = stopAktools(aktools);
   return stopPromise;
 }
@@ -163,6 +187,7 @@ try {
     PI_STRICT_APP_PORT: "1",
   };
   pandocProvisioner = startPandocProvisioning();
+  pythonAnalysisProvisioner = startPythonAnalysisProvisioning();
   const runtimeArguments = mode === "dev"
     ? [
         "--experimental-strip-types",

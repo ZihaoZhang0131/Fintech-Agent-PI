@@ -82,6 +82,29 @@ test("tool run reducer represents Bash approval, rejection, and command output",
   assert.equal(runs[0].status, "rejected");
 });
 
+test("tool run reducer marks failed Python and retains artifacts", () => {
+  const runs = applyToolEnd(undefined, {
+    type: "tool_end",
+    toolCallId: "python-1",
+    toolName: "python_analysis",
+    label: "Python 数据分析",
+    isError: false,
+    query: "raise ValueError()",
+    completedAt: 4_000,
+    durationMs: 25,
+    commandId: "python-command-1",
+    permissionMode: "sandbox",
+    commandStatus: "failed",
+    exitCode: 1,
+    stderr: "ValueError",
+    artifacts: ["outputs/python/partial.csv"],
+    artifactsTruncated: false,
+  });
+  assert.equal(runs[0].status, "error");
+  assert.equal(runs[0].stderr, "ValueError");
+  assert.deepEqual(runs[0].artifacts, ["outputs/python/partial.csv"]);
+});
+
 test("tool run reducer records an end event even if its start event was missed", () => {
   const runs = applyToolEnd(undefined, {
     type: "tool_end",

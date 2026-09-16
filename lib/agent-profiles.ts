@@ -29,6 +29,7 @@ export type CustomSubAgent = AgentProfile & {
 export type ProjectAgentConfig = {
   starterAgentsVersion?: number;
   starterAgentsSkipped?: string[];
+  dataAgentPythonVersion?: number;
   mainModel?: AgentModelOverride;
   profiles: Record<AgentRoleId, AgentProfile>;
   customSubAgents: CustomSubAgent[];
@@ -158,6 +159,7 @@ export function createEmptyProjectAgentConfig(): ProjectAgentConfig {
 
 export const MAX_CUSTOM_SUB_AGENTS = 12;
 const STARTER_VERSION = 2;
+const DATA_AGENT_PYTHON_VERSION = 1;
 const readFiles = ["list_project_files", "read_project_file"];
 const readDatabase = ["list_local_database_tables", "describe_local_database_table", "query_local_database"];
 const starterRoles = [
@@ -171,7 +173,7 @@ const starterRoles = [
     label: "数据Agent",
     description: "负责获取、清洗、核验和保存真实数据。使用 AKShare Skills 查询数据，核对来源、时间、单位与统计口径，按任务保存到项目文件或数据库；写入前核验已有状态，缺少数据或服务不可用时报告缺口，不编造数据。",
     enabledSkills: ["akshare-http-data", "akshare-china-macro", "akshare-us-macro", "akshare-euro-macro", "akshare-institutions-macro"],
-    enabledTools: ["load_skill", "bash", ...readFiles, "write_project_file", ...readDatabase, "mutate_local_database"],
+    enabledTools: ["load_skill", "bash", "python_analysis", ...readFiles, "write_project_file", ...readDatabase, "mutate_local_database"],
   },
   {
     label: "写作Agent",
@@ -183,7 +185,9 @@ const starterRoles = [
 
 /** Runs once on browser onboarding; manual invocation only adds missing names. */
 export function supplementDefaultAgents(config: ProjectAgentConfig, manual = false): ProjectAgentConfig {
-  if (!manual && (config.starterAgentsVersion ?? 0) >= STARTER_VERSION) return config;
+  if (!manual && (config.starterAgentsVersion ?? 0) >= STARTER_VERSION) {
+    return upgradeDefaultDataAgentPython(config);
+  }
   const next = cloneProjectAgentConfig(config);
   const normalize = (name: string) => name.replace(/\s/g, "");
   const names = new Set(next.customSubAgents.map(agent => normalize(agent.label)));
@@ -218,6 +222,18 @@ export function supplementDefaultAgents(config: ProjectAgentConfig, manual = fal
   }
   next.starterAgentsVersion = Math.max(STARTER_VERSION, next.starterAgentsVersion ?? 0);
   next.starterAgentsSkipped = skipped;
+  return upgradeDefaultDataAgentPython(next);
+}
+
+/** Adds Python only to an existing default-named data specialist; deleted or renamed roles stay untouched. */
+export function upgradeDefaultDataAgentPython(config: ProjectAgentConfig): ProjectAgentConfig {
+  if ((config.dataAgentPythonVersion ?? 0) >= DATA_AGENT_PYTHON_VERSION) return config;
+  const next = cloneProjectAgentConfig(config);
+  const dataAgent = next.customSubAgents.find((agent) => agent.label.replace(/\s/g, "") === "数据Agent");
+  if (dataAgent && !dataAgent.enabledTools.includes("python_analysis")) {
+    dataAgent.enabledTools.push("python_analysis");
+  }
+  next.dataAgentPythonVersion = DATA_AGENT_PYTHON_VERSION;
   return next;
 }
 
@@ -245,6 +261,7 @@ export function cloneProjectAgentConfig(config: ProjectAgentConfig): ProjectAgen
   return {
     ...(config.starterAgentsVersion !== undefined ? { starterAgentsVersion: config.starterAgentsVersion } : {}),
     ...(config.starterAgentsSkipped ? { starterAgentsSkipped: [...config.starterAgentsSkipped] } : {}),
+    ...(config.dataAgentPythonVersion !== undefined ? { dataAgentPythonVersion: config.dataAgentPythonVersion } : {}),
     ...(config.mainModel ? { mainModel: { ...config.mainModel } } : {}),
     profiles: Object.fromEntries(
       AGENT_ROLE_IDS.map((id) => [id, copyProfile(config.profiles[id])]),

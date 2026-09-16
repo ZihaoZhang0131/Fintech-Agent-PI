@@ -11,6 +11,7 @@
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log node scripts/run-local.mjs start",
     "aktools:setup": "node scripts/setup-aktools.mjs",
+    "python:setup": "node scripts/setup-python-analysis.mjs",
     "documents:setup": "node scripts/setup-pandoc.mjs",
     "kami:setup": "node scripts/setup-kami.mjs",
     "mcp:setup": "node scripts/setup-mcp.mjs",

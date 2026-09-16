@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdtemp, mkdir, readFile, writeFile, chmod, rm } from "node:fs/promises";
@@ -11,15 +12,21 @@ import { inspectAktools } from "../scripts/aktools-service.mjs";
 async function fixture(t, { missingWeb = false, hang = false } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), "pi-aktools-startup-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  for (const directory of ["scripts", "server", "node_modules/.bin", ".local-data/aktools-venv/bin", ".local-data/documents-venv/bin", ".local-data/pandoc/bin"]) {
+  for (const directory of ["scripts", "server", "node_modules/.bin", ".local-data/aktools-venv/bin", ".local-data/documents-venv/bin", ".local-data/python-analysis-venv/bin", ".local-data/pandoc/bin"]) {
     await mkdir(path.join(root, directory), { recursive: true });
   }
-  for (const name of ["run-local.mjs", "aktools-service.mjs"]) {
+  for (const name of ["run-local.mjs", "aktools-service.mjs", "setup-python-analysis.mjs"]) {
     await writeFile(path.join(root, "scripts", name), await readFile(new URL(`../scripts/${name}`, import.meta.url)));
   }
   for (const name of ["documents-ready-v3", "documents-venv/bin/python", "pandoc/bin/pandoc"]) {
     await writeFile(path.join(root, ".local-data", name), "fixture");
   }
+  await writeFile(path.join(root, ".local-data/python-analysis-venv/bin/python"), "fixture");
+  const analysisPackages = ["numpy==2.5.1", "pandas==3.0.5", "matplotlib==3.11.2", "openpyxl==3.1.5"];
+  await writeFile(
+    path.join(root, ".local-data/python-analysis-ready-v1"),
+    `python=3.12\npackages-sha256=${createHash("sha256").update(analysisPackages.join("\n")).digest("hex")}\n`,
+  );
   const python = path.join(root, ".local-data/aktools-venv/bin/python");
   await writeFile(python, `#!${process.execPath}
 const { createServer } = require('node:http');

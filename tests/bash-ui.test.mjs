@@ -14,7 +14,7 @@ test("new and legacy conversations default to automatic project-sandbox Bash", (
   assert.match(pageSource, /conversation\.bashPermissionMode === "full" \? "full" : "sandbox"/);
 });
 
-test("composer exposes per-conversation Bash controls and full-permission confirmation", () => {
+test("composer exposes per-conversation local execution controls and Bash full-permission confirmation", () => {
   assert.match(pageSource, /自动执行/);
   assert.match(pageSource, /每条确认/);
   assert.match(pageSource, /项目沙箱/);
@@ -23,13 +23,13 @@ test("composer exposes per-conversation Bash controls and full-permission confir
   assert.match(pageSource, /bashPermissionMode: conversation\.bashPermissionMode/);
 });
 
-test("model, Bash execution, and Agent permission controls share one composer row", () => {
+test("model, local execution, and Agent permission controls share one composer row", () => {
   const controlsStart = pageSource.indexOf('className="composer-options"');
   const controlsEnd = pageSource.indexOf("</div>", controlsStart);
   const controlsSource = pageSource.slice(controlsStart, controlsEnd);
   assert.ok(controlsStart > 0);
   assert.match(controlsSource, /aria-label="模型选择"/);
-  assert.match(controlsSource, /<span>Bash<\/span>/);
+  assert.match(controlsSource, /<span>本地执行<\/span>/);
   assert.match(controlsSource, /<span>Agent<\/span>/);
   assert.doesNotMatch(pageSource, /className="model-pill"/);
   assert.match(styleSource, /\.composer-options[\s\S]*?flex-wrap: nowrap;/);
@@ -47,6 +47,7 @@ test("tool approval events are rendered with allow and reject actions", () => {
   assert.match(storeSource, /tool_approval_required/);
   assert.match(toolRunSource, /onDecision\(messageId, run, "approve"\)/);
   assert.match(toolRunSource, /onDecision\(messageId, run, "reject"\)/);
-  assert.match(pageSource, /void decideBashCommand\(messageId, run, decision\)/);
+  assert.match(pageSource, /void decideBashCommand\(row\.owners\.get\(run\.toolCallId\) \?\? messageId, run, decision\)/);
   assert.match(toolRunSource, /查看命令输出/);
+  assert.match(toolRunSource, /查看 Python 输出/);
 });

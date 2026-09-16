@@ -3,6 +3,7 @@ import {
   ChevronDown,
   CircleCheck,
   CircleX,
+  Code2,
   Cpu,
   ExternalLink,
   LoaderCircle,
@@ -48,6 +49,7 @@ function ToolRunGlyph({ run, now }: { run: ToolRun; now: number }) {
   }
   if (run.status === "error" || run.status === "rejected") return <CircleX size={14} />;
   if (run.toolName === "delegate_agent") return <Cpu size={14} />;
+  if (run.toolName === "python_analysis") return <Code2 size={14} />;
   if (run.toolName === "bash") return <Terminal size={14} />;
   if (run.toolName.startsWith("mcp__")) return <Plug size={14} />;
   if (run.toolName === "load_skill") return <BookOpenCheck size={14} />;
@@ -68,6 +70,9 @@ function ToolRunDetail({
     <div className="tool-run-detail">
       {run.toolName === "bash" && run.query && (
         <code className="tool-run-command">{run.query}</code>
+      )}
+      {run.toolName === "python_analysis" && run.query && (
+        <pre className="tool-run-command"><code>{run.query}</code></pre>
       )}
       {run.status === "awaiting_approval" && run.commandId && (
         <div className="tool-run-approval-wrap">
@@ -91,9 +96,9 @@ function ToolRunDetail({
           </div>
         </div>
       )}
-      {run.toolName === "bash" && (run.stdout || run.stderr || run.truncated) && (
+      {(run.toolName === "bash" || run.toolName === "python_analysis") && (run.stdout || run.stderr || run.truncated) && (
         <details className="tool-run-output">
-          <summary>查看命令输出</summary>
+          <summary>{run.toolName === "python_analysis" ? "查看 Python 输出" : "查看命令输出"}</summary>
           {run.stdout && <pre>{run.stdout}</pre>}
           {run.stderr && (
             <pre>
@@ -102,6 +107,12 @@ function ToolRunDetail({
             </pre>
           )}
           {run.truncated && <p>输出超过 200KB，后续内容已截断。</p>}
+        </details>
+      )}
+      {Boolean(run.artifacts?.length) && (
+        <details className="tool-run-output">
+          <summary>查看 Python 产物</summary>
+          <pre>{run.artifacts?.join("\n")}{run.artifactsTruncated ? "\n其余产物已省略" : ""}</pre>
         </details>
       )}
       {Boolean(run.sources?.length) && (
@@ -167,8 +178,10 @@ export function ToolRunStack({
   const hasRunningRun = runs.some((run) => run.status === "running");
   const hasLatestDetail =
     (latestRun.toolName === "bash" && Boolean(latestRun.query)) ||
+    (latestRun.toolName === "python_analysis" && Boolean(latestRun.query)) ||
     (latestRun.status === "awaiting_approval" && Boolean(latestRun.commandId)) ||
     (latestRun.toolName === "bash" && Boolean(latestRun.stdout || latestRun.stderr || latestRun.truncated)) ||
+    (latestRun.toolName === "python_analysis" && Boolean(latestRun.stdout || latestRun.stderr || latestRun.truncated || latestRun.artifacts?.length)) ||
     Boolean(latestRun.sources?.length);
   const displayedDurationMs = isRunning ? now - startedAt : durationMs;
 

@@ -26,6 +26,8 @@ export type ToolRun = {
   stderr?: string;
   truncated?: boolean;
   timedOut?: boolean;
+  artifacts?: string[];
+  artifactsTruncated?: boolean;
   mcpServerId?: string;
   mcpServerLabel?: string;
   externalToolName?: string;
@@ -68,6 +70,8 @@ export type ToolEndEvent = {
   stderr?: string;
   truncated?: boolean;
   timedOut?: boolean;
+  artifacts?: string[];
+  artifactsTruncated?: boolean;
   mcpServerId?: string;
   mcpServerLabel?: string;
   externalToolName?: string;
@@ -127,6 +131,8 @@ export function applyToolEnd(runs: ToolRun[] | undefined, event: ToolEndEvent): 
     query: event.query ?? existing?.query,
     status: event.isError
       ? "error"
+      : event.commandStatus === "failed"
+        ? "error"
       : event.commandStatus === "rejected"
         ? "rejected"
         : "success",
@@ -143,6 +149,8 @@ export function applyToolEnd(runs: ToolRun[] | undefined, event: ToolEndEvent): 
     stderr: event.stderr,
     truncated: event.truncated,
     timedOut: event.timedOut,
+    artifacts: event.artifacts,
+    artifactsTruncated: event.artifactsTruncated,
     mcpServerId: event.mcpServerId,
     mcpServerLabel: event.mcpServerLabel,
     externalToolName: event.externalToolName,

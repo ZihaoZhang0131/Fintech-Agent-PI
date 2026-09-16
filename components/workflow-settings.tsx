@@ -189,7 +189,7 @@ export function WorkflowSettings({
           />
           <div className="wf-row">
             <label>
-              Bash 审批
+              本地执行审批
               <select
                 value={value.approval}
                 onChange={(e) =>

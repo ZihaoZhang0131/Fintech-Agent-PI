@@ -54,11 +54,13 @@ test("unfinished assistant replies keep the thinking indicator on their final li
   assert.match(styleSource, /@keyframes think\s*\{[\s\S]*translateY\(-3px\)/);
 });
 
-test("latest tool card preserves tool approval controls and Bash execution details", () => {
+test("latest tool card preserves approval controls and local execution details", () => {
   assert.match(toolRunSource, /run\.status === "awaiting_approval" && run\.commandId/);
   assert.match(toolRunSource, /onDecision\(messageId, run, "reject"\)/);
   assert.match(toolRunSource, /onDecision\(messageId, run, "approve"\)/);
   assert.match(toolRunSource, /run\.toolName === "bash" && run\.query/);
+  assert.match(toolRunSource, /run\.toolName === "python_analysis" && run\.query/);
+  assert.match(toolRunSource, /run\.artifacts\?\.length/);
   assert.doesNotMatch(toolRunSource, /className="tool-run-query|className="tool-run-meta/);
   assert.match(toolRunSource, /className="tool-run-output"/);
   assert.match(toolRunSource, /className="tool-run-sources"/);

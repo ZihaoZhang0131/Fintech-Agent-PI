@@ -32,6 +32,7 @@ import {
 import { createLocalDatabaseTools, type LocalDatabaseToolDetails } from "../../server/agent/tools/local-database.ts";
 import { createDocumentTool, type DocumentToolDetails } from "../../server/agent/tools/generate-document.ts";
 import { createKamiArtifactTool } from "../../server/agent/tools/render-kami-artifact.ts";
+import { createPythonAnalysisTool, type PythonAnalysisDetails } from "../../server/agent/tools/python-analysis.ts";
 import { TraceRecorder } from "../../server/agent/trace/trace-recorder.ts";
 import { traceSha256 } from "../../server/trace-redaction.mjs";
 
@@ -126,6 +127,19 @@ function getBashDetails(value: unknown): BashToolDetails | undefined {
   return details as BashToolDetails;
 }
 
+function getPythonAnalysisDetails(value: unknown): PythonAnalysisDetails | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const details = value as Partial<PythonAnalysisDetails>;
+  if (
+    details.kind !== "python_analysis" ||
+    typeof details.commandId !== "string" ||
+    typeof details.code !== "string"
+  ) {
+    return undefined;
+  }
+  return details as PythonAnalysisDetails;
+}
+
 function getMcpDetails(value: unknown): McpToolDetails | undefined {
   if (!value || typeof value !== "object") return undefined;
   const details = value as Partial<McpToolDetails>;
@@ -174,6 +188,7 @@ function getToolLabel(
   if (toolName === "describe_local_database_table") return "查看本地数据表结构";
   if (toolName === "query_local_database") return "查询本地数据库";
   if (toolName === "mutate_local_database") return "修改本地数据库";
+  if (toolName === "python_analysis") return "Python 数据分析";
   if (toolName === "bash") return "执行 Bash";
   return toolName;
 }
@@ -185,6 +200,7 @@ function getToolInput(args: unknown) {
   if ("path" in args) return String(args.path);
   if ("sql" in args) return String(args.sql);
   if ("command" in args) return String(args.command);
+  if ("code" in args) return String(args.code);
   if ("task" in args) return String(args.task);
   const summary = Object.entries(args)
     .slice(0, 4)
@@ -303,6 +319,9 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
           ? "如任务要求 Word 或 PDF，直接调用 generate_document。不要为此调用 Bash、npm、Pandoc 或 Python，也不要把工具失败伪称为已保存的文档。"
           : "本角色没有启用 Word/PDF 文档生成能力，不要声称已生成文档。",
         childToolNames.has("generate_document") ? DOCUMENT_CHART_GUIDANCE : "",
+        childToolNames.has("python_analysis")
+          ? "Python 分析只用于已获取数据的清洗、计算、核验和制图。使用 PYTHON_ANALYSIS_OUTPUT_DIR 保存产物，不得联网、安装依赖或通过 Bash 绕过 Python 沙箱；环境不可用时如实报告。"
+          : "本角色没有启用 Python 分析能力，不要声称执行过 Python。",
         formatSkillCatalog(childSkills),
       ].join("\n\n");
       const child = createConfiguredAgent({
@@ -377,6 +396,9 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
     ...databaseTools,
     ...documentTools,
     ...kamiTools,
+    ...(enabledToolNames.has("python_analysis")
+      ? [createPythonAnalysisTool(workspaceId, { approvalMode: bashApprovalMode })]
+      : []),
     ...(enabledToolNames.has("bash")
       ? [createBashTool(workspaceId, { approvalMode: bashApprovalMode, permissionMode: bashPermissionMode })]
       : []),
@@ -413,6 +435,9 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
     enabledToolNames.has("mutate_local_database")
       ? "修改本地数据库时只能调用修改本地数据库工具，并清楚说明将执行的 SQL；完成后报告受影响行数。"
       : "本轮没有启用本地数据库写入能力，不要声称已经创建、更新或删除数据库数据。",
+    enabledToolNames.has("python_analysis")
+      ? `Python 分析已启用，执行模式为 ${bashApprovalMode === "ask" ? "每条确认" : "自动执行"}。只用于已获取数据的清洗、计算、核验和制图；使用 PYTHON_ANALYSIS_OUTPUT_DIR 保存产物。Python 始终固定为禁网项目沙箱，不得安装依赖、通过 Bash 绕过或因 Bash 完整权限而扩大访问范围。`
+      : "本轮没有启用 Python 分析，不要声称执行过 Python。",
     enabledToolNames.has("bash")
       ? `Bash 已启用，执行模式为 ${bashApprovalMode === "ask" ? "每条确认" : "自动执行"}，权限模式为 ${bashPermissionMode === "full" ? "完整本机权限" : "项目沙箱"}。只有任务确实需要运行脚本、测试、构建或命令行操作时才调用 bash。`
       : "本轮没有启用 Bash，不要声称执行过脚本、测试、构建或命令。",
@@ -533,6 +558,7 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
             const databaseDetails = getLocalDatabaseDetails(event.result?.details);
             const documentDetails = getDocumentDetails(event.result?.details);
             const bashDetails = getBashDetails(event.result?.details);
+            const pythonDetails = getPythonAnalysisDetails(event.result?.details);
             const mcpDetails = getMcpDetails(event.result?.details);
             const subAgentDetails = getSubAgentDetails(event.result?.details);
             const delegatedAgentId = subAgentDetails?.agentId ?? delegatedAgentIds.get(event.toolCallId);
@@ -552,6 +578,7 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
                 databaseDetails?.sql ??
                 databaseDetails?.table ??
                 documentDetails?.path ??
+                pythonDetails?.code ??
                 bashDetails?.command ??
                 mcpDetails?.summary ??
                 subAgentDetails?.task,
@@ -579,6 +606,10 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
                             ? `已修改数据库，影响 ${databaseDetails.resultCount ?? 0} 行`
                     : documentDetails
                       ? `已生成 ${documentDetails.format.toUpperCase()}：${documentDetails.path}`
+                    : pythonDetails?.status === "rejected"
+                      ? "用户已拒绝，Python 代码未执行"
+                      : pythonDetails
+                        ? `Python 退出码 ${pythonDetails.exitCode ?? "无"}${pythonDetails.artifacts?.length ? ` · ${pythonDetails.artifacts.length} 个产物` : ""}`
                     : bashDetails?.status === "rejected"
                       ? "用户已拒绝，命令未执行"
                       : bashDetails
@@ -590,6 +621,7 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
                           : undefined,
               completedAt,
               durationMs:
+                pythonDetails?.durationMs ??
                 bashDetails?.durationMs ??
                 skillResourceDetails?.durationMs ??
                 (toolStartedAt.has(event.toolCallId)
@@ -605,14 +637,16 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
               subAgentModel: subAgentDetails
                 ? `${subAgentDetails.model.providerId}:${subAgentDetails.model.modelId}`
                 : undefined,
-              commandId: bashDetails?.commandId ?? skillResourceDetails?.commandId,
-              permissionMode: bashDetails?.permissionMode ?? skillResourceDetails?.permissionMode,
-              commandStatus: bashDetails?.status ?? skillResourceDetails?.status,
-              exitCode: bashDetails?.exitCode ?? skillResourceDetails?.exitCode,
-              stdout: bashDetails?.stdout ?? skillResourceDetails?.stdout,
-              stderr: bashDetails?.stderr ?? skillResourceDetails?.stderr,
-              truncated: bashDetails?.truncated ?? skillResourceDetails?.truncated ?? databaseDetails?.truncated ?? mcpDetails?.truncated ?? subAgentDetails?.truncated,
-              timedOut: bashDetails?.timedOut ?? skillResourceDetails?.timedOut,
+              commandId: pythonDetails?.commandId ?? bashDetails?.commandId ?? skillResourceDetails?.commandId,
+              permissionMode: pythonDetails?.permissionMode ?? bashDetails?.permissionMode ?? skillResourceDetails?.permissionMode,
+              commandStatus: pythonDetails?.status ?? bashDetails?.status ?? skillResourceDetails?.status,
+              exitCode: pythonDetails?.exitCode ?? bashDetails?.exitCode ?? skillResourceDetails?.exitCode,
+              stdout: pythonDetails?.stdout ?? bashDetails?.stdout ?? skillResourceDetails?.stdout,
+              stderr: pythonDetails?.stderr ?? bashDetails?.stderr ?? skillResourceDetails?.stderr,
+              truncated: pythonDetails?.truncated ?? bashDetails?.truncated ?? skillResourceDetails?.truncated ?? databaseDetails?.truncated ?? mcpDetails?.truncated ?? subAgentDetails?.truncated,
+              timedOut: pythonDetails?.timedOut ?? bashDetails?.timedOut ?? skillResourceDetails?.timedOut,
+              artifacts: pythonDetails?.artifacts,
+              artifactsTruncated: pythonDetails?.artifactsTruncated,
               sources: searchDetails?.sources.map((source) => ({
                 title: source.title,
                 url: source.url,
@@ -626,7 +660,10 @@ export async function prepareChatAgent(payload: ChatRequest, options: { session:
           if (event.type === "tool_execution_update") {
             const bashDetails = getBashDetails(event.partialResult?.details);
             const skillResourceDetails = getSkillResourceDetails(event.partialResult?.details);
-            const approval = bashDetails?.status === "pending_approval"
+            const pythonDetails = getPythonAnalysisDetails(event.partialResult?.details);
+            const approval = pythonDetails?.status === "pending_approval"
+              ? { command: pythonDetails.code, commandId: pythonDetails.commandId, permissionMode: pythonDetails.permissionMode }
+              : bashDetails?.status === "pending_approval"
               ? { command: bashDetails.command, commandId: bashDetails.commandId, permissionMode: bashDetails.permissionMode }
               : skillResourceDetails?.status === "pending_approval" && skillResourceDetails.command && skillResourceDetails.commandId && skillResourceDetails.permissionMode
                 ? { command: skillResourceDetails.command, commandId: skillResourceDetails.commandId, permissionMode: skillResourceDetails.permissionMode }
